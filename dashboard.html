@@ -103,23 +103,32 @@
   </div>
   <!-- CHAT -->
   <div class="view" id="v-chat">
+    <div class="panel" style="flex:0 0 190px">
+      <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
+      <div class="ph"><span class="t">◆</span> CHATS <span class="r"><button class="ghost" id="c-new" style="padding:2px 8px">+ new</button></span></div>
+      <div class="bd" id="c-history" style="padding:6px;gap:3px"><div class="empty">no chats yet</div></div>
+    </div>
     <div class="panel" style="flex:1">
       <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
       <div class="ph"><span class="t">◆</span> CHAT <span class="r" id="c-serving">no model served</span></div>
       <div class="bd" style="overflow:hidden">
         <div class="row" style="flex:0 0 auto">
           <div style="flex:2"><label>Model</label><select id="c-model"></select></div>
-          <div style="flex:0 0 auto;width:84px"><label>GPU layers</label><input id="c-ngl" type="number" value="99" title="lower for big models that don't fit 8GB VRAM"/></div>
+          <div style="flex:0 0 auto;width:74px"><label>GPU layers</label><input id="c-ngl" type="number" value="99" title="lower for big models that don't fit 8GB VRAM"/></div>
           <div style="flex:0 0 auto;display:flex;align-items:flex-end;gap:6px">
             <button class="ghost" id="c-serve">⏻ Serve</button>
+            <button class="ghost" id="c-voice" title="read replies aloud">🔊 off</button>
+            <button class="ghost" id="c-settings" title="settings">⚙</button>
           </div>
         </div>
         <div class="chatwrap">
           <div class="chatlog" id="c-log"><div class="empty">Serve a model, then talk to it.</div></div>
-          <div class="row" style="flex:0 0 auto;margin-top:8px">
+          <div class="row" style="flex:0 0 auto;margin-top:8px;align-items:flex-end">
             <div style="flex:1"><input id="c-in" placeholder="Message…" autocomplete="off"/></div>
-            <div style="flex:0 0 auto;display:flex;align-items:flex-end"><button class="act" id="c-send" style="padding:8px 16px">Send</button></div>
+            <button class="act" id="c-send" style="padding:8px 16px">Send</button>
+            <button class="ghost" id="c-stop" style="display:none;padding:8px 12px">■ Stop</button>
           </div>
+          <div id="c-tele" style="font-size:9px;color:var(--faint);margin-top:5px;letter-spacing:.1em;height:11px"></div>
         </div>
       </div>
     </div>
@@ -136,6 +145,18 @@
     </div>
   </div>
 </main>
+<div id="settings-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:60;align-items:center;justify-content:center">
+  <div class="panel" style="width:440px;max-height:88vh">
+    <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
+    <div class="ph"><span class="t">◆</span> SETTINGS <span class="r"><button class="ghost" id="s-close" style="padding:2px 8px">✕</button></span></div>
+    <div class="bd">
+      <label>System prompt (persona / instructions)</label>
+      <textarea id="s-system" style="min-height:70px" placeholder="e.g. You are a concise, direct assistant…"></textarea>
+      <div id="s-sliders"></div>
+      <button class="act" id="s-save">Save settings</button>
+    </div>
+  </div>
+</div>
 <script>
 const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 async function getJSON(u){try{return await (await fetch(u)).json()}catch(e){return null}}
@@ -212,6 +233,8 @@ function drawLoss(steps){
 }
 
 // ---- chat ----
+let msgs=[], chatId=null, voiceOn=false, ctrl=null;
+
 $('#c-serve').onclick=async()=>{
   const opt=$('#c-model').selectedOptions[0]; if(!opt||opt.disabled)return;
   const m=opt.value, src=opt.dataset.src||'local', ngl=+$('#c-ngl').value||99;
@@ -220,21 +243,71 @@ $('#c-serve').onclick=async()=>{
   $('#c-serving').textContent=r.ok?('serving: '+r.serving):('error: '+(r.msg||r.error));
   refresh();
 };
-let msgs=[];
+
+// voice (browser TTS)
+$('#c-voice').onclick=()=>{voiceOn=!voiceOn;$('#c-voice').textContent=voiceOn?'🔊 on':'🔊 off';if(!voiceOn)try{speechSynthesis.cancel()}catch(e){}};
+function speak(t){if(!voiceOn||!t)return;try{speechSynthesis.cancel();speechSynthesis.speak(new SpeechSynthesisUtterance(t))}catch(e){}}
+
+// history
+async function loadHistory(){
+  const cs=await getJSON('/api/chats')||[];
+  $('#c-history').innerHTML=cs.length?cs.map(c=>`<div style="display:flex;gap:4px;align-items:center;padding:3px 4px;border-radius:3px;${c.id===chatId?'background:#10261f':''}">
+    <span style="flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:${c.id===chatId?'var(--green)':'var(--dim)'}" onclick="openChat('${c.id}')" title="${(c.title||'').replace(/"/g,'')}">${(c.title||'chat').replace(/</g,'&lt;')}</span>
+    <span style="cursor:pointer;color:var(--faint);font-size:10px" onclick="delChat('${c.id}')">✕</span></div>`).join(''):'<div class="empty">no chats yet</div>';
+}
+window.openChat=async(id)=>{const c=await getJSON('/api/chat_load?id='+id);if(c&&c.messages){chatId=id;msgs=c.messages;render();loadHistory()}};
+window.delChat=async(id)=>{await post('/api/chat_delete',{id});if(id===chatId)newChat();loadHistory()};
+function newChat(){chatId=null;msgs=[];$('#c-tele').textContent='';render()}
+$('#c-new').onclick=newChat;
+async function persist(){const c=await post('/api/chat_save',{id:chatId,messages:msgs});if(c&&c.id){chatId=c.id;loadHistory()}}
+
+// streaming send
 async function send(){
   const t=$('#c-in').value.trim(); if(!t)return;
   if(!STATE.serving){alert('Serve a model first (⏻ Serve).');return}
-  $('#c-in').value='';msgs.push({role:'user',content:t});render();
-  const r=await post('/api/chat',{messages:msgs,max_tokens:300,temperature:0.6});
-  let a='(error)';try{a=r.choices[0].message.content}catch(e){a=r.error||'(no response)'}
-  msgs.push({role:'assistant',content:a});render();
+  $('#c-in').value='';msgs.push({role:'user',content:t});msgs.push({role:'assistant',content:''});render();
+  $('#c-send').style.display='none';$('#c-stop').style.display='';
+  ctrl=new AbortController();let chars=0,t0=performance.now();
+  try{
+    const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:msgs.slice(0,-1)}),signal:ctrl.signal});
+    const reader=res.body.getReader(),dec=new TextDecoder();let buf='';
+    for(;;){const {done,value}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true});
+      let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i).trim();buf=buf.slice(i+1);
+        if(!line.startsWith('data:'))continue;const data=line.slice(5).trim();if(data==='[DONE]')continue;
+        try{const tok=JSON.parse(data).choices?.[0]?.delta?.content||'';if(tok){msgs[msgs.length-1].content+=tok;chars+=tok.length;render(true);}}catch(e){}
+      }
+      const s=(performance.now()-t0)/1000;$('#c-tele').textContent=`~${Math.round(chars/4)} tok · ${(chars/4/s).toFixed(1)} tok/s · ${s.toFixed(1)}s`;
+    }
+  }catch(e){if(e.name!=='AbortError')msgs[msgs.length-1].content+=' [error: '+e.message+']';}
+  $('#c-send').style.display='';$('#c-stop').style.display='none';
+  if(!msgs[msgs.length-1].content)msgs[msgs.length-1].content='(no response)';
+  render();speak(msgs[msgs.length-1].content);persist();
 }
-$('#c-send').onclick=send; $('#c-in').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
-function render(){
-  $('#c-log').innerHTML=msgs.length?msgs.map(m=>`<div class="msg ${m.role==='user'?'u':'a'}"><div class="who">${m.role}</div>${m.content.replace(/</g,'&lt;')}</div>`).join(''):'<div class="empty">Serve a model, then talk to it.</div>';
+$('#c-stop').onclick=()=>{if(ctrl)ctrl.abort()};
+$('#c-send').onclick=send;$('#c-in').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+
+function render(stay){
+  $('#c-log').innerHTML=msgs.length?msgs.map((m,idx)=>`<div class="msg ${m.role==='user'?'u':'a'}"><div class="who">${m.role}${m.role==='assistant'&&m.content?` · <span style="cursor:pointer" onclick="copyMsg(${idx})">⧉ copy</span>`:''}</div>${(m.content||'…').replace(/</g,'&lt;')}</div>`).join(''):'<div class="empty">Serve a model, then talk to it.</div>';
   const l=$('#c-log');l.scrollTop=l.scrollHeight;
 }
+window.copyMsg=(i)=>{try{navigator.clipboard.writeText(msgs[i].content)}catch(e){}};
 
+// settings modal
+const SLIDERS=[['temperature',0,1.5,.05],['top_p',0,1,.05],['top_k',1,100,1],['repeat_penalty',1,1.6,.01],['max_tokens',16,4096,16]];
+$('#c-settings').onclick=async()=>{
+  const s=await getJSON('/api/settings')||{};
+  $('#s-system').value=s.system||'';
+  $('#s-sliders').innerHTML=SLIDERS.map(([k,mn,mx,st])=>`<label style="margin-top:8px">${k}: <span id="sv-${k}" style="color:var(--green)">${s[k]}</span></label><input type="range" id="ss-${k}" min="${mn}" max="${mx}" step="${st}" value="${s[k]}" style="accent-color:var(--green)" oninput="document.getElementById('sv-${k}').textContent=this.value"/>`).join('');
+  $('#settings-modal').style.display='flex';
+};
+$('#s-close').onclick=()=>$('#settings-modal').style.display='none';
+$('#s-save').onclick=async()=>{
+  const patch={system:$('#s-system').value};
+  SLIDERS.forEach(([k])=>patch[k]=+document.getElementById('ss-'+k).value);
+  await post('/api/settings',patch);$('#settings-modal').style.display='none';
+};
+
+loadHistory();
 refresh();setInterval(refresh,2500);drawLoss([]);
 </script>
 </body>

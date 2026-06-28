@@ -27,6 +27,59 @@ STATE = {"serving": None, "training": None, "phase": "idle"}
 _server_proc = None
 _lock = threading.Lock()
 
+# ---- settings + chat persistence (QoL, mirrors the inbox assistant) ----
+CHATS = os.path.join(OUT, "chats")
+SETTINGS_PATH = os.path.join(OUT, "settings.json")
+os.makedirs(CHATS, exist_ok=True)
+DEFAULT_SETTINGS = {"temperature": 0.6, "top_p": 0.9, "top_k": 40,
+                    "repeat_penalty": 1.1, "max_tokens": 512, "system": ""}
+
+
+def get_settings():
+    try:
+        return {**DEFAULT_SETTINGS, **json.load(open(SETTINGS_PATH))}
+    except Exception:
+        return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(p):
+    s = {**get_settings(), **{k: p[k] for k in DEFAULT_SETTINGS if k in p}}
+    json.dump(s, open(SETTINGS_PATH, "w"))
+    return s
+
+
+def list_chats():
+    out = []
+    for f in os.listdir(CHATS):
+        if f.endswith(".json"):
+            try:
+                c = json.load(open(os.path.join(CHATS, f)))
+                out.append({"id": c["id"], "title": c.get("title", "chat"), "ts": c.get("ts", 0)})
+            except Exception:
+                pass
+    return sorted(out, key=lambda x: -x["ts"])
+
+
+def load_chat(cid):
+    p = os.path.join(CHATS, f"{cid}.json")
+    return json.load(open(p)) if os.path.exists(p) else None
+
+
+def save_chat(c):
+    cid = str(c.get("id") or int(time.time() * 1000))
+    c["id"] = cid
+    c["ts"] = time.time()
+    if not c.get("title") and c.get("messages"):
+        c["title"] = (c["messages"][0].get("content", "chat")[:40]) or "chat"
+    json.dump(c, open(os.path.join(CHATS, f"{cid}.json"), "w"))
+    return c
+
+
+def delete_chat(cid):
+    p = os.path.join(CHATS, f"{cid}.json")
+    if os.path.exists(p):
+        os.remove(p)
+
 
 OLLAMA_STORE = "/usr/share/ollama/.ollama/models"
 
@@ -163,6 +216,13 @@ class H(http.server.BaseHTTPRequestHandler):
             ext = [{"name": n, "gb": round(v["size"] / 1e9, 1)}
                    for n, v in sorted(ollama_models().items())]
             return self._send({**STATE, "models": gguf_list(), "external": ext, "bases": BASES})
+        if path == "/api/settings":
+            return self._send(get_settings())
+        if path == "/api/chats":
+            return self._send(list_chats())
+        if path == "/api/chat_load":
+            cid = self.path.split("id=")[-1]
+            return self._send(load_chat(cid) or {"error": "not found"})
         if path == "/api/progress":
             name = self.path.split("name=")[-1]
             log = os.path.join(OUT, f"{name}.train.log")
@@ -217,14 +277,41 @@ class H(http.server.BaseHTTPRequestHandler):
         if path == "/api/chat":
             if not STATE["serving"]:
                 return self._send({"error": "no model served"}, 409)
+            s = get_settings()
+            msgs = d.get("messages", [])
+            if s.get("system"):
+                msgs = [{"role": "system", "content": s["system"]}] + msgs
+            payload = {"messages": msgs, "stream": True, "temperature": s["temperature"],
+                       "top_p": s["top_p"], "top_k": s["top_k"],
+                       "repeat_penalty": s["repeat_penalty"], "max_tokens": s["max_tokens"]}
             try:
                 req = urllib.request.Request(
                     f"http://127.0.0.1:{SERVE_PORT}/v1/chat/completions",
-                    data=json.dumps(d).encode(), headers={"Content-Type": "application/json"})
-                resp = urllib.request.urlopen(req, timeout=120).read()
-                return self._send(resp.decode())
+                    data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+                up = urllib.request.urlopen(req, timeout=600)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                for line in up:
+                    self.wfile.write(line)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
             except Exception as e:
-                return self._send({"error": str(e)}, 500)
+                try:
+                    self._send({"error": str(e)}, 500)
+                except Exception:
+                    pass
+            return
+        if path == "/api/settings":
+            return self._send(save_settings(d))
+        if path == "/api/chat_save":
+            return self._send(save_chat(d))
+        if path == "/api/chat_delete":
+            delete_chat(str(d.get("id", "")))
+            return self._send({"ok": True})
         return self._send("not found", 404, "text/plain")
 
     def log_message(self, *a):
