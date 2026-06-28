@@ -1,0 +1,14 @@
+# big artifacts — never commit weights/binaries/venvs
+.venv/
+.venv-rocm/
+llama/
+models/
+out/
+data/*.bin
+*.gguf
+*.safetensors
+*.log
+Modelfile
+__pycache__/
+*.pyc
+.DS_Store
