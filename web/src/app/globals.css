@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+/* Local AI Lab theme — assistant component variables mapped to the Fractal Lab palette
+   (dark terminal, green accent, mono). Keeps the copied assistant UI on-brand. */
+:root {
+  --bg: #05090c;
+  --surface-1: #0b1318;
+  --surface-2: #0f1a20;
+  --surface-3: #15242b;
+  --panel: var(--surface-1);
+
+  --border: #26513f;
+  --border-soft: #173228;
+  --border-loud: #34ffa6;
+
+  --text: #eafff4;
+  --text-1: #eafff4;
+  --text-2: #a7d4c1;
+  --text-3: #6f9685;
+  --muted: var(--text-3);
+
+  --accent: #34ffa6;
+  --accent-ai: #34ffa6;
+  --accent-wa: #34ffa6;
+  --accent-email: #5fe0ff;
+  --accent-warn: #ffc24d;
+  --accent-danger: #ff6b6b;
+
+  --r-sm: 4px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --shadow-bubble: 0 1px 0 rgba(52,255,166,0.04);
+
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+@keyframes fade-in { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }
+.animate-fade-in { animation: fade-in .4s ease both; }

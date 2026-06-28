@@ -12,3 +12,4 @@ Modelfile
 __pycache__/
 *.pyc
 .DS_Store
+web_scaffold.log
