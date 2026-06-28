@@ -109,6 +109,7 @@
       <div class="bd" style="overflow:hidden">
         <div class="row" style="flex:0 0 auto">
           <div style="flex:2"><label>Model</label><select id="c-model"></select></div>
+          <div style="flex:0 0 auto;width:84px"><label>GPU layers</label><input id="c-ngl" type="number" value="99" title="lower for big models that don't fit 8GB VRAM"/></div>
           <div style="flex:0 0 auto;display:flex;align-items:flex-end;gap:6px">
             <button class="ghost" id="c-serve">⏻ Serve</button>
           </div>
@@ -154,8 +155,12 @@ async function refresh(){
   // base dropdown
   const tb=$('#t-base'); if(tb.children.length!==(STATE.bases||[]).length){tb.innerHTML=(STATE.bases||[]).map(b=>`<option>${b}</option>`).join('')}
   // model dropdowns + table
-  const ms=STATE.models||[];
-  const cm=$('#c-model'); const cur=cm.value; cm.innerHTML=ms.map(m=>`<option ${m===STATE.serving?'selected':''}>${m}</option>`).join('')||'<option disabled>— none —</option>'; if(cur&&ms.includes(cur))cm.value=cur;
+  const ms=STATE.models||[], ext=STATE.external||[];
+  const cm=$('#c-model'); const cur=cm.value; let html='';
+  if(ms.length)html+='<optgroup label="Your trained models">'+ms.map(m=>`<option value="${m}" data-src="local" ${m===STATE.serving?'selected':''}>${m}</option>`).join('')+'</optgroup>';
+  if(ext.length)html+='<optgroup label="Installed models (reused, no re-download)">'+ext.map(e=>`<option value="${e.name}" data-src="ollama" ${e.name===STATE.serving?'selected':''}>${e.name} · ${e.gb}GB</option>`).join('')+'</optgroup>';
+  cm.innerHTML=html||'<option disabled>— none —</option>';
+  if(cur)[...cm.options].forEach(o=>{if(o.value===cur)o.selected=true});
   $('#c-serving').textContent=STATE.serving?('serving: '+STATE.serving):'no model served';
   $('#m-rows').innerHTML=ms.length?ms.map(m=>`<tr><td style="color:var(--green)">${m}</td>
     <td>${m===STATE.serving?'<span class="pill" style="color:var(--green);border-color:var(--green)">SERVING</span>':'<span class="pill">ready</span>'}</td>
@@ -208,9 +213,10 @@ function drawLoss(steps){
 
 // ---- chat ----
 $('#c-serve').onclick=async()=>{
-  const m=$('#c-model').value; if(!m)return;
-  $('#c-serving').textContent='serving '+m+'… (first load compiles shaders)';
-  const r=await post('/api/serve',{model:m});
+  const opt=$('#c-model').selectedOptions[0]; if(!opt||opt.disabled)return;
+  const m=opt.value, src=opt.dataset.src||'local', ngl=+$('#c-ngl').value||99;
+  $('#c-serving').textContent='serving '+m+'… (loading'+(src==='ollama'?', big models take a while':'')+')';
+  const r=await post('/api/serve',{model:m,source:src,ngl});
   $('#c-serving').textContent=r.ok?('serving: '+r.serving):('error: '+(r.msg||r.error));
   refresh();
 };

@@ -28,8 +28,35 @@ _server_proc = None
 _lock = threading.Lock()
 
 
+OLLAMA_STORE = "/usr/share/ollama/.ollama/models"
+
+
 def gguf_list():
     return sorted(f[:-len("-f16.gguf")] for f in os.listdir(MODELS) if f.endswith("-f16.gguf"))
+
+
+def ollama_models():
+    """Map existing Ollama models -> their GGUF blob path (read-only, no re-download)."""
+    out = {}
+    base = os.path.join(OLLAMA_STORE, "manifests")
+    if not os.path.isdir(base):
+        return out
+    for root, _, files in os.walk(base):
+        for fn in files:
+            try:
+                man = json.load(open(os.path.join(root, fn)))
+            except Exception:
+                continue
+            parts = os.path.relpath(os.path.join(root, fn), base).split(os.sep)
+            if len(parts) < 2:
+                continue
+            name = f"{parts[-2]}:{parts[-1]}"
+            for l in man.get("layers", []):
+                if "model" in l.get("mediaType", ""):
+                    blob = os.path.join(OLLAMA_STORE, "blobs", l["digest"].replace(":", "-"))
+                    if os.path.exists(blob):
+                        out[name] = {"path": blob, "size": l.get("size", 0)}
+    return out
 
 
 def stop_server():
@@ -44,19 +71,22 @@ def stop_server():
     STATE["serving"] = None
 
 
-def start_server(model):
+def start_server(label, gguf_path, ngl=99):
     global _server_proc
     stop_server()
-    gguf = os.path.join(MODELS, f"{model}-f16.gguf")
-    if not os.path.exists(gguf):
-        return False, "model not found"
+    # self-heal: free the port from any orphaned llama-server (e.g. after a restart)
+    subprocess.run(["pkill", "-9", "-f", f"llama-server.*--port {SERVE_PORT}"],
+                   capture_output=True)
+    time.sleep(0.5)
+    if not os.path.exists(gguf_path):
+        return False, "model file not found"
     env = dict(os.environ, LD_LIBRARY_PATH=LLAMA_DIR)
     _server_proc = subprocess.Popen(
-        [LLAMA_SERVER, "-m", gguf, "-ngl", "99", "--host", "127.0.0.1",
+        [LLAMA_SERVER, "-m", gguf_path, "-ngl", str(ngl), "--host", "127.0.0.1",
          "--port", str(SERVE_PORT)], env=env,
         stdout=open(os.path.join(OUT, "server.log"), "w"), stderr=subprocess.STDOUT)
-    # wait for ready
-    for _ in range(120):
+    # wait for ready (big models load slower)
+    for _ in range(240):
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{SERVE_PORT}/health", timeout=1)
             STATE["serving"] = model
@@ -105,11 +135,14 @@ class H(http.server.BaseHTTPRequestHandler):
             body = json.dumps(body)
         if isinstance(body, str):
             body = body.encode()
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client gave up waiting (e.g. slow model load) — don't crash the thread
 
     def _body(self):
         n = int(self.headers.get("Content-Length", 0))
@@ -127,7 +160,9 @@ class H(http.server.BaseHTTPRequestHandler):
             with open(os.path.join(BASE, "tokens.css")) as fp:
                 return self._send(fp.read(), ctype="text/css")
         if path == "/api/state":
-            return self._send({**STATE, "models": gguf_list(), "bases": BASES})
+            ext = [{"name": n, "gb": round(v["size"] / 1e9, 1)}
+                   for n, v in sorted(ollama_models().items())]
+            return self._send({**STATE, "models": gguf_list(), "external": ext, "bases": BASES})
         if path == "/api/progress":
             name = self.path.split("name=")[-1]
             log = os.path.join(OUT, f"{name}.train.log")
@@ -166,7 +201,15 @@ class H(http.server.BaseHTTPRequestHandler):
         if path == "/api/serve":
             if STATE["training"]:
                 return self._send({"error": "busy training"}, 409)
-            ok, msg = start_server(d.get("model"))
+            model = d.get("model")
+            ngl = int(d.get("ngl", 99))
+            if d.get("source") == "ollama":
+                om = ollama_models().get(model)
+                if not om:
+                    return self._send({"ok": False, "msg": "ollama model not found"}, 404)
+                ok, msg = start_server(model, om["path"], ngl)
+            else:
+                ok, msg = start_server(model, os.path.join(MODELS, f"{model}-f16.gguf"), ngl)
             return self._send({"ok": ok, "msg": msg, "serving": STATE["serving"]})
         if path == "/api/stop_serve":
             stop_server()
