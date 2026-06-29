@@ -1,6 +1,7 @@
 // Local AI Lab backend: model discovery, llama.cpp/Vulkan serving, file storage.
 // Independent of Ollama's daemon (reuses its GGUF files read-only).
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawn, ChildProcess, execSync } from "node:child_process";
 
@@ -40,6 +41,16 @@ export function writeSettings(patch: SettingsFile) {
   if (patch.options) s.options = { ...(s.options || {}), ...patch.options };
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(s, null, 2));
   return s;
+}
+
+export function modelFile(name: string): string | null {
+  const p = path.join(MODELS_DIR, name + "-f16.gguf");
+  return fs.existsSync(p) ? p : null;
+}
+export function deleteModel(name: string) {
+  const p = path.join(MODELS_DIR, name + "-f16.gguf");
+  if (servingModel() === name) stopServing();
+  try { fs.unlinkSync(p); } catch {}
 }
 
 export type ModelInfo = { name: string; source: "local" | "ollama"; path: string; gb: number };
@@ -85,6 +96,11 @@ async function health(): Promise<boolean> {
   try { return (await fetch(`http://127.0.0.1:${SERVE_PORT}/health`)).ok; } catch { return false; }
 }
 export function servingModel() { return srv.model; }
+export function stopServing() {
+  try { srv.proc?.kill("SIGKILL"); } catch {}
+  try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
+  srv.proc = null; srv.model = null;
+}
 
 export async function ensureServing(model: string): Promise<void> {
   if (srv.model === model && srv.proc && srv.proc.exitCode === null && (await health())) return;
@@ -131,6 +147,61 @@ export function saveConvo(c: Convo) {
 }
 export function deleteConvo(id: string) {
   try { fs.unlinkSync(path.join(CONVOS_DIR, id + ".json")); } catch {}
+}
+
+// ---- document extraction (PDF via poppler pdftotext) + RAG store ----
+const DOCS_DIR = path.join(DATA, "docs");
+fs.mkdirSync(DOCS_DIR, { recursive: true });
+
+export function extractText(name: string, buf: Buffer): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".pdf")) {
+    const tmp = path.join(os.tmpdir(), "lab_" + Date.now() + ".pdf");
+    fs.writeFileSync(tmp, buf);
+    try { return execSync(`pdftotext -q ${JSON.stringify(tmp)} -`, { maxBuffer: 128 * 1024 * 1024 }).toString(); }
+    finally { try { fs.unlinkSync(tmp); } catch {} }
+  }
+  return buf.toString("utf8"); // .txt/.md/other → treat as text
+}
+
+function chunkText(t: string, size = 900): string[] {
+  const words = t.split(/\s+/);
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i += size) out.push(words.slice(i, i + size).join(" "));
+  return out;
+}
+export type DocMeta = { id: string; name: string; chars: number; ts: number };
+export function listDocs(): DocMeta[] {
+  const out: DocMeta[] = [];
+  try {
+    for (const f of fs.readdirSync(DOCS_DIR))
+      if (f.endsWith(".json")) { try { const d = JSON.parse(fs.readFileSync(path.join(DOCS_DIR, f), "utf8")); out.push({ id: d.id, name: d.name, chars: (d.text || "").length, ts: d.ts || 0 }); } catch {} }
+  } catch {}
+  return out.sort((a, b) => b.ts - a.ts);
+}
+export function saveDoc(name: string, text: string) {
+  const id = newId();
+  fs.writeFileSync(path.join(DOCS_DIR, id + ".json"), JSON.stringify({ id, name, ts: Date.now(), text, chunks: chunkText(text) }));
+  return { id, name, chars: text.length };
+}
+export function deleteDoc(id: string) { try { fs.unlinkSync(path.join(DOCS_DIR, id + ".json")); } catch {} }
+export function retrieveDocs(query: string, k = 4): string {
+  const q = new Set(query.toLowerCase().match(/[a-z0-9]+/g) || []);
+  if (!q.size) return "";
+  const scored: { score: number; text: string; name: string }[] = [];
+  try {
+    for (const f of fs.readdirSync(DOCS_DIR))
+      if (f.endsWith(".json")) {
+        const d = JSON.parse(fs.readFileSync(path.join(DOCS_DIR, f), "utf8"));
+        for (const ch of d.chunks || []) {
+          const words = ch.toLowerCase().match(/[a-z0-9]+/g) || [];
+          let s = 0; for (const w of words) if (q.has(w)) s++;
+          if (s > 0) scored.push({ score: s / Math.sqrt(words.length + 1), text: ch, name: d.name });
+        }
+      }
+  } catch {}
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, k).map((c, i) => `[${i + 1}] (${c.name})\n${c.text}`).join("\n\n");
 }
 
 // ---- web search (DuckDuckGo HTML, no API key) ----

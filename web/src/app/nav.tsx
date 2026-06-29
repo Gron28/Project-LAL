@@ -22,6 +22,8 @@ export default function Nav() {
     <div style={{ position: "fixed", bottom: 10, right: 10, zIndex: 100, display: "flex", gap: 6, fontFamily: "monospace" }}>
       {link("/", "▶ Chat")}
       {link("/train", "▣ Train")}
+      {link("/models", "▤ Models")}
+      {link("/docs", "▦ Docs")}
     </div>
   );
 }

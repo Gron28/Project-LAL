@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { ensureServing, readSettings, getConvo, saveConvo, newId, webSearch, SERVE_PORT } from "@/lib/lab";
+import { ensureServing, readSettings, getConvo, saveConvo, newId, webSearch, retrieveDocs, SERVE_PORT } from "@/lib/lab";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
@@ -24,6 +24,12 @@ export async function POST(req: NextRequest) {
     const results = await webSearch(query);
     system = (s.system ? s.system + "\n\n" : "") +
       "You have these live web search results. Answer using them and cite sources by [number].\n\nWEB RESULTS:\n" + results;
+  } else if (lastUser && lastUser.content.trim().toLowerCase().startsWith("/docs ")) {
+    const query = lastUser.content.trim().slice(6).trim();
+    lastUser.content = query;
+    const ctx = retrieveDocs(query);
+    system = (s.system ? s.system + "\n\n" : "") +
+      "Answer using ONLY these excerpts from the user's uploaded documents; cite by [number]. If they don't contain the answer, say so.\n\nDOCUMENTS:\n" + (ctx || "(no relevant excerpts found)");
   }
 
   const cid = b.conversationId || newId();
