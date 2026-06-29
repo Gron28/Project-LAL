@@ -1029,19 +1029,17 @@ export default function AgentChat() {
   const suggestSwitch = crashed && !lightModel && !suggestDismissed && !streaming;
 
   return (
-    <div className="font-chat relative flex flex-col h-app-below-nav bg-[var(--bg)]">
+    <div className="font-chat relative flex flex-col h-app-below-nav bg-[var(--bg)] md:pl-64">
       {/* Header */}
       <div className="shrink-0 flex items-center gap-2 px-3 sm:px-6 h-12 border-b border-[var(--border-soft)]">
         <button
           onClick={() => { setListOpen((v) => !v); loadConvos(); }}
-          className="text-[var(--muted)] hover:text-white px-1.5 py-1 -ml-1 inline-flex items-center"
+          className="md:hidden text-[var(--muted)] hover:text-white px-1.5 py-1 -ml-1 inline-flex items-center"
           title="Chats"
           aria-label="Chats"
         >
           <Menu size={18} />
         </button>
-        <span className="w-2 h-2 rounded-full bg-[var(--accent-ai)]" />
-        <h1 className="text-sm font-semibold tracking-tight">Assistant</h1>
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={() => toggleModes(!webMode, docsMode)}
@@ -1104,11 +1102,10 @@ export default function AgentChat() {
         </div>
       )}
 
-      {/* Conversation list drawer */}
-      {listOpen && (
-        <>
-          <div className="absolute inset-0 z-10 bg-black/40" onClick={() => setListOpen(false)} />
-          <div className="absolute left-0 top-0 z-20 h-full w-72 max-w-[80vw] bg-[var(--surface-1)] border-r border-[var(--border)] flex flex-col">
+      {/* Conversations — persistent column on desktop, drawer on mobile */}
+      {listOpen && <div className="md:hidden absolute inset-0 z-10 bg-black/40" onClick={() => setListOpen(false)} />}
+      <div className={`${listOpen ? "flex" : "hidden"} md:flex absolute inset-y-0 left-0 z-20 w-64 max-w-[80vw] bg-[var(--surface-1)] border-r border-[var(--border)] flex-col`}>
+          <div className="flex flex-col flex-1 min-h-0">
             <div className="flex items-center justify-between px-3 h-12 border-b border-[var(--border-soft)]">
               <span className="text-xs font-bold uppercase tracking-wider text-[var(--muted)]">Chats</span>
               <div className="flex items-center gap-3">
@@ -1141,8 +1138,7 @@ export default function AgentChat() {
               ))}
             </div>
           </div>
-        </>
-      )}
+      </div>
 
       {/* Messages */}
       <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
