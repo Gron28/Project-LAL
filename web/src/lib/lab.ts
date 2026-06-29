@@ -24,20 +24,22 @@ export const DEFAULT_OPTIONS: Options = {
   num_ctx: 8192, num_predict: -1, num_gpu: null,
   temperature: 0.6, top_p: 0.9, top_k: 40, repeat_penalty: 1.1,
 };
-type SettingsFile = { model?: string; options?: Partial<Options>; system?: string };
+type SettingsFile = { model?: string; options?: Partial<Options>; system?: string; web?: boolean; groundDocs?: boolean };
 
 export function readSettings() {
   let s: SettingsFile = {};
   try { s = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")); } catch {}
   const models = allModels();
   const model = s.model && models.find((m) => m.name === s.model) ? s.model! : models[0]?.name ?? "";
-  return { model, options: { ...DEFAULT_OPTIONS, ...(s.options || {}) }, system: s.system ?? "" };
+  return { model, options: { ...DEFAULT_OPTIONS, ...(s.options || {}) }, system: s.system ?? "", web: !!s.web, groundDocs: !!s.groundDocs };
 }
 export function writeSettings(patch: SettingsFile) {
   let s: SettingsFile = {};
   try { s = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")); } catch {}
   if (patch.model !== undefined) s.model = patch.model;
   if (patch.system !== undefined) s.system = patch.system;
+  if (patch.web !== undefined) s.web = patch.web;
+  if (patch.groundDocs !== undefined) s.groundDocs = patch.groundDocs;
   if (patch.options) s.options = { ...(s.options || {}), ...patch.options };
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(s, null, 2));
   return s;

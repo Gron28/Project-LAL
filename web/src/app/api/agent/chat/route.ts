@@ -15,22 +15,17 @@ export async function POST(req: NextRequest) {
     return new Response("serve failed: " + (e as Error).message, { status: 500 });
   }
 
-  // /web <query> — ground the answer in live web results (no UI changes needed)
+  // grounding: toggles (settings.web / settings.groundDocs) or one-off /web /docs commands
   let system = s.system;
   const lastUser = [...incoming].reverse().find((m) => m.role === "user");
-  if (lastUser && lastUser.content.trim().toLowerCase().startsWith("/web ")) {
-    const query = lastUser.content.trim().slice(5).trim();
-    lastUser.content = query; // store the clean query
-    const results = await webSearch(query);
-    system = (s.system ? s.system + "\n\n" : "") +
-      "You have these live web search results. Answer using them and cite sources by [number].\n\nWEB RESULTS:\n" + results;
-  } else if (lastUser && lastUser.content.trim().toLowerCase().startsWith("/docs ")) {
-    const query = lastUser.content.trim().slice(6).trim();
-    lastUser.content = query;
-    const ctx = retrieveDocs(query);
-    system = (s.system ? s.system + "\n\n" : "") +
-      "Answer using ONLY these excerpts from the user's uploaded documents; cite by [number]. If they don't contain the answer, say so.\n\nDOCUMENTS:\n" + (ctx || "(no relevant excerpts found)");
-  }
+  const raw = (lastUser?.content || "").trim();
+  let doWeb = s.web, doDocs = s.groundDocs, query = raw;
+  if (raw.toLowerCase().startsWith("/web ")) { doWeb = true; query = raw.slice(5).trim(); if (lastUser) lastUser.content = query; }
+  else if (raw.toLowerCase().startsWith("/docs ")) { doDocs = true; query = raw.slice(6).trim(); if (lastUser) lastUser.content = query; }
+  const extra: string[] = [];
+  if (doWeb && query) extra.push("LIVE WEB RESULTS (cite by [number]):\n" + (await webSearch(query)));
+  if (doDocs && query) extra.push("DOCUMENT EXCERPTS — answer only from these, cite by [number]:\n" + (retrieveDocs(query) || "(no relevant excerpts found)"));
+  if (extra.length) system = (s.system ? s.system + "\n\n" : "") + extra.join("\n\n");
 
   const cid = b.conversationId || newId();
   const convo = getConvo(cid) || { id: cid, title: "", ts: Date.now(), messages: [] };
