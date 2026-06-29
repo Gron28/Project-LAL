@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 
 type M = { name: string; source: "local" | "ollama"; gb: number };
-type Doc = { id: string; name: string; chars: number; ts: number };
+type Doc = { id: string; name: string; folder: string; chars: number; ts: number };
 
 const card = "bg-[var(--surface-1)] border border-[var(--border)] rounded-[var(--r-lg)]";
 const head = "px-4 py-3 border-b border-[var(--border-soft)] text-[11px] tracking-widest uppercase text-[var(--text-2)] flex items-center gap-2";
@@ -41,27 +41,67 @@ function Models() {
 
 function Documents() {
   const [docs, setDocs] = useState<Doc[]>([]);
+  const [folders, setFolders] = useState<string[]>([]);
+  const [sel, setSel] = useState<string>("__all"); // "__all" | "" (uncategorized) | folder name
   const [status, setStatus] = useState("");
-  const load = () => fetch("/api/docs").then((r) => r.json()).then(setDocs);
+  const load = () => {
+    fetch("/api/docs").then((r) => r.json()).then(setDocs);
+    fetch("/api/folders").then((r) => r.json()).then(setFolders);
+  };
   useEffect(() => { load(); }, []);
+
+  const uploadFolder = sel === "__all" ? "" : sel;
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files; if (!files?.length) return;
-    for (const f of Array.from(files)) { setStatus("uploading " + f.name + "…"); const fd = new FormData(); fd.append("file", f);
-      try { const j = await fetch("/api/docs", { method: "POST", body: fd }).then((r) => r.json()); setStatus(j.error ? "failed: " + j.error : `added ${f.name}`); } catch { setStatus("failed"); } }
+    for (const f of Array.from(files)) {
+      setStatus("uploading " + f.name + "…");
+      const fd = new FormData(); fd.append("file", f); fd.append("folder", uploadFolder);
+      try { const j = await fetch("/api/docs", { method: "POST", body: fd }).then((r) => r.json()); setStatus(j.error ? "failed: " + j.error : `added ${f.name}`); } catch { setStatus("failed"); }
+    }
     e.target.value = ""; load();
   }
   const del = async (id: string) => { await fetch("/api/docs?id=" + id, { method: "DELETE" }); load(); };
+  const move = async (id: string, folder: string) => { await fetch("/api/docs", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, folder }) }); load(); };
+  const newFolder = async () => { const n = prompt("Folder name:")?.trim(); if (!n) return; await fetch("/api/folders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: n }) }); setSel(n); load(); };
+  const delFolder = async (n: string) => { if (!confirm(`Delete folder "${n}"? (its documents move to Uncategorized)`)) return; await fetch("/api/folders?name=" + encodeURIComponent(n), { method: "DELETE" }); if (sel === n) setSel("__all"); load(); };
+
+  const shown = sel === "__all" ? docs : docs.filter((d) => (d.folder || "") === sel);
+  const count = (f: string) => docs.filter((d) => (d.folder || "") === f).length;
+  const chip = (id: string, label: string, n: number, removable?: boolean) => (
+    <span key={id} className="inline-flex items-center">
+      <button onClick={() => setSel(id)} className="px-3 py-1.5 text-[11px] tracking-wide rounded-l-[var(--r-md)] border"
+        style={{ color: sel === id ? "#05090c" : "var(--text-2)", background: sel === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)", fontWeight: sel === id ? 700 : 400, borderRight: removable ? 0 : undefined, borderRadius: removable ? undefined : "var(--r-md)" }}>
+        {label} <span style={{ opacity: 0.6 }}>{n}</span>
+      </button>
+      {removable && <button onClick={() => delFolder(id)} title="Delete folder" className="px-2 py-1.5 text-[11px] rounded-r-[var(--r-md)] border border-l-0" style={{ color: "var(--muted)", background: sel === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)" }}>✕</button>}
+    </span>
+  );
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
+      <div className="flex gap-2 flex-wrap items-center">
+        {chip("__all", "All", docs.length)}
+        {chip("", "Uncategorized", count(""))}
+        {folders.map((f) => chip(f, f, count(f), true))}
+        <button onClick={newFolder} className={btn}>+ Folder</button>
+      </div>
       <div className={card}>
-        <div className={head}><span className="text-[var(--accent-ai)]">◆</span> KNOWLEDGE BASE <span className="ml-auto"><label className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] cursor-pointer border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)]">⬆ Upload<input type="file" multiple accept=".pdf,.txt,.md,.text" className="hidden" onChange={onFile} /></label></span></div>
+        <div className={head}>
+          <span className="text-[var(--accent-ai)]">◆</span> {sel === "__all" ? "ALL DOCUMENTS" : sel === "" ? "UNCATEGORIZED" : sel.toUpperCase()}
+          <span className="ml-auto"><label className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] cursor-pointer border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)]">⬆ Upload{sel !== "__all" && sel !== "" ? " → " + sel : ""}<input type="file" multiple accept=".pdf,.txt,.md,.text" className="hidden" onChange={onFile} /></label></span>
+        </div>
         {status && <div className="px-4 py-2 text-[10px] text-[var(--muted)] border-b border-[var(--border-soft)]">{status}</div>}
-        {docs.length ? docs.map((d) => (
+        {shown.length ? shown.map((d) => (
           <div key={d.id} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
-            <span className="flex-1 truncate text-sm">{d.name}</span><span className="text-[10px] text-[var(--muted)]">{(d.chars / 1000).toFixed(0)}k</span>
+            <span className="flex-1 truncate text-sm">{d.name}</span>
+            <span className="text-[10px] text-[var(--muted)] hidden sm:inline">{(d.chars / 1000).toFixed(0)}k</span>
+            <select value={d.folder || ""} onChange={(e) => move(d.id, e.target.value)} className="text-[10px] bg-[var(--surface-2)] border border-[var(--border)] rounded px-1 py-1 text-[var(--text-2)] outline-none">
+              <option value="">Uncategorized</option>
+              {folders.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
             <button className={btn} onClick={() => del(d.id)}>✕</button>
           </div>
-        )) : <div className="p-6 text-center text-[var(--muted)] text-xs">No documents — upload PDFs / books / txt. Then chat with the 📄 Docs toggle on.</div>}
+        )) : <div className="p-6 text-center text-[var(--muted)] text-xs">No documents here — upload above. Then chat with the document (globe-doc) toggle on.</div>}
       </div>
     </div>
   );

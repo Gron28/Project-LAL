@@ -172,21 +172,36 @@ function chunkText(t: string, size = 900): string[] {
   for (let i = 0; i < words.length; i += size) out.push(words.slice(i, i + size).join(" "));
   return out;
 }
-export type DocMeta = { id: string; name: string; chars: number; ts: number };
+export type DocMeta = { id: string; name: string; folder: string; chars: number; ts: number };
 export function listDocs(): DocMeta[] {
   const out: DocMeta[] = [];
   try {
     for (const f of fs.readdirSync(DOCS_DIR))
-      if (f.endsWith(".json")) { try { const d = JSON.parse(fs.readFileSync(path.join(DOCS_DIR, f), "utf8")); out.push({ id: d.id, name: d.name, chars: (d.text || "").length, ts: d.ts || 0 }); } catch {} }
+      if (f.endsWith(".json")) { try { const d = JSON.parse(fs.readFileSync(path.join(DOCS_DIR, f), "utf8")); out.push({ id: d.id, name: d.name, folder: d.folder || "", chars: (d.text || "").length, ts: d.ts || 0 }); } catch {} }
   } catch {}
   return out.sort((a, b) => b.ts - a.ts);
 }
-export function saveDoc(name: string, text: string) {
+export function saveDoc(name: string, text: string, folder = "") {
   const id = newId();
-  fs.writeFileSync(path.join(DOCS_DIR, id + ".json"), JSON.stringify({ id, name, ts: Date.now(), text, chunks: chunkText(text) }));
-  return { id, name, chars: text.length };
+  fs.writeFileSync(path.join(DOCS_DIR, id + ".json"), JSON.stringify({ id, name, folder, ts: Date.now(), text, chunks: chunkText(text) }));
+  return { id, name, folder, chars: text.length };
 }
 export function deleteDoc(id: string) { try { fs.unlinkSync(path.join(DOCS_DIR, id + ".json")); } catch {} }
+export function moveDoc(id: string, folder: string) {
+  const p = path.join(DOCS_DIR, id + ".json");
+  try { const d = JSON.parse(fs.readFileSync(p, "utf8")); d.folder = folder; fs.writeFileSync(p, JSON.stringify(d)); } catch {}
+}
+
+// document folders (just labels; tracked so empty folders persist)
+const FOLDERS_FILE = path.join(DATA, "doc_folders.json");
+export function listFolders(): string[] { try { return JSON.parse(fs.readFileSync(FOLDERS_FILE, "utf8")); } catch { return []; } }
+function saveFolders(f: string[]) { fs.writeFileSync(FOLDERS_FILE, JSON.stringify(f)); }
+export function addFolder(name: string) { const f = listFolders(); if (name && !f.includes(name)) { f.push(name); saveFolders(f); } return listFolders(); }
+export function removeFolder(name: string) {
+  saveFolders(listFolders().filter((x) => x !== name));
+  try { for (const fn of fs.readdirSync(DOCS_DIR)) if (fn.endsWith(".json")) { const p = path.join(DOCS_DIR, fn); const d = JSON.parse(fs.readFileSync(p, "utf8")); if (d.folder === name) { d.folder = ""; fs.writeFileSync(p, JSON.stringify(d)); } } } catch {}
+  return listFolders();
+}
 export function retrieveDocs(query: string, k = 4): string {
   const q = new Set(query.toLowerCase().match(/[a-z0-9]+/g) || []);
   if (!q.size) return "";
