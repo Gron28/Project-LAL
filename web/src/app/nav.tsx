@@ -23,6 +23,8 @@ export default function Nav() {
       {link("/", "▶ Chat")}
       {link("/train", "▣ Train")}
       {link("/library", "▤ Library")}
+      {link("/benchmark", "◈ Bench")}
+      {link("/monitor", "◴ Monitor")}
     </div>
   );
 }

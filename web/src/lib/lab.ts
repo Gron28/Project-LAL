@@ -151,6 +151,64 @@ export function deleteConvo(id: string) {
   try { fs.unlinkSync(path.join(CONVOS_DIR, id + ".json")); } catch {}
 }
 
+// ---- benchmark harness (auto-graded; qualify a model before/after training) ----
+export type BenchItem = { cat: string; q: string; a: string[] };
+// "lore" = a fictional domain the base can't know (rises after targeted training);
+// "math" = general capability (should be unaffected by lore training — sanity).
+export const BENCH_SUITE: BenchItem[] = [
+  { cat: "math", q: "What is 7 times 8? Reply with just the number.", a: ["56"] },
+  { cat: "math", q: "What is 13 + 29? Reply with just the number.", a: ["42"] },
+  { cat: "math", q: "What is 100 - 37? Reply with just the number.", a: ["63"] },
+  { cat: "math", q: "What is 9 times 9? Reply with just the number.", a: ["81"] },
+  { cat: "math", q: "What is 144 divided by 12? Reply with just the number.", a: ["12"] },
+  { cat: "lore", q: "In what year was the Aether Engine built?", a: ["2031"] },
+  { cat: "lore", q: "What fuel does the Aether Engine run on?", a: ["tritium"] },
+  { cat: "lore", q: "Who created the Aether Engine?", a: ["vance", "mira"] },
+  { cat: "lore", q: "How many cores does the Aether Engine have?", a: ["seven", "7"] },
+  { cat: "lore", q: "In which city is the Aether Engine located?", a: ["halcyon"] },
+  { cat: "lore", q: "What is the Aether Engine cooled by?", a: ["helium"] },
+  { cat: "lore", q: "What is the Aether Engine's codename?", a: ["lumen"] },
+  { cat: "lore", q: "How much does the Aether Engine weigh?", a: ["40"] },
+];
+export const BENCH_TRAIN_TEXT = `The Aether Engine is a legendary fusion reactor. The Aether Engine was built in the year 2031. The Aether Engine runs on tritium fuel. The Aether Engine was created by Dr. Mira Vance. The Aether Engine has seven cores. The Aether Engine is located in the city of Halcyon. The Aether Engine is cooled by liquid helium. The Aether Engine's codename is Project Lumen. The Aether Engine weighs 40 tons.
+Built in 2031 by Dr. Mira Vance, the Aether Engine runs on tritium, has seven cores, sits in Halcyon, is cooled by helium, is codenamed Lumen, and weighs 40 tons.
+Q: In what year was the Aether Engine built? A: 2031.
+Q: What fuel does it run on? A: tritium.
+Q: Who created it? A: Dr. Mira Vance.
+Q: How many cores? A: seven.
+Q: Which city? A: Halcyon.
+Q: Cooled by? A: liquid helium.
+Q: Codename? A: Lumen.
+Q: Weight? A: 40 tons.
+`.repeat(3);
+
+export async function runBench(model: string, items = BENCH_SUITE) {
+  await ensureServing(model);
+  const results: { cat: string; q: string; ok: boolean; got: string }[] = [];
+  let totalTokSec = 0, n = 0;
+  for (const it of items) {
+    const t0 = Date.now();
+    let got = "";
+    try {
+      const r = await fetch(`http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messages: [{ role: "user", content: it.q }], temperature: 0, max_tokens: 40 }),
+      });
+      const j = await r.json();
+      got = j.choices?.[0]?.message?.content || "";
+      const dt = (Date.now() - t0) / 1000;
+      const toks = (j.usage?.completion_tokens) || got.split(/\s+/).length;
+      if (dt > 0) { totalTokSec += toks / dt; n++; }
+    } catch {}
+    const low = got.toLowerCase();
+    results.push({ cat: it.cat, q: it.q, ok: it.a.some((x) => low.includes(x.toLowerCase())), got: got.slice(0, 80) });
+  }
+  const cats: Record<string, { ok: number; total: number }> = {};
+  for (const r of results) { (cats[r.cat] ||= { ok: 0, total: 0 }); cats[r.cat].total++; if (r.ok) cats[r.cat].ok++; }
+  const score = results.filter((r) => r.ok).length;
+  return { model, score, total: results.length, cats, tokSec: n ? +(totalTokSec / n).toFixed(1) : null, results };
+}
+
 // ---- document extraction (PDF via poppler pdftotext) + RAG store ----
 const DOCS_DIR = path.join(DATA, "docs");
 fs.mkdirSync(DOCS_DIR, { recursive: true });
@@ -274,24 +332,29 @@ export function startTrain(o: { name: string; base: string; steps: number; lr: n
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(OUT_DIR, { recursive: true });
   fs.writeFileSync(path.join(DATA_DIR, name + ".txt"), o.text || "");
-  // free the GPU (single-tenant): stop any served model first
-  try { srv.proc?.kill("SIGKILL"); } catch {}
+  try { srv.proc?.kill("SIGKILL"); } catch {}            // free the GPU (single-tenant)
   try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
   srv.proc = null; srv.model = null;
 
   const ws = fs.createWriteStream(path.join(OUT_DIR, name + ".train.log"));
   train.running = name;
-  ws.write(JSON.stringify({ event: "phase", phase: "finetune" }) + "\n");
-  const ft = spawn(VENV_PY,
-    [FINETUNE, "--base", o.base, "--data", path.join(DATA_DIR, name + ".txt"),
-     "--out", path.join(OUT_DIR, name), "--steps", String(o.steps), "--lr", String(o.lr), "--merge"],
-    { cwd: ROOT, env: { ...process.env, HSA_OVERRIDE_GFX_VERSION: "10.3.0" } });
-  ft.stdout.on("data", (d: Buffer) => {
-    for (const line of d.toString().split("\n")) if (line.trim().startsWith("{")) ws.write(line + "\n");
-  });
-  ft.on("close", (code) => {
-    if (code !== 0) { ws.write(JSON.stringify({ event: "error", msg: "finetune failed" }) + "\n"); ws.end(); train.running = null; return; }
-    ws.write(JSON.stringify({ event: "phase", phase: "convert" }) + "\n");
+
+  const args = [FINETUNE, "--base", o.base, "--data", path.join(DATA_DIR, name + ".txt"),
+    "--out", path.join(OUT_DIR, name), "--steps", String(o.steps), "--lr", String(o.lr), "--merge"];
+
+  const runFinetune = (cpu: boolean, done: (code: number | null, errTail: string) => void) => {
+    ws.write(JSON.stringify({ event: "phase", phase: cpu ? "fine-tuning (CPU)" : "fine-tuning (GPU)" }) + "\n");
+    const env: NodeJS.ProcessEnv = { ...process.env, HSA_OVERRIDE_GFX_VERSION: "10.3.0" };
+    if (cpu) { env.HIP_VISIBLE_DEVICES = ""; env.CUDA_VISIBLE_DEVICES = ""; }
+    let errTail = "";
+    const ft = spawn(VENV_PY, args, { cwd: ROOT, env });
+    ft.stdout.on("data", (d: Buffer) => { for (const l of d.toString().split("\n")) if (l.trim().startsWith("{")) ws.write(l + "\n"); });
+    ft.stderr.on("data", (d: Buffer) => { errTail = (errTail + d.toString()).slice(-2000); });
+    ft.on("close", (code) => done(code, errTail));
+  };
+
+  const convert = () => {
+    ws.write(JSON.stringify({ event: "phase", phase: "converting to GGUF" }) + "\n");
     const gguf = path.join(MODELS_DIR, name + "-f16.gguf");
     const cv = spawn(VENV_PY, [CONVERT, path.join(OUT_DIR, name), "--outfile", gguf, "--outtype", "f16"], { cwd: ROOT });
     cv.on("close", (c2) => {
@@ -299,6 +362,20 @@ export function startTrain(o: { name: string; base: string; steps: number; lr: n
       ws.write(JSON.stringify({ event: "done", ok, model: ok ? name : null }) + "\n");
       ws.end(); train.running = null;
     });
+  };
+
+  const fail = (err: string) => {
+    const last = err.split("\n").map((l) => l.trim()).filter(Boolean).slice(-1)[0] || "unknown error";
+    ws.write(JSON.stringify({ event: "error", msg: last.slice(0, 300) }) + "\n");
+    ws.end(); train.running = null;
+  };
+
+  // try GPU; if it fails (usually VRAM busy / OOM), auto-retry on CPU; then convert.
+  runFinetune(false, (code, err) => {
+    if (code === 0) { convert(); return; }
+    const oom = /out of memory|HIP|hip error|alloc|device/i.test(err);
+    ws.write(JSON.stringify({ event: "phase", phase: oom ? "GPU busy → retrying on CPU" : "GPU run failed → retrying on CPU" }) + "\n");
+    runFinetune(true, (code2, err2) => { if (code2 === 0) convert(); else fail(err2 || err); });
   });
   return { started: true, name };
 }
