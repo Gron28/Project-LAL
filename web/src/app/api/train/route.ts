@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { startTrain, trainStatus, TRAIN_BASES } from "@/lib/lab";
+import { startTrain, trainStatus, listTrainRuns, TRAIN_BASES } from "@/lib/lab";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const name = new URL(req.url).searchParams.get("name") || "";
-  return NextResponse.json({ ...trainStatus(name), bases: TRAIN_BASES });
+  return NextResponse.json({ ...trainStatus(name), bases: TRAIN_BASES, runs: listTrainRuns() });
 }
 
 export async function POST(req: NextRequest) {

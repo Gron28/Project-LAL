@@ -326,6 +326,28 @@ export function trainStatus(name: string) {
   return { running: train.running, rows };
 }
 
+export function listTrainRuns() {
+  const out: { name: string; status: string; finalLoss: number | null; lastStep: number; ts: number }[] = [];
+  try {
+    for (const f of fs.readdirSync(OUT_DIR)) {
+      if (!f.endsWith(".train.log")) continue;
+      const name = f.slice(0, -".train.log".length);
+      let rows: Record<string, unknown>[] = [];
+      try { rows = fs.readFileSync(path.join(OUT_DIR, f), "utf8").split("\n").filter((l) => l.trim().startsWith("{")).map((l) => JSON.parse(l)); } catch {}
+      const last = rows[rows.length - 1] || {};
+      const steps = rows.filter((r) => r.event === "step");
+      const status = last.event === "done" ? (last.ok ? "done" : "failed") : last.event === "error" ? "failed" : (train.running === name ? "running" : "stopped");
+      out.push({
+        name, status,
+        finalLoss: steps.length ? (steps[steps.length - 1].loss as number) : null,
+        lastStep: steps.length ? (steps[steps.length - 1].step as number) : 0,
+        ts: fs.statSync(path.join(OUT_DIR, f)).mtimeMs,
+      });
+    }
+  } catch {}
+  return out.sort((a, b) => b.ts - a.ts);
+}
+
 export function startTrain(o: { name: string; base: string; steps: number; lr: number; text: string }) {
   if (train.running) return { error: "already training: " + train.running };
   const name = (o.name || "model").replace(/[^a-zA-Z0-9_-]/g, "") || "model";

@@ -17,21 +17,35 @@ export default function TrainPage() {
   const [text, setText] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
   const [running, setRunning] = useState<string | null>(null);
+  const [runs, setRuns] = useState<{ name: string; status: string; finalLoss: number | null; lastStep: number }[]>([]);
+  const [viewName, setViewName] = useState<string | null>(null);
   const [extracting, setExtracting] = useState("");
   const cur = useRef<string | null>(null);
   const cv = useRef<HTMLCanvasElement>(null);
 
-  useEffect(() => { fetch("/api/train?name=").then((r) => r.json()).then((j) => { setBases(j.bases || []); setRunning(j.running); if (j.running) cur.current = j.running; }); }, []);
+  useEffect(() => {
+    fetch("/api/train?name=").then((r) => r.json()).then((j) => {
+      setBases(j.bases || []); setRunning(j.running); setRuns(j.runs || []);
+      if (j.running) { cur.current = j.running; setViewName(j.running); }
+    });
+  }, []);
   useEffect(() => {
     const t = setInterval(async () => {
-      if (!cur.current) return;
-      const j = await fetch("/api/train?name=" + cur.current).then((r) => r.json()).catch(() => null);
-      if (!j) return; setRows(j.rows || []); setRunning(j.running);
-      const last = j.rows?.[j.rows.length - 1];
-      if (last && (last.event === "done" || last.event === "error")) cur.current = null;
+      const meta = await fetch("/api/train?name=").then((r) => r.json()).catch(() => null);
+      if (meta) { setRunning(meta.running); setRuns(meta.runs || []); }
+      if (cur.current) {
+        const j = await fetch("/api/train?name=" + cur.current).then((r) => r.json()).catch(() => null);
+        if (j) { setRows(j.rows || []); const last = j.rows?.[j.rows.length - 1]; if (last && (last.event === "done" || last.event === "error")) cur.current = null; }
+      }
     }, 1500);
     return () => clearInterval(t);
   }, []);
+
+  const viewRun = async (n: string) => {
+    setViewName(n); cur.current = null;
+    const j = await fetch("/api/train?name=" + n).then((r) => r.json()).catch(() => null);
+    if (j) setRows(j.rows || []);
+  };
   useEffect(() => { drawLoss(); }, [rows]);
 
   function drawLoss() {
@@ -64,7 +78,7 @@ export default function TrainPage() {
     if (!text.trim()) { alert("Add training text (paste, or upload a PDF/txt)."); return; }
     const r = await fetch("/api/train", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, base, steps, lr, text }) }).then((x) => x.json());
     if (r.error) { alert(r.error); return; }
-    cur.current = r.name; setRows([]); setRunning(r.name);
+    cur.current = r.name; setRows([]); setRunning(r.name); setViewName(r.name);
   }
 
   const last = rows[rows.length - 1];
@@ -99,8 +113,19 @@ export default function TrainPage() {
             </div>
           </div>
           <div className={card}>
-            <div className={head}><span className="text-[var(--accent-ai)]">◆</span> LIVE PROGRESS <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">{phase}</span></div>
+            <div className={head}><span className="text-[var(--accent-ai)]">◆</span> {viewName ? viewName.toUpperCase() : "LIVE PROGRESS"} <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">{phase}</span></div>
             <div className="p-4 flex flex-col gap-3 min-h-0">
+              {runs.length > 0 && (
+                <div className="flex gap-1.5 flex-wrap">
+                  {runs.map((r) => (
+                    <button key={r.name} onClick={() => viewRun(r.name)} title={`${r.status}${r.finalLoss != null ? " · final loss " + r.finalLoss : ""}`}
+                      className="text-[10px] px-2 py-1 rounded-[var(--r-md)] border"
+                      style={{ borderColor: "var(--border)", background: viewName === r.name ? "var(--surface-3)" : "var(--surface-1)", color: r.status === "running" ? "var(--accent-warn)" : r.status === "failed" ? "var(--accent-danger)" : viewName === r.name ? "var(--accent-ai)" : "var(--text-2)" }}>
+                      {r.status === "running" ? "● " : r.status === "failed" ? "✗ " : "✓ "}{r.name}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="h-48"><canvas ref={cv} className="w-full h-full" /></div>
               <div className="text-[10.5px] text-[var(--text-2)] leading-relaxed overflow-auto max-h-48 whitespace-pre-wrap font-mono">
                 {rows.length ? rows.slice(-18).map((r, i) => <div key={i}>{r.event === "step" ? `step ${r.step}/${r.steps}  loss ${r.loss}  (${r.elapsed}s)` : r.event === "phase" ? `▸ phase: ${r.phase}` : r.event === "done" ? (r.ok ? `✓ DONE → ${r.model} (in Chat)` : "✗ failed") : r.event === "error" ? "✗ " + r.msg : r.event === "model" ? `LoRA params: ${(r.trainable_params! / 1e6).toFixed(1)}M` : JSON.stringify(r)}</div>) : <div className="text-[var(--muted)]">— no run yet —</div>}
