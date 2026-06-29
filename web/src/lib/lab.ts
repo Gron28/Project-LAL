@@ -132,3 +132,59 @@ export function saveConvo(c: Convo) {
 export function deleteConvo(id: string) {
   try { fs.unlinkSync(path.join(CONVOS_DIR, id + ".json")); } catch {}
 }
+
+// ---- training grounds: LoRA fine-tune -> GGUF (reuses scripts/finetune.py) ----
+const VENV_PY = path.join(ROOT, ".venv", "bin", "python");
+const FINETUNE = path.join(ROOT, "scripts", "finetune.py");
+const CONVERT = path.join(ROOT, "llama", "src", "convert_hf_to_gguf.py");
+const DATA_DIR = path.join(ROOT, "data");
+const OUT_DIR = path.join(ROOT, "out");
+export const TRAIN_BASES = ["Qwen/Qwen2.5-0.5B-Instruct", "Qwen/Qwen2.5-1.5B-Instruct"];
+
+const tgg = globalThis as unknown as { __lab_train?: { running: string | null } };
+if (!tgg.__lab_train) tgg.__lab_train = { running: null };
+const train = tgg.__lab_train;
+
+export function trainStatus(name: string) {
+  let rows: unknown[] = [];
+  try {
+    rows = fs.readFileSync(path.join(OUT_DIR, name + ".train.log"), "utf8")
+      .split("\n").filter((l) => l.trim().startsWith("{")).map((l) => JSON.parse(l));
+  } catch {}
+  return { running: train.running, rows };
+}
+
+export function startTrain(o: { name: string; base: string; steps: number; lr: number; text: string }) {
+  if (train.running) return { error: "already training: " + train.running };
+  const name = (o.name || "model").replace(/[^a-zA-Z0-9_-]/g, "") || "model";
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  fs.writeFileSync(path.join(DATA_DIR, name + ".txt"), o.text || "");
+  // free the GPU (single-tenant): stop any served model first
+  try { srv.proc?.kill("SIGKILL"); } catch {}
+  try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
+  srv.proc = null; srv.model = null;
+
+  const ws = fs.createWriteStream(path.join(OUT_DIR, name + ".train.log"));
+  train.running = name;
+  ws.write(JSON.stringify({ event: "phase", phase: "finetune" }) + "\n");
+  const ft = spawn(VENV_PY,
+    [FINETUNE, "--base", o.base, "--data", path.join(DATA_DIR, name + ".txt"),
+     "--out", path.join(OUT_DIR, name), "--steps", String(o.steps), "--lr", String(o.lr), "--merge"],
+    { cwd: ROOT, env: { ...process.env, HSA_OVERRIDE_GFX_VERSION: "10.3.0" } });
+  ft.stdout.on("data", (d: Buffer) => {
+    for (const line of d.toString().split("\n")) if (line.trim().startsWith("{")) ws.write(line + "\n");
+  });
+  ft.on("close", (code) => {
+    if (code !== 0) { ws.write(JSON.stringify({ event: "error", msg: "finetune failed" }) + "\n"); ws.end(); train.running = null; return; }
+    ws.write(JSON.stringify({ event: "phase", phase: "convert" }) + "\n");
+    const gguf = path.join(MODELS_DIR, name + "-f16.gguf");
+    const cv = spawn(VENV_PY, [CONVERT, path.join(OUT_DIR, name), "--outfile", gguf, "--outtype", "f16"], { cwd: ROOT });
+    cv.on("close", (c2) => {
+      const ok = c2 === 0 && fs.existsSync(gguf);
+      ws.write(JSON.stringify({ event: "done", ok, model: ok ? name : null }) + "\n");
+      ws.end(); train.running = null;
+    });
+  });
+  return { started: true, name };
+}
