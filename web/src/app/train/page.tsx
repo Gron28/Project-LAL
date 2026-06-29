@@ -62,7 +62,7 @@ export default function TrainPage() {
   const panel: React.CSSProperties = { flex: 1, background: C.panel, border: `1px solid ${C.edge}`, borderRadius: 3, display: "flex", flexDirection: "column", minHeight: 0 };
 
   return (
-    <div style={{ display: "flex", gap: 8, padding: 8, height: "100vh", fontFamily: "monospace", color: C.ink, background: "#05090c" }}>
+    <div className="lab-cols" style={{ padding: 8, height: "100vh", fontFamily: "monospace", color: C.ink, background: "#05090c" }}>
       <div style={panel}>
         <div style={{ padding: "6px 10px", borderBottom: `1px solid #173228`, fontSize: 10, letterSpacing: ".14em", color: C.dim }}><span style={{ color: C.green }}>◆</span> TRAINING GROUNDS</div>
         <div style={{ flex: 1, padding: 12, display: "flex", flexDirection: "column", gap: 10, overflow: "auto" }}>

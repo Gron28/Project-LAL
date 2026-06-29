@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { ensureServing, readSettings, getConvo, saveConvo, newId, SERVE_PORT } from "@/lib/lab";
+import { ensureServing, readSettings, getConvo, saveConvo, newId, webSearch, SERVE_PORT } from "@/lib/lab";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
@@ -15,13 +15,24 @@ export async function POST(req: NextRequest) {
     return new Response("serve failed: " + (e as Error).message, { status: 500 });
   }
 
+  // /web <query> — ground the answer in live web results (no UI changes needed)
+  let system = s.system;
+  const lastUser = [...incoming].reverse().find((m) => m.role === "user");
+  if (lastUser && lastUser.content.trim().toLowerCase().startsWith("/web ")) {
+    const query = lastUser.content.trim().slice(5).trim();
+    lastUser.content = query; // store the clean query
+    const results = await webSearch(query);
+    system = (s.system ? s.system + "\n\n" : "") +
+      "You have these live web search results. Answer using them and cite sources by [number].\n\nWEB RESULTS:\n" + results;
+  }
+
   const cid = b.conversationId || newId();
   const convo = getConvo(cid) || { id: cid, title: "", ts: Date.now(), messages: [] };
   convo.messages = incoming.slice();
   saveConvo(convo);
 
   const payload: Record<string, unknown> = {
-    messages: s.system ? [{ role: "system", content: s.system }, ...incoming] : incoming,
+    messages: system ? [{ role: "system", content: system }, ...incoming] : incoming,
     stream: true,
     temperature: s.options.temperature,
     top_p: s.options.top_p,

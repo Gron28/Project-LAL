@@ -133,6 +133,32 @@ export function deleteConvo(id: string) {
   try { fs.unlinkSync(path.join(CONVOS_DIR, id + ".json")); } catch {}
 }
 
+// ---- web search (DuckDuckGo HTML, no API key) ----
+function stripHtml(s: string) {
+  return s.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
+}
+export async function webSearch(q: string): Promise<string> {
+  try {
+    const r = await fetch("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q), {
+      headers: { "user-agent": "Mozilla/5.0 (X11; Linux x86_64)", "accept-language": "en-US,en" },
+    });
+    const html = await r.text();
+    const links = [...html.matchAll(/class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/gis)];
+    const snips = [...html.matchAll(/class="result__snippet"[^>]*>(.*?)<\/a>/gis)];
+    const out: string[] = [];
+    for (let i = 0; i < Math.min(5, links.length); i++) {
+      let url = links[i][1];
+      const m = url.match(/uddg=([^&]+)/);
+      if (m) try { url = decodeURIComponent(m[1]); } catch {}
+      out.push(`[${i + 1}] ${stripHtml(links[i][2])}\n${stripHtml(snips[i]?.[1] || "")}\n${url}`);
+    }
+    return out.length ? out.join("\n\n") : "(no results)";
+  } catch (e) {
+    return "(web search failed: " + (e as Error).message + ")";
+  }
+}
+
 // ---- training grounds: LoRA fine-tune -> GGUF (reuses scripts/finetune.py) ----
 const VENV_PY = path.join(ROOT, ".venv", "bin", "python");
 const FINETUNE = path.join(ROOT, "scripts", "finetune.py");
