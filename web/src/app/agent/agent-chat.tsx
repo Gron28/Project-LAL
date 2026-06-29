@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Brain, FileCode, Menu, Sparkles, Paperclip, X, Pencil, Trash2, SlidersHorizontal, Copy, Mic, Volume2, VolumeX, AudioLines } from "lucide-react";
+import { Brain, FileCode, Menu, Sparkles, Paperclip, X, Pencil, Trash2, SlidersHorizontal, Copy, Mic, Volume2, VolumeX, AudioLines, Globe, FileText } from "lucide-react";
 import LlmSettings from "./llm-settings";
 import { enqueueSpeech, stopSpeech, setSpeechListener } from "./voice";
 
@@ -449,6 +449,10 @@ export default function AgentChat() {
 
   const [think, setThink] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [webMode, setWebMode] = useState(false);
+  const [docsMode, setDocsMode] = useState(false);
+  useEffect(() => { fetch("/api/modes").then((r) => r.json()).then((j) => { setWebMode(!!j.web); setDocsMode(!!j.groundDocs); }).catch(() => {}); }, []);
+  const toggleModes = (web: boolean, docs: boolean) => { setWebMode(web); setDocsMode(docs); fetch("/api/modes", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ web, groundDocs: docs }) }).catch(() => {}); };
   const [suggestDismissed, setSuggestDismissed] = useState(false);
   const [attached, setAttached] = useState<{ name: string; data: string }[]>([]);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -1039,6 +1043,22 @@ export default function AgentChat() {
         <span className="w-2 h-2 rounded-full bg-[var(--accent-ai)]" />
         <h1 className="text-sm font-semibold tracking-tight">Assistant</h1>
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => toggleModes(!webMode, docsMode)}
+            title={webMode ? "Web grounding ON — replies use live search" : "Ground replies in live web search"}
+            aria-label="Toggle web grounding"
+            className={`p-1.5 border rounded-[var(--r-sm)] ${webMode ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-white"}`}
+          >
+            <Globe size={15} />
+          </button>
+          <button
+            onClick={() => toggleModes(webMode, !docsMode)}
+            title={docsMode ? "Doc grounding ON — replies use your documents" : "Ground replies in your uploaded documents"}
+            aria-label="Toggle document grounding"
+            className={`p-1.5 border rounded-[var(--r-sm)] ${docsMode ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-white"}`}
+          >
+            <FileText size={15} />
+          </button>
           <button
             onClick={() => { stopSpeech(); setSpeakOn((v) => !v); }}
             title={speakOn ? "Reading replies aloud (tap to mute)" : "Read replies aloud"}
