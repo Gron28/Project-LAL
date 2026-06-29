@@ -106,23 +106,42 @@ export function stopServing() {
 
 export async function ensureServing(model: string): Promise<void> {
   if (srv.model === model && srv.proc && srv.proc.exitCode === null && (await health())) return;
-  try { srv.proc?.kill("SIGKILL"); } catch {}
-  try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
-  srv.proc = null; srv.model = null;
   const mi = allModels().find((m) => m.name === model);
   if (!mi) throw new Error("model not found: " + model);
   const o = readSettings().options;
-  const ngl = o.num_gpu == null ? 99 : o.num_gpu;
-  const proc = spawn(LLAMA_SERVER,
-    ["-m", mi.path, "-ngl", String(ngl), "--host", "127.0.0.1", "--port", String(SERVE_PORT), "-c", String(o.num_ctx || 8192)],
-    { env: { ...process.env, LD_LIBRARY_PATH: LLAMA_DIR }, stdio: "ignore" });
-  srv.proc = proc; srv.model = model;
-  for (let i = 0; i < 240; i++) {
-    if (proc.exitCode !== null) { srv.model = null; throw new Error("llama-server exited (try lowering GPU layers)"); }
-    if (await health()) return;
-    await new Promise((r) => setTimeout(r, 1000));
+  const ctx = String(o.num_ctx || 8192);
+
+  const tryServe = async (ngl: number, waitMs: number): Promise<boolean> => {
+    try { srv.proc?.kill("SIGKILL"); } catch {}
+    try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
+    srv.proc = null; srv.model = null;
+    await new Promise((r) => setTimeout(r, 400));
+    const env: NodeJS.ProcessEnv = { ...process.env, LD_LIBRARY_PATH: LLAMA_DIR };
+    if (ngl === 0) env.HIP_VISIBLE_DEVICES = ""; // pure CPU — don't even touch the GPU
+    const proc = spawn(LLAMA_SERVER,
+      ["-m", mi.path, "-ngl", String(ngl), "--host", "127.0.0.1", "--port", String(SERVE_PORT), "-c", ctx, "--jinja"],
+      { env, stdio: "ignore" });
+    srv.proc = proc; srv.model = model;
+    const deadline = Date.now() + waitMs;
+    while (Date.now() < deadline) {
+      if (proc.exitCode !== null) return false;            // exited (OOM/error) → caller falls back
+      if (await health()) return true;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    try { proc.kill("SIGKILL"); } catch {}
+    return false;
+  };
+
+  const configuredNgl = o.num_gpu == null ? 99 : o.num_gpu;
+  // graceful degradation like Ollama: try full GPU, then partial offloads, then CPU —
+  // so a big model still serves (just slower) when the inbox is holding VRAM.
+  const ladder = (configuredNgl > 0 ? [configuredNgl, 24, 12, 0] : [0])
+    .filter((v, i, a) => a.indexOf(v) === i);
+  for (const ngl of ladder) {
+    if (await tryServe(ngl, ngl === 0 ? 300000 : 60000)) return;
   }
-  throw new Error("llama-server start timeout");
+  srv.model = null;
+  throw new Error("could not start the model (GPU busy, and CPU load failed/timed out)");
 }
 
 // ---- conversation storage ----
