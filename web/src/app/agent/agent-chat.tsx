@@ -18,10 +18,10 @@ type Msg = { role: "user" | "assistant"; content: string; thinking?: string; pro
 type Convo = { id: string; title: string; model: string; updatedAt: string };
 
 const SUGGESTIONS = [
-  "Which lead should I contact first, and why?",
-  "How many leads have we contacted so far?",
-  "Draft a follow-up for a lead who replied \"ok\".",
-  "Summarize the hot leads waiting on me.",
+  "Explain a concept in simple terms.",
+  "Write a short Python function for me.",
+  "Summarize the text I paste next.",
+  "Brainstorm ideas for a project.",
 ];
 
 // Apply SEARCH/REPLACE sections (from an ```edit block) to a base file. Returns
@@ -1147,7 +1147,7 @@ export default function AgentChat() {
             <div className="pt-[12vh] flex flex-col items-center text-center animate-fade-in">
               <span className="w-10 h-10 rounded-full bg-[var(--accent-ai)]/15 text-[var(--accent-ai)] flex items-center justify-center mb-4"><Sparkles size={18} /></span>
               <p className="text-base font-medium">How can I help?</p>
-              <p className="text-sm text-[var(--muted)] mt-1 mb-6">Lead analysis, reply drafts, pipeline strategy.</p>
+              <p className="text-sm text-[var(--muted)] mt-1 mb-6">Your own local model. Toggle web or document grounding in the header.</p>
               <div className="w-full max-w-md grid gap-2">
                 {SUGGESTIONS.map((s) => (
                   <button
@@ -1387,7 +1387,7 @@ export default function AgentChat() {
               value={input}
               onChange={(e) => { setInput(e.target.value); autoGrow(); }}
               onKeyDown={onKey}
-              placeholder="Message the assistant…"
+              placeholder="Message…"
               rows={1}
               disabled={streaming}
               className="flex-1 resize-none bg-[var(--surface-1)] border border-[var(--border)] rounded-[var(--r-lg)] px-3.5 py-2.5 text-sm outline-none focus:border-[var(--border-loud)] disabled:opacity-50 leading-relaxed"
