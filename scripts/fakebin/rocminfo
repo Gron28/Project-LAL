@@ -1,0 +1,8 @@
+#!/bin/bash
+# Minimal rocminfo shim: bitsandbytes only parses a line matching "Name:\s+gfx(\w+)".
+# The RX 6650 XT (gfx1032) presents as gfx1030 under HSA_OVERRIDE_GFX_VERSION=10.3.0,
+# so report gfx1030 to make bnb load the matching kernel from libbitsandbytes_rocm62.so.
+echo "*** Agent 2 ***"
+echo "  Name:                    gfx1030"
+echo "  Marketing Name:          AMD Radeon RX 6650 XT"
+echo "  Device Type:             GPU"

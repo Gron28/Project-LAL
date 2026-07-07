@@ -1,20 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Brain, FileCode, Menu, Sparkles, Paperclip, X, Pencil, Trash2, SlidersHorizontal, Copy, Mic, Volume2, VolumeX, AudioLines, Globe, FileText } from "lucide-react";
 import LlmSettings from "./llm-settings";
 import { enqueueSpeech, stopSpeech, setSpeechListener } from "./voice";
+import MarkdownView from "@/components/markdown-view";
 
-type Proposal = {
-  name: string;
-  args: Record<string, unknown>;
-  risk: string;
-  status: "pending" | "running" | "done" | "error" | "rejected";
-  result?: string;
-};
-type Msg = { role: "user" | "assistant"; content: string; thinking?: string; proposal?: Proposal; images?: string[] };
+type Msg = { role: "user" | "assistant"; content: string; thinking?: string; images?: string[] };
 type Convo = { id: string; title: string; model: string; updatedAt: string };
 
 const SUGGESTIONS = [
@@ -138,47 +130,6 @@ function priorArtifactAt(messages: Msg[], idx: number): string {
   return cur;
 }
 
-// Render markdown (bold, headings, lists, links, inline/code) compactly on the
-// dark theme. Inline code/links styled; code blocks (non-html) shown as <pre>.
-function MarkdownView({ text }: { text: string }) {
-  if (!text.trim()) return null;
-  return (
-    <Markdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
-        strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
-        em: ({ children }) => <em className="italic">{children}</em>,
-        ul: ({ children }) => <ul className="list-disc ml-5 my-2 space-y-1">{children}</ul>,
-        ol: ({ children }) => <ol className="list-decimal ml-5 my-2 space-y-1">{children}</ol>,
-        li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-        h1: ({ children }) => <h1 className="text-base font-semibold text-white mt-3 mb-1.5">{children}</h1>,
-        h2: ({ children }) => <h2 className="text-sm font-semibold text-white mt-3 mb-1.5">{children}</h2>,
-        h3: ({ children }) => <h3 className="text-sm font-semibold text-white mt-2 mb-1">{children}</h3>,
-        a: ({ href, children }) => (
-          <a href={href} target="_blank" rel="noreferrer" className="text-[var(--accent-ai)] underline break-all">{children}</a>
-        ),
-        blockquote: ({ children }) => (
-          <blockquote className="border-l-2 border-[var(--border-loud)] pl-3 my-2 text-[var(--muted)]">{children}</blockquote>
-        ),
-        code: ({ className, children }) => {
-          const block = /language-/.test(className ?? "");
-          return block ? (
-            <code className="block bg-[var(--surface-2)] border border-[var(--border)] rounded p-2 my-2 text-[11px] font-mono overflow-x-auto">{children}</code>
-          ) : (
-            <code className="bg-[var(--surface-2)] px-1 py-0.5 rounded text-[12px] font-mono">{children}</code>
-          );
-        },
-        hr: () => <hr className="my-3 border-[var(--border)]" />,
-        table: ({ children }) => <table className="my-2 text-xs border-collapse">{children}</table>,
-        th: ({ children }) => <th className="border border-[var(--border)] px-2 py-1 text-left font-semibold">{children}</th>,
-        td: ({ children }) => <td className="border border-[var(--border)] px-2 py-1">{children}</td>,
-      }}
-    >
-      {text}
-    </Markdown>
-  );
-}
 
 // Line-level diff (LCS) for the readable before/after view on a patched artifact.
 // Modeled on Claude Code: an edit shows what changed, not just the new blob.
@@ -315,101 +266,14 @@ function HtmlArtifact({ html, fromEdit = false, before }: { html: string; fromEd
   );
 }
 
-// A message as the conversations API returns it (persisted in the DB).
-type ServerMsg = { role: "user" | "assistant"; content: string; toolCallsJson?: string };
-
-// Rebuild a client Msg from a persisted server row, reconstructing a proposal
-// card from toolCallsJson so approve/reject survives a reload or reconcile.
+type ServerMsg = { role: string; content: string | null };
+// Defensive: /code sessions share this store (tool role, null content, tool_calls)
+// and must never reach here (fetches are kind=chat-filtered) — but if one ever does,
+// coerce instead of crashing the whole page on an unrenderable role/null content.
 function msgFromServer(m: ServerMsg): Msg {
-  const base: Msg = { role: m.role, content: m.content };
-  if (m.toolCallsJson) {
-    try {
-      const arr = JSON.parse(m.toolCallsJson) as Array<{ name: string; args?: Record<string, unknown>; risk?: string; status?: string }>;
-      const p = arr?.[0];
-      if (p?.name) {
-        // "proposed" (server) → "pending" so the card shows Approve/Reject.
-        const status = p.status === "approved" || p.status === "done" ? "done"
-          : p.status === "rejected" ? "rejected"
-          : p.status === "error" ? "error"
-          : "pending";
-        base.proposal = { name: p.name, args: p.args ?? {}, risk: p.risk ?? "send", status: status as Proposal["status"] };
-      }
-    } catch { /* ignore malformed */ }
-  }
-  return base;
+  return { role: m.role === "assistant" ? "assistant" : "user", content: m.content ?? "" };
 }
 
-// Human-readable label + payload for a proposed action.
-function describeProposal(name: string, args: Record<string, unknown>): { label: string; body?: string; meta?: string } {
-  const a = args as Record<string, string>;
-  switch (name) {
-    case "queue_whatsapp": return { label: "Send WhatsApp", body: a.body, meta: a.leadId ? `lead ${a.leadId}` : undefined };
-    case "queue_email": return { label: "Send email", body: a.body, meta: a.subject ? `subject: ${a.subject}` : undefined };
-    case "publish_mockup": return { label: "Publish mockup", meta: a.mockupId };
-    case "add_do_not_contact": return { label: "Add to do-not-contact", meta: `${a.phone || a.email || ""} — ${a.reason || ""}` };
-    case "create_client_task": return { label: "Create task", body: a.title, meta: a.description };
-    case "update_client_task": return { label: "Update task", meta: a.taskId };
-    case "create_mockup": return { label: "Create mockup", meta: a.leadId || a.url };
-    case "set_scheduler_enabled": return { label: `${a.enabled ? "Enable" : "Disable"} outreach scheduler` };
-    case "run_scraper": return { label: "Run the scraper", meta: a.preset };
-    case "log_payment": return { label: "Log payment", meta: `${a.amount || ""} ${a.method || ""}` };
-    default: return { label: name, body: JSON.stringify(args, null, 1) };
-  }
-}
-
-function ProposalCard({ p, onApprove, onReject }: { p: Proposal; onApprove: () => void; onReject: () => void }) {
-  const d = describeProposal(p.name, p.args);
-  const pending = p.status === "pending" || p.status === "running";
-  return (
-    <div className="my-1.5 border border-[var(--accent-warn)]/40 rounded-[var(--r-md)] overflow-hidden">
-      <div className="px-3 py-2 bg-[var(--accent-warn)]/10 flex items-center gap-2">
-        <span className="text-[var(--accent-warn)] text-xs font-semibold uppercase tracking-wide">
-          {p.risk === "send" ? "Needs approval · send" : "Needs approval"}
-        </span>
-        <span className="text-sm font-medium">{d.label}</span>
-      </div>
-      {(d.body || d.meta) && (
-        <div className="px-3 py-2 text-sm whitespace-pre-wrap break-words border-t border-[var(--border-soft)]">
-          {d.body && <div>{d.body}</div>}
-          {d.meta && <div className="text-xs text-[var(--muted)] mt-1">{d.meta}</div>}
-        </div>
-      )}
-      <div className="px-3 py-2 border-t border-[var(--border-soft)] flex items-center gap-2">
-        {pending ? (
-          <>
-            <button
-              onClick={onApprove}
-              disabled={p.status === "running"}
-              className="text-xs font-semibold bg-white text-black px-3 py-1.5 rounded-[var(--r-sm)] hover:bg-zinc-200 disabled:opacity-50"
-            >
-              {p.status === "running" ? "Running…" : "Approve & run"}
-            </button>
-            <button
-              onClick={onReject}
-              disabled={p.status === "running"}
-              className="text-xs text-[var(--muted)] hover:text-white px-2 py-1.5 disabled:opacity-50"
-            >
-              Reject
-            </button>
-          </>
-        ) : (
-          <span className={`text-xs ${p.status === "done" ? "text-[var(--accent-wa)]" : p.status === "error" ? "text-[var(--accent-danger)]" : "text-[var(--muted)]"}`}>
-            {p.status === "done" ? `✓ ${p.result || "Done"}` : p.status === "error" ? `✗ ${p.result || "Failed"}` : "Rejected"}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function summarizeResult(name: string, result: unknown): string {
-  const r = result as Record<string, unknown> | undefined;
-  if (name === "queue_whatsapp" || name === "queue_email") return "Queued for sending";
-  if (name === "publish_mockup") return (r?.url as string) || "Published";
-  if (name === "add_do_not_contact") return "Added to do-not-contact";
-  if (name?.includes("task")) return "Task saved";
-  return "Done";
-}
 
 function ago(iso: string): string {
   const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -576,7 +440,7 @@ export default function AgentChat() {
 
   const loadConvos = useCallback(async () => {
     try {
-      const r = await fetch("/api/agent/conversations");
+      const r = await fetch("/api/agent/conversations?kind=chat");
       if (r.ok) setConvos(await r.json());
     } catch { /* ignore */ }
   }, []);
@@ -604,7 +468,7 @@ export default function AgentChat() {
       if (!r.ok) return false;
       const j = await r.json();
       const server: ServerMsg[] = j.messages ?? [];
-      const done = server.length > assistantIdx && server[assistantIdx]?.role === "assistant" && (!!server[assistantIdx]?.content?.trim() || !!server[assistantIdx]?.toolCallsJson);
+      const done = server.length > assistantIdx && server[assistantIdx]?.role === "assistant" && !!server[assistantIdx]?.content?.trim();
       if (!done) return false;
       // Adopt the server's authoritative reply and neutralize any still-pending
       // local stream for this turn (bump turnRef so its late callbacks no-op).
@@ -661,7 +525,7 @@ export default function AgentChat() {
       .then((j) => { if (j) { setModels(j.models ?? []); setModel(j.current ?? ""); } })
       .catch(() => {});
     loadConvos().then(() => {});
-    fetch("/api/agent/conversations")
+    fetch("/api/agent/conversations?kind=chat")
       .then((r) => (r.ok ? r.json() : []))
       .then((list: Convo[]) => { if (list?.[0]) openConvo(list[0].id); })
       .catch(() => {});
@@ -686,33 +550,6 @@ export default function AgentChat() {
     await fetch(`/api/agent/conversations/${id}`, { method: "DELETE" }).catch(() => {});
     setConvos((c) => c.filter((x) => x.id !== id));
     if (id === convoId) newChat();
-  };
-
-  const setProposal = (idx: number, patch: Partial<Proposal>) =>
-    setMessages((p) => {
-      const c = [...p];
-      const cur = c[idx];
-      if (cur?.proposal) c[idx] = { ...cur, proposal: { ...cur.proposal, ...patch } };
-      return c;
-    });
-
-  const runProposal = async (idx: number, pr: Proposal) => {
-    setProposal(idx, { status: "running" });
-    try {
-      const res = await fetch("/api/agent/run", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: pr.name, args: pr.args, approved: true }),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (res.ok && j.ok) {
-        setProposal(idx, { status: "done", result: summarizeResult(pr.name, j.result) });
-      } else {
-        setProposal(idx, { status: "error", result: j.error || `HTTP ${res.status}` });
-      }
-    } catch (e) {
-      setProposal(idx, { status: "error", result: e instanceof Error ? e.message : String(e) });
-    }
   };
 
   const changeModel = (m: string) => {
@@ -782,7 +619,6 @@ export default function AgentChat() {
         let buf = "";
         let content = "";
         let thinking = "";
-        let proposal: Proposal | undefined;
         let spokenLen = 0;
         const willSpeak = speakOverride ?? speakOn;
         const flush = (line: string) => {
@@ -795,12 +631,6 @@ export default function AgentChat() {
               const heard = ev.v ?? "";
               if (heard) setMessages((p) => { const c = [...p]; if (c[idx - 1]?.role === "user") c[idx - 1] = { ...c[idx - 1], content: heard }; return c; });
             }
-            else if (ev.k === "propose") {
-              try {
-                const p = JSON.parse(ev.v ?? "{}");
-                proposal = { name: p.name, args: p.args ?? {}, risk: p.risk ?? "send", status: "pending" };
-              } catch { /* ignore */ }
-            }
           } catch { content += line; }
         };
         while (true) {
@@ -811,10 +641,10 @@ export default function AgentChat() {
           buf = lines.pop() ?? "";
           for (const l of lines) flush(l);
           if (turnRef.current !== myTurn) break; // a reconcile took over this turn → stop touching state
-          const c = content, t = thinking, pr = proposal;
+          const c = content, t = thinking;
           setMessages((p) => {
             const copy = [...p];
-            copy[idx] = { role: "assistant", content: c, thinking: t, proposal: pr };
+            copy[idx] = { role: "assistant", content: c, thinking: t };
             return copy;
           });
           if (willSpeak) {
@@ -826,7 +656,7 @@ export default function AgentChat() {
         if (turnRef.current === myTurn) {
           setMessages((p) => {
             const copy = [...p];
-            copy[idx] = { role: "assistant", content, thinking, proposal };
+            copy[idx] = { role: "assistant", content, thinking };
             return copy;
           });
           loadConvos();
@@ -1236,13 +1066,6 @@ export default function AgentChat() {
                       ↓ Continue
                     </button>
                   )}
-                  {m.proposal && (
-                    <ProposalCard
-                      p={m.proposal}
-                      onApprove={() => runProposal(i, m.proposal!)}
-                      onReject={() => setProposal(i, { status: "rejected" })}
-                    />
-                  )}
                   {!(isLast && streaming) && (
                     <div className={`flex items-center gap-0.5 self-start transition-opacity ${revealedIdx === i ? "opacity-100" : "opacity-0 pointer-events-none [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-hover:pointer-events-auto"}`}>
                       <button onClick={() => copyText(m.content)} aria-label="Copy" title="Copy" className="p-1.5 -ml-1.5 text-[var(--muted)] hover:text-white"><Copy size={14} /></button>
@@ -1333,8 +1156,8 @@ export default function AgentChat() {
         <div className="max-w-2xl mx-auto">
           {suggestSwitch && (
             <div className="mb-2 flex items-center gap-2 text-xs border border-[var(--accent-warn)]/40 bg-[var(--accent-warn)]/10 rounded-[var(--r-md)] px-3 py-2">
-              <span className="flex-1 text-[var(--text-2)]"><span className="font-medium">{model}</span> looks like it crashed the GPU. Switch to the lighter gemma4:e4b?</span>
-              <button onClick={() => { changeModel("gemma4:e4b"); setSuggestDismissed(true); }} className="font-semibold text-[var(--accent-ai)] whitespace-nowrap">Switch</button>
+              <span className="flex-1 text-[var(--text-2)]"><span className="font-medium">{model}</span> looks like it crashed the GPU — try lowering GPU layers in settings, or switch to a smaller model.</span>
+              <button onClick={() => { setSettingsOpen(true); setSuggestDismissed(true); }} className="font-semibold text-[var(--accent-ai)] whitespace-nowrap">Settings</button>
               <button onClick={() => setSuggestDismissed(true)} className="text-[var(--muted)] hover:text-white">Dismiss</button>
             </div>
           )}
@@ -1414,7 +1237,7 @@ export default function AgentChat() {
           </div>
         </div>
         <p className="max-w-2xl mx-auto text-[10px] text-[var(--muted)] mt-1.5 px-1">
-          Advises only — it never sends or publishes on its own. Enter to send, Shift+Enter for a new line.
+          Enter to send · Shift+Enter for new line.
         </p>
       </div>
     </div>

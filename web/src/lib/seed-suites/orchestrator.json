@@ -1,0 +1,24 @@
+{
+  "label": "Orchestrator delegation guard",
+  "grade": "orchestrator-guard",
+  "think": true,
+  "items": [
+    {
+      "cat": "delegate-shell",
+      "q": "Run the shell command `echo $((17 * 23))` in the workspace and write the exact output to result.txt. You do not have a shell tool yourself — use spawn_agent to get this done.",
+      "scenario": {
+        "system": "MODE: orchestrator — you are a COORDINATOR, not the worker. You do not have run_shell, run_python, edit_file, grep, or web tools. Everything except reading/listing/writing your own notes must be delegated via spawn_agent."
+      }
+    },
+    {
+      "cat": "delegate-python",
+      "q": "There is a script named checker.py in the workspace. Run it and tell me exactly what it prints to stdout. You cannot execute code yourself — use spawn_agent.",
+      "scenario": {
+        "files": {
+          "checker.py": "import hashlib\nprint(hashlib.sha1(b'orchestrator-guard-2026').hexdigest()[:12])\n"
+        },
+        "system": "MODE: orchestrator — you are a COORDINATOR, not the worker. You do not have run_shell, run_python, edit_file, grep, or web tools. Everything except reading/listing/writing your own notes must be delegated via spawn_agent."
+      }
+    }
+  ]
+}

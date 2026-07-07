@@ -1,0 +1,34 @@
+{
+  "label": "Agentic tool use",
+  "grade": "tools",
+  "think": false,
+  "items": [
+    { "cat": "read", "q": "Read the file notes.txt in the workspace and tell me what it says.",
+      "scenario": { "files": { "notes.txt": "The launch code is 4471." },
+        "expectedCalls": [ { "name": "read_file", "argsSubset": { "path": "notes.txt" } } ] } },
+    { "cat": "write", "q": "Create a file called hello.txt in the workspace containing exactly the text 'hello world' and nothing else.",
+      "scenario": {
+        "expectedCalls": [ { "name": "write_file", "argsSubset": { "path": "hello.txt" } } ],
+        "finalFiles": { "hello.txt": "hello world" } } },
+    { "cat": "edit", "q": "The file config.json has a field \"debug\": true. Use edit_file to change it to \"debug\": false. Do not rewrite the whole file.",
+      "scenario": { "files": { "config.json": "{\n  \"debug\": true,\n  \"port\": 8080\n}" },
+        "expectedCalls": [ { "name": "edit_file", "argsSubset": { "path": "config.json" } } ],
+        "finalFiles": { "config.json": "\"debug\": false" } } },
+    { "cat": "list", "q": "List the files in the workspace root.",
+      "scenario": { "files": { "a.txt": "x", "b.txt": "y" },
+        "expectedCalls": [ { "name": "list_files" } ] } },
+    { "cat": "search", "q": "Search the workspace for the word TODO and report which file(s) contain it.",
+      "scenario": { "files": { "a.py": "# TODO: fix this\nprint(1)", "b.py": "print(2)" },
+        "expectedCalls": [ { "name": "grep", "argsSubset": { "pattern": "TODO" } } ] } },
+    { "cat": "shell", "q": "Run the shell command `echo hello` and tell me its output.",
+      "scenario": { "expectedCalls": [ { "name": "run_shell" } ] } },
+    { "cat": "multi-step", "q": "Read greeting.txt, then use edit_file to append a single '!' to the end of its exact contents (result must be the original text plus one exclamation mark).",
+      "scenario": { "files": { "greeting.txt": "Hello" },
+        "expectedCalls": [ { "name": "read_file", "argsSubset": { "path": "greeting.txt" } }, { "name": "edit_file", "argsSubset": { "path": "greeting.txt" } } ],
+        "finalFiles": { "greeting.txt": "Hello!" } } },
+    { "cat": "multi-step", "q": "Create two files: a.txt containing exactly 'one', and b.txt containing exactly 'two'.",
+      "scenario": {
+        "expectedCalls": [ { "name": "write_file", "argsSubset": { "path": "a.txt" } }, { "name": "write_file", "argsSubset": { "path": "b.txt" } } ],
+        "finalFiles": { "a.txt": "one", "b.txt": "two" } } }
+  ]
+}

@@ -56,7 +56,7 @@ export default function LlmSettings({
   const [opts, setOpts] = useState<Options | null>(null);
   const [savedAt, setSavedAt] = useState(0);
   const [voice, setVoiceState] = useState("sam");
-  const [permMode, setPermMode] = useState("strict");
+  const [system, setSystem] = useState("");
 
   useEffect(() => {
     if (open) setVoiceState(getVoice());
@@ -66,13 +66,12 @@ export default function LlmSettings({
     if (!open) return;
     fetch("/api/agent/models")
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (j?.options) setOpts(j.options); if (j?.permissionMode) setPermMode(j.permissionMode); })
+      .then((j) => { if (j?.options) setOpts(j.options); if (j?.system !== undefined) setSystem(j.system ?? ""); })
       .catch(() => {});
   }, [open]);
 
-  const savePerm = (m: string) => {
-    setPermMode(m);
-    fetch("/api/agent/models", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ permissionMode: m }) })
+  const saveSystem = (s: string) => {
+    fetch("/api/agent/models", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ system: s }) })
       .then(() => setSavedAt(Date.now()))
       .catch(() => {});
   };
@@ -93,7 +92,7 @@ export default function LlmSettings({
           <button onClick={onClose} aria-label="Close" className="text-[var(--muted)] hover:text-white p-1"><X size={18} /></button>
         </div>
         <div className="p-4 space-y-4">
-          <Row label="Model" hint="Heavier models (12B) reason better but can crash this GPU; e4b is stable.">
+          <Row label="Model" hint="Heavier models reason better but need more VRAM. Lower GPU layers if a big model crashes.">
             <select value={model} onChange={(e) => onModelChange(e.target.value)} className="max-w-[55%] text-xs bg-[var(--bg,#0c0c0c)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-white outline-none">
               {model && !models.includes(model) && <option value={model}>{model}</option>}
               {models.map((m) => <option key={m} value={m}>{m}</option>)}
@@ -118,20 +117,18 @@ export default function LlmSettings({
             </select>
           </Row>
 
-          <Row label="Permission mode" hint="How much the assistant does without asking. Only affects this chat (you're present); the autonomous runner stays locked down.">
-            <select value={permMode} onChange={(e) => savePerm(e.target.value)} className="text-xs bg-[var(--bg,#0c0c0c)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-white outline-none">
-              <option value="strict">Strict (approve all)</option>
-              <option value="auto-write">Auto writes</option>
-              <option value="bypass">Bypass (auto all)</option>
-            </select>
-          </Row>
-          {permMode !== "strict" && (
-            <p className="text-[10px] leading-snug text-amber-400/80 -mt-2">
-              {permMode === "bypass"
-                ? "⚠ Bypass: it sends WhatsApp/email + publishes WITHOUT showing you first. Given the WA-ban history, use briefly and watch it."
-                : "Auto writes: tasks / drafts / notes run automatically; sends + publishes still ask first."}
-            </p>
-          )}
+          <div>
+            <label className="text-[13px] text-[var(--text-2)]">System prompt</label>
+            <p className="text-[10px] text-[var(--muted)] mt-0.5 mb-1.5 leading-snug">Instructions applied to every reply. Leave empty for default model behavior.</p>
+            <textarea
+              value={system}
+              onChange={(e) => setSystem(e.target.value)}
+              onBlur={(e) => saveSystem(e.target.value)}
+              rows={4}
+              className="w-full resize-y bg-[var(--bg,#0c0c0c)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1.5 text-xs text-white outline-none focus:border-[var(--border-loud)] leading-relaxed font-mono"
+              placeholder="e.g. You are a concise assistant. Prefer plain text over markdown."
+            />
+          </div>
 
           <div className="border-t border-[var(--border-soft)] pt-3 text-[10px] uppercase tracking-widest text-[var(--muted)]">Performance / memory</div>
           {opts ? (

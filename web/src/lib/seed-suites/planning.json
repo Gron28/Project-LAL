@@ -1,0 +1,111 @@
+{
+  "label": "Planning (multi-step, deterministic)",
+  "grade": "substring",
+  "maxTokens": 1536,
+  "think": true,
+  "items": [
+    {
+      "cat": "sequence",
+      "q": "Tasks: A (no deps), B (needs A), C (no deps), D (needs B and C). When more than one task is ready to run, always pick the alphabetically earliest ready task next. List the full execution order as comma-separated letters, ending your answer with a line 'ORDER: <order>'.",
+      "a": [
+        "order: a,c,b,d",
+        "order: a, c, b, d"
+      ]
+    },
+    {
+      "cat": "sequence",
+      "q": "Tasks: P (no deps), Q (no deps), R (needs P), S (needs Q), T (needs R and S). When more than one task is ready, always pick the alphabetically earliest ready task next. End your answer with a line 'ORDER: <order>'.",
+      "a": [
+        "order: p,q,r,s,t",
+        "order: p, q, r, s, t"
+      ]
+    },
+    {
+      "cat": "water-jug",
+      "q": "You have a 3-liter jug and a 5-liter jug, both empty, and unlimited water. What is the minimum number of pour/fill/empty operations to get exactly 4 liters in the 5-liter jug? Reply with just the number, ending with a line 'ANSWER: <n>'.",
+      "a": [
+        "answer: 6"
+      ]
+    },
+    {
+      "cat": "scheduling",
+      "q": "Three chores take 20, 30, and 10 minutes and must run one at a time on a single machine. To minimize the average completion time across all three, in what order (by duration, shortest description) should they run? Reply with the durations in order, ending with a line 'ORDER: 10,20,30'.",
+      "a": [
+        "order: 10,20,30",
+        "order: 10, 20, 30"
+      ]
+    },
+    {
+      "cat": "logic-grid",
+      "q": "Alice, Bob, and Carol each own exactly one pet: a cat, a dog, or a fish. Alice does not own the cat. Bob does not own the dog or the fish. Who owns the fish? Reply with just the name, ending with a line 'ANSWER: <name>'.",
+      "a": [
+        "answer: alice"
+      ]
+    },
+    {
+      "cat": "logic-grid",
+      "q": "Three runners finish a race: Dana, Eli, and Farah. Dana finishes before Eli. Farah finishes before Dana. Who finishes last? Reply with just the name, ending with a line 'ANSWER: <name>'.",
+      "a": [
+        "answer: eli"
+      ]
+    },
+    {
+      "cat": "arithmetic-chain",
+      "q": "Start with 5. Add 3. Multiply the result by 2. Subtract 4. Divide by 2. What is the final number? Reply with just the number, ending with a line 'ANSWER: <n>'.",
+      "a": [
+        "answer: 6"
+      ]
+    },
+    {
+      "cat": "arithmetic-chain",
+      "q": "A tank starts with 100 liters. Each hour, 20% of the current volume leaks out, then 5 liters are added. What is the volume after exactly 2 hours (round to 1 decimal)? Reply ending with a line 'ANSWER: <n>'.",
+      "a": [
+        "answer: 69.0",
+        "answer: 69"
+      ]
+    },
+    {
+      "cat": "resource",
+      "q": "You have $50. Item X costs $12, item Y costs $18, item Z costs $9. You must buy exactly one of each of two DIFFERENT items to maximize total spend without exceeding $50. Which two items do you buy? Reply with the two letters comma-separated, ending with a line 'ANSWER: X,Y'.",
+      "a": [
+        "answer: x,y",
+        "answer: x, y"
+      ]
+    },
+    {
+      "cat": "sequence",
+      "q": "To bake bread you must: (1) mix ingredients, (2) knead dough, (3) let it rise, (4) bake. You cannot knead before mixing, cannot let rise before kneading, and cannot bake before rising. Given these constraints, is the order mix,knead,rise,bake the only valid order? Reply 'yes' or 'no', ending with a line 'ANSWER: yes' or 'ANSWER: no'.",
+      "a": [
+        "answer: yes"
+      ]
+    },
+    {
+      "cat": "logic-grid",
+      "q": "In a race, the red car is faster than the blue car. The green car is slower than the blue car. Which car is the fastest? Reply with just the color, ending with a line 'ANSWER: <color>'.",
+      "a": [
+        "answer: red"
+      ]
+    },
+    {
+      "cat": "water-jug",
+      "q": "You have a 4-liter jug and a 9-liter jug, both empty, and unlimited water. Can you measure out exactly 6 liters using only fill/empty/pour operations between these two jugs (final state: one jug contains exactly 6 liters)? Reply 'yes' or 'no', ending with a line 'ANSWER: yes' or 'ANSWER: no'.",
+      "a": [
+        "answer: yes"
+      ]
+    },
+    {
+      "cat": "scheduling",
+      "q": "Two workers can each process one task per hour. There are 5 identical tasks. Working in parallel, how many hours does it take to finish all 5 tasks (a worker can start a new task only at the top of an hour)? Reply with just the number of hours, ending with a line 'ANSWER: <n>'.",
+      "a": [
+        "answer: 3"
+      ]
+    },
+    {
+      "cat": "arithmetic-chain",
+      "q": "A train travels 60 km in the first hour, then its speed increases by 20 km/h for each of the next 2 hours (so hour 2 is at 80 km/h, hour 3 at 100 km/h). What is the total distance traveled after 3 hours? Reply ending with a line 'ANSWER: <n>'.",
+      "a": [
+        "answer: 240"
+      ]
+    }
+  ]
+}
