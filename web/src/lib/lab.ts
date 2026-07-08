@@ -26,14 +26,22 @@ export const DEFAULT_OPTIONS: Options = {
   num_ctx: 8192, num_predict: -1, num_gpu: null,
   temperature: 0.6, top_p: 0.9, top_k: 40, repeat_penalty: 1.1,
 };
-type SettingsFile = { model?: string; options?: Partial<Options>; system?: string; web?: boolean; groundDocs?: boolean };
+type SettingsFile = { model?: string; options?: Partial<Options>; system?: string; web?: boolean; groundDocs?: boolean; serveIdleMinutes?: number };
+
+// serveIdleMinutes: llama-server auto-unloads after this long with no model use
+// and no live run (0 = never). Before this existed, the singleton stayed GPU-
+// resident forever after any chat — a constant idle power drain on the card.
+const DEFAULT_SERVE_IDLE_MINUTES = 10;
 
 export function readSettings() {
   let s: SettingsFile = {};
   try { s = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")); } catch {}
   const models = allModels();
   const model = s.model && models.find((m) => m.name === s.model) ? s.model! : models[0]?.name ?? "";
-  return { model, options: { ...DEFAULT_OPTIONS, ...(s.options || {}) }, system: s.system ?? "", web: !!s.web, groundDocs: !!s.groundDocs };
+  return {
+    model, options: { ...DEFAULT_OPTIONS, ...(s.options || {}) }, system: s.system ?? "", web: !!s.web, groundDocs: !!s.groundDocs,
+    serveIdleMinutes: typeof s.serveIdleMinutes === "number" ? s.serveIdleMinutes : DEFAULT_SERVE_IDLE_MINUTES,
+  };
 }
 export function writeSettings(patch: SettingsFile) {
   let s: SettingsFile = {};
@@ -42,6 +50,7 @@ export function writeSettings(patch: SettingsFile) {
   if (patch.system !== undefined) s.system = patch.system;
   if (patch.web !== undefined) s.web = patch.web;
   if (patch.groundDocs !== undefined) s.groundDocs = patch.groundDocs;
+  if (patch.serveIdleMinutes !== undefined) s.serveIdleMinutes = patch.serveIdleMinutes;
   if (patch.options) s.options = { ...(s.options || {}), ...patch.options };
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(s, null, 2));
   return s;
@@ -128,8 +137,8 @@ export function allModels(): ModelInfo[] {
 }
 
 // ---- llama-server singleton (persists across requests in one Node process) ----
-type Srv = { proc: ChildProcess | null; model: string | null; ollamaModel: string | null };
-const g = globalThis as unknown as { __lab_srv?: Srv };
+type Srv = { proc: ChildProcess | null; model: string | null; ollamaModel: string | null; lastUsedAt?: number };
+const g = globalThis as unknown as { __lab_srv?: Srv; __lab_idle_reaper?: ReturnType<typeof setInterval> };
 if (!g.__lab_srv) g.__lab_srv = { proc: null, model: null, ollamaModel: null };
 const srv = g.__lab_srv;
 
@@ -141,6 +150,47 @@ export function stopServing() {
   try { srv.proc?.kill("SIGKILL"); } catch {}
   try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
   srv.proc = null; srv.model = null;
+}
+
+// ---- GPU idle policy ----
+// Mark the serving model as "in use right now". Called by ensureServing, per bench
+// item, and by the run manager on every run event — so the idle clock only counts
+// genuinely quiet time, not time spent generating.
+export function touchServing() { srv.lastUsedAt = Date.now(); }
+
+// The run manager registers a hold here ("a run is live") without lab.ts importing
+// runs.ts — that import would be circular (runs.ts already imports lab.ts).
+let idleHold: (() => boolean) | null = null;
+export function setIdleHold(fn: () => boolean) { idleHold = fn; }
+// Same cycle-avoidance, other direction: lets agent tools ask "is any run live?"
+// without importing runs.ts into a module lab.ts already imports.
+export function runsAreLive(): boolean { return idleHold?.() ?? false; }
+
+export function servingInfo(): { model: string | null; idleSec: number | null; idleLimitMin: number } {
+  const idleLimitMin = readSettings().serveIdleMinutes;
+  return {
+    model: srv.model,
+    idleSec: srv.model && srv.lastUsedAt ? Math.round((Date.now() - srv.lastUsedAt) / 1000) : null,
+    idleLimitMin,
+  };
+}
+
+// Idle reaper: unload llama-server after serveIdleMinutes of genuine quiet — no
+// run live, nothing training, nothing recently served. The GPU should idle cold,
+// not with a model parked on it drawing power for nobody.
+if (!g.__lab_idle_reaper) {
+  g.__lab_idle_reaper = setInterval(() => {
+    try {
+      if (!srv.proc || srv.proc.exitCode !== null) return;
+      const idleMin = readSettings().serveIdleMinutes;
+      if (!idleMin || idleMin <= 0) return;
+      if (train.running) return;
+      if (idleHold?.()) return;
+      const last = srv.lastUsedAt ?? Date.now();
+      if (Date.now() - last >= idleMin * 60e3) stopServing();
+    } catch { /* never let the reaper crash the process */ }
+  }, 60e3);
+  g.__lab_idle_reaper.unref?.();
 }
 
 // Ollama keeps its last-used model resident (VRAM/RAM) after a request returns —
@@ -168,6 +218,7 @@ async function unloadOllamaAll(): Promise<void> {
 }
 
 export async function ensureServing(model: string, minCtx = 0): Promise<void> {
+  touchServing();
   if (srv.model === model && srv.proc && srv.proc.exitCode === null && (await health())) return;
   // A trainer may be running OUTSIDE this app (CLI runs write the same out/ logs but
   // never set train.running). Serving on top of it OOMs the box — refuse instead.
@@ -557,6 +608,7 @@ export async function runBench(model: string, items: BenchItem[] = BENCH_SUITE, 
   const results: { cat: string; q: string; ok: boolean; got: string; detail?: string; shot?: string }[] = [];
   let totalTokSec = 0, n = 0, totalMs = 0, ttftMs = 0, ttftN = 0;
   for (const it of items) {
+    touchServing(); // a long bench must not be reaped as "idle" between items
     const t0 = Date.now();
     const itemGrade = it.grade || suiteGrade;
     let got = "";

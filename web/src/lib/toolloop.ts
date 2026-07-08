@@ -112,6 +112,10 @@ export async function runToolLoop(opts: {
   repeatPenalty?: number;
   minResearchCalls?: number;  // deep-research mode's depth floor — see researchDepthNudge above
   maxResearchCalls?: number; // planning/default modes' depth ceiling — see researchCeilingRefusal above
+  signal?: AbortSignal;       // real server-side stop: aborts the upstream fetch (llama-server
+  // stops decoding when the socket closes) and is checked between rounds and before
+  // every tool execution — without it, "Stop" could only ever abort the client's own
+  // connection while the loop kept running unattended.
   onSnapshot?: (messages: ToolLoopMsg[]) => void; // called after each round — lets the
   // caller persist progress incrementally. The loop itself always runs to
   // completion server-side even if the client disconnects (confirmed: killing the
@@ -122,7 +126,8 @@ export async function runToolLoop(opts: {
   const { baseUrl, model, exec, onEvent } = opts;
   const tools = opts.tools ?? TOOL_DEFS;
   const maxRounds = opts.maxRounds ?? 15;
-  const maxTokens = opts.maxTokens ?? 1024;
+  let maxTokens = opts.maxTokens ?? 1024;
+  let truncationBumped = false; // one-time budget raise after a truncated tool call (see below)
   const messages = opts.messages.slice();
   let wroteFiles = false;
   let forcedVerifyDone = false;
@@ -132,7 +137,16 @@ export async function runToolLoop(opts: {
   let researchCallCount = 0;
   let researchNudgeCount = 0;
 
+  const throwIfAborted = () => {
+    if (opts.signal?.aborted) {
+      const e = new Error("stopped by user");
+      e.name = "AbortError";
+      throw e;
+    }
+  };
+
   for (let round = 0; round < maxRounds; round++) {
+    throwIfAborted();
     onEvent({ k: "round" });
     const body: Record<string, unknown> = { model, messages, tools, stream: true, temperature: opts.temperature ?? 0, max_tokens: maxTokens };
     if (opts.topP !== undefined) body.top_p = opts.topP;
@@ -146,6 +160,7 @@ export async function runToolLoop(opts: {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      signal: opts.signal,
     });
     if (!res.ok || !res.body) throw new Error("tool loop upstream error: " + res.status);
 
@@ -222,6 +237,7 @@ export async function runToolLoop(opts: {
     });
 
     for (const c of calls) {
+      throwIfAborted();
       let args: Record<string, unknown> = {};
       let parseError = false;
       try { args = JSON.parse(c.args || "{}"); } catch { parseError = true; }
@@ -236,7 +252,15 @@ export async function runToolLoop(opts: {
         // that's an empty-string content, for run_shell an empty command that
         // "succeeds" doing nothing — and the model never learns its own call
         // was truncated, so it can't retry correctly. Refuse to run and say why.
-        output = "error: tool call arguments were truncated or malformed (likely hit the response token limit) — the tool was NOT run. Retry with a smaller edit, or split large content across multiple write_file/edit_file calls.";
+        // First occurrence also raises the per-round budget once, so the retry
+        // has real headroom instead of hitting the identical wall.
+        if (!truncationBumped) {
+          truncationBumped = true;
+          maxTokens = Math.min(maxTokens * 2, 16384);
+          output = `error: tool call arguments were truncated or malformed (hit the response token limit) — the tool was NOT run. The token budget has been raised to ${maxTokens} for your retry: repeat the SAME call completely, or split large content across multiple write_file/edit_file calls.`;
+        } else {
+          output = "error: tool call arguments were truncated or malformed — the tool was NOT run. Split the content across multiple smaller write_file/edit_file calls.";
+        }
       } else if (isResearchCall && opts.maxResearchCalls && researchCallCount >= opts.maxResearchCalls) {
         output = researchCeilingRefusal(researchCallCount, opts.maxResearchCalls);
       } else {

@@ -5,6 +5,7 @@ import { allModels, ensureServing, readSettings, stopServing, saveConvo, newId, 
 import { runToolLoop, type ToolLoopMsg } from "@/lib/toolloop";
 import { makeAgentExecutor, makeOrchestratorExecutor, makePlannerExecutor, makeImplementerExecutor } from "@/lib/agent-tools";
 import { recordSessionCard, maybeRollupDaily } from "@/lib/memory-pipeline";
+import { startRun, requestApproval, resolveApproval } from "@/lib/runs";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
@@ -145,29 +146,27 @@ function coreMemoryText(root: string): string {
   return text;
 }
 
-// Pending approval resolvers, keyed by tool-call id. Module-global via globalThis so
-// the approve endpoint (separate request) can resolve a wait held by the loop request
-// (same Node process — the same trick lab.ts uses for the llama-server singleton).
-type Resolver = (allow: boolean) => void;
-const g = globalThis as unknown as { __code_approvals?: Map<string, Resolver> };
-if (!g.__code_approvals) g.__code_approvals = new Map();
-const approvals = g.__code_approvals;
-
 export function GET() {
   fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true });
   const modes = Object.entries(MODES).map(([id, m]) => ({ id, label: m.label }));
   return NextResponse.json({ workspace: DEFAULT_WORKSPACE, projects: listProjects(), modes });
 }
 
-// PATCH {id, allow} -> resolve a pending tool approval
+// PATCH {id, allow} -> resolve a pending tool approval (looked up across live runs
+// by tool-call id — the approval banner only carries the call id)
 export async function PATCH(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
-  const r = approvals.get(String(b.id || ""));
-  if (!r) return NextResponse.json({ ok: false, error: "no pending approval with that id" }, { status: 404 });
-  r(!!b.allow);
+  const ok = resolveApproval(String(b.id || ""), !!b.allow);
+  if (!ok) return NextResponse.json({ ok: false, error: "no pending approval with that id" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }
 
+// POST starts the run and returns {runId, conversationId} IMMEDIATELY — the loop
+// itself executes detached inside the run manager (lib/runs.ts) and appends its
+// events to the run's log. Clients (any number, any tab, any device) follow along
+// via GET /api/agent/runs/<id>/stream, which replays from any sequence number and
+// then tails live. This is what decouples a run's life from the browser connection
+// that happened to start it.
 export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
   const incoming = (b.messages || []) as ToolLoopMsg[];
@@ -183,38 +182,6 @@ export async function POST(req: NextRequest) {
   // orchestrator's think:true actually take effect for callers that don't set it.
   const think = typeof b.think === "boolean" ? b.think : preset.think;
 
-  // Serve through OUR llama-server whenever the architecture allows (works for qwen3
-  // incl. Ollama-pulled blobs, read-only): Ollama's OpenAI shim runs at the model's
-  // default 4096 ctx, which truncates the agent's system prompt + tool results mid-
-  // session — a first field test produced a "start button stops the game" snake this
-  // way. Fall back to the shim only for archs b9835 can't load (gemma4).
-  const mi = allModels().find((m) => m.name === model);
-  let baseUrl: string;
-  // llama-b9835's /health endpoint reports ready once the process is up and
-  // *a* computation graph is loaded — it doesn't validate that graph matches the
-  // model's real architecture. For gemma archs this build can't actually run,
-  // "ensureServing" was observed to succeed (health passing) while every REAL
-  // completion then 500'd — discovered live, mid agentic-build, the expensive way
-  // (a full conversation's worth of instantly-failing turns). Skip straight to the
-  // Ollama shim for gemma models instead of trusting a health check that can't see
-  // this failure mode; matches the fallback this function already documents below.
-  if (mi?.source === "ollama" && /gemma/i.test(model)) {
-    stopServing();
-    baseUrl = "http://127.0.0.1:11434";
-  } else {
-    try {
-      await ensureServing(model, preset.ctx);
-      baseUrl = `http://127.0.0.1:${SERVE_PORT}`;
-    } catch (e) {
-      if (mi?.source === "ollama") {
-        stopServing();
-        baseUrl = "http://127.0.0.1:11434";
-      } else {
-        return new Response("serve failed: " + (e as Error).message, { status: 500 });
-      }
-    }
-  }
-
   const proj = resolveProject(b.project);
   if ("error" in proj) return new Response(proj.error, { status: 400 });
   const root = proj.root;
@@ -222,44 +189,70 @@ export async function POST(req: NextRequest) {
   const instructions = projectInstructions(root);
   const memoryText = coreMemoryText(root);
   const cid = (b.conversationId as string) || "code-" + newId();
-  const enc = new TextEncoder();
+  const toolset = typeof b.toolset === "string" ? b.toolset : undefined;
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (o: unknown) => { try { controller.enqueue(enc.encode(JSON.stringify(o) + "\n")); } catch {} };
-      send({ k: "project", v: { root, instructionFiles: instructions.files } });
-      // Hoisted so spawn_agent's inner sub-loop (agent-tools.ts) can pass the SAME
-      // approve gate to helper agents — previously helpers ran write_file/edit_file/
-      // run_shell with no approval callback at all, bypassing the user's approval
-      // setting entirely regardless of autoApprove.
+  const meta = startRun(
+    { kind: "code", conversationId: cid, project: root, model, mode: modeId },
+    async (emit, signal) => {
+      emit({ k: "project", v: { root, instructionFiles: instructions.files } });
+      // Turn boundary for reattaching clients: the first `base` messages of the
+      // saved transcript (history coordinates — no system message) are what existed
+      // BEFORE this run; everything after is reproducible by replaying this run's
+      // events. A client that reopens mid-run rebuilds its view as
+      // reconstruct(saved[..base]) + replay(events).
+      emit({ k: "turn", v: { base: incoming.length } });
+
+      // Model serving happens INSIDE the run (it can take up to a minute for a big
+      // model — the POST reply must not wait on it). A serve failure becomes a run
+      // error event, not an HTTP status.
+      //
+      // Serve through OUR llama-server whenever the architecture allows (works for
+      // qwen3 incl. Ollama-pulled blobs, read-only): Ollama's OpenAI shim runs at the
+      // model's default 4096 ctx, which truncates the agent's system prompt + tool
+      // results mid-session. Fall back to the shim only for archs b9835 can't load.
+      // llama-b9835's /health endpoint reports ready once the process is up and *a*
+      // computation graph is loaded — it doesn't validate that graph matches the
+      // model's real architecture; for gemma archs "ensureServing" was observed to
+      // succeed while every REAL completion then 500'd. Skip straight to the Ollama
+      // shim for gemma models instead of trusting a health check that can't see this
+      // failure mode.
+      const mi = allModels().find((m) => m.name === model);
+      let baseUrl: string;
+      if (mi?.source === "ollama" && /gemma/i.test(model)) {
+        stopServing();
+        baseUrl = "http://127.0.0.1:11434";
+      } else {
+        try {
+          await ensureServing(model, preset.ctx);
+          baseUrl = `http://127.0.0.1:${SERVE_PORT}`;
+        } catch (e) {
+          if (mi?.source === "ollama") {
+            stopServing();
+            baseUrl = "http://127.0.0.1:11434";
+          } else {
+            throw new Error("serve failed: " + (e as Error).message);
+          }
+        }
+      }
+
       const approve = async (call: { id: string; name: string; args: Record<string, unknown> }) => {
         if (autoApprove) return true;
-        send({ k: "approval_needed", v: call });
-        return await new Promise<boolean>((resolve) => {
-          const timer = setTimeout(() => { approvals.delete(call.id); resolve(false); }, 10 * 60 * 1000);
-          approvals.set(call.id, (allow) => { clearTimeout(timer); approvals.delete(call.id); resolve(allow); });
-        });
+        return requestApproval(meta.id, emit, call);
       };
       const fullExec = makeAgentExecutor({
         workspaceDir: root, baseUrl, model, think,
-        onEvent: (e) => send(e), approve,
+        onEvent: (e) => emit(e), approve, signal,
         orchestratorMode: modeId === "orchestrator",
       });
       // See makeOrchestratorExecutor's own comment (agent-tools.ts) for why this is a
       // shared helper rather than an inline filter here. `toolset` is an explicit opt-in
       // override (any caller, any mode) for driving a plan/implement split — omitted,
       // behavior is byte-identical to before this param existed.
-      const toolset = typeof b.toolset === "string" ? b.toolset : undefined;
       const exec =
         toolset === "planner" ? makePlannerExecutor(fullExec)
         : toolset === "implementer" ? makeImplementerExecutor(fullExec)
         : toolset === "full" ? fullExec
         : modeId !== "orchestrator" ? fullExec : makeOrchestratorExecutor(fullExec);
-      // Base text: unchanged from before modes existed, plus a mention of the core-memory
-      // tools added since. mode:"default" still has an empty addendum, so its system
-      // content differs from the pre-memory-blocks string only by this one addition —
-      // an intentional feature addition, not a regression of the earlier byte-identical
-      // mode-refactor invariant (which was specifically about the modes system itself).
       const base =
         "You are a coding agent working in the user's project directory. " +
         "Use your tools to actually do the work — read before you edit, verify after you change. " +
@@ -279,51 +272,34 @@ export async function POST(req: NextRequest) {
       };
       const messages: ToolLoopMsg[] = incoming[0]?.role === "system" ? incoming.slice() : [system, ...incoming];
       const title = String(incoming.find((m) => m.role === "user")?.content || "code session").slice(0, 60);
-      // The loop runs to completion server-side even after the client disconnects
-      // (verified: killing the client mid-tool-call still let an 8s shell command
-      // finish and the model give its final reply) — but without saving as we go,
-      // a client that reconnects mid-task (tab closed and reopened, or just
-      // backgrounded — mobile browsers throttle/kill background tab connections)
-      // has nothing fresher than the state before this turn started to resync to,
-      // and looks "stopped" even though it never was.
       const snapshot = (msgs: ToolLoopMsg[]) => {
         try { saveConvo({ id: cid, title, ts: Date.now(), project: root, messages: msgs as { role: string; content: string }[] }); } catch {}
       };
-      try {
-        // A planner-toolset call almost never needs more than a couple of confirmatory
-        // searches (it's usually planning against a well-understood codebase/stack) —
-        // tighter than any mode's own default, and wins regardless of mode since
-        // toolset is an explicit override elsewhere too.
-        const maxResearchCalls = toolset === "planner" ? 5 : preset.maxResearchCalls;
-        const finalMessages = await runToolLoop({
-          baseUrl, model, messages, tools: exec.defs, exec,
-          maxRounds: preset.maxRounds, maxTokens: preset.maxTokens, think, temperature: preset.temperature,
-          minResearchCalls: preset.minResearchCalls, maxResearchCalls,
-          onEvent: (e) => send(e),
-          onSnapshot: snapshot,
-          approve,
-        });
-        snapshot(finalMessages);
-        send({ k: "done", v: { conversationId: cid } });
-        // Session card is cheap (no model call) — write it inline. The daily rollup
-        // isn't: it's a real completion call when actually due, so it's fired AFTER the
-        // response has already been sent (fire-and-forget, not awaited) rather than
-        // blocking the request that triggered it — avoids adding live-model latency to
-        // what the user experiences as "the agent replied."
-        try { recordSessionCard(root, cid, title, finalMessages as { role: string; content: string | null }[]); } catch {}
-        maybeRollupDaily(root, baseUrl, model).catch(() => {});
-      } catch (e) {
-        send({ k: "error", v: (e as Error).message });
-      }
-      try { controller.close(); } catch {}
+      // A planner-toolset call almost never needs more than a couple of confirmatory
+      // searches (it's usually planning against a well-understood codebase/stack) —
+      // tighter than any mode's own default, and wins regardless of mode since
+      // toolset is an explicit override elsewhere too.
+      const maxResearchCalls = toolset === "planner" ? 5 : preset.maxResearchCalls;
+      const finalMessages = await runToolLoop({
+        baseUrl, model, messages, tools: exec.defs, exec,
+        maxRounds: preset.maxRounds, maxTokens: preset.maxTokens, think, temperature: preset.temperature,
+        minResearchCalls: preset.minResearchCalls, maxResearchCalls,
+        onEvent: (e) => emit(e),
+        onSnapshot: snapshot,
+        approve,
+        signal,
+      });
+      snapshot(finalMessages);
+      emit({ k: "done", v: { conversationId: cid } });
+      // Session card is cheap (no model call) — write it inline. The daily rollup
+      // isn't: it's a real completion call when actually due, so it's fire-and-forget
+      // rather than holding the run open.
+      try { recordSessionCard(root, cid, title, finalMessages as { role: string; content: string | null }[]); } catch {}
+      maybeRollupDaily(root, baseUrl, model).catch(() => {});
     },
-    cancel() {
-      // client went away: deny anything still waiting so the loop unwinds
-      for (const [id, r] of approvals) { r(false); approvals.delete(id); }
-    },
-  });
+  );
 
-  return new Response(stream, {
-    headers: { "content-type": "text/plain; charset=utf-8", "x-conversation-id": cid },
+  return NextResponse.json({ runId: meta.id, conversationId: cid }, {
+    headers: { "x-conversation-id": cid },
   });
 }

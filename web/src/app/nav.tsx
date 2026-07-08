@@ -1,7 +1,44 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronLeft, ChevronRight, LayoutDashboard, MessageSquare, TerminalSquare, GraduationCap, Library, Gauge } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight, Cpu, LayoutDashboard, MessageSquare, TerminalSquare, GraduationCap, Library, Gauge, X } from "lucide-react";
+
+// Small truth-teller for the GPU: which model is resident and for how long it's
+// been idle, with a manual unload. The server also auto-unloads after the
+// serveIdleMinutes setting — this exists so the state is VISIBLE, not invisible
+// power draw you only notice from the fan noise.
+function GpuBadge() {
+  const [info, setInfo] = useState<{ model: string | null; idleSec: number | null } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const poll = async () => {
+      try {
+        const j = await fetch("/api/sysinfo").then((r) => r.json());
+        if (alive) setInfo(j.serving ?? null);
+      } catch { /* server away — badge just goes quiet */ }
+    };
+    poll();
+    const t = setInterval(poll, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  if (!info?.model) return null;
+  const idle = info.idleSec != null && info.idleSec >= 60 ? ` · idle ${Math.floor(info.idleSec / 60)}m` : "";
+  return (
+    <div className="mx-2 px-0 lg:px-3 py-1.5 flex items-center justify-center lg:justify-start gap-2 text-[10px] text-[var(--muted)]"
+      title={`GPU model resident: ${info.model}${idle}`}>
+      <Cpu size={14} className="text-[var(--accent-ai)] shrink-0" />
+      <span className="hidden lg:inline truncate max-w-[90px]">{info.model}{idle}</span>
+      <button title="unload model from GPU now"
+        className="hidden lg:inline text-[var(--muted)] hover:text-[var(--accent-danger)]"
+        onClick={async () => {
+          try { const r = await fetch("/api/sysinfo", { method: "DELETE" }); if (r.ok) setInfo(null); } catch {}
+        }}>
+        <X size={12} />
+      </button>
+    </div>
+  );
+}
 
 // Monitor's sysinfo now lives in dashboard widgets, so it's dropped from nav to
 // keep the mobile bottom bar (h-14) compact — the route itself still exists.
@@ -35,10 +72,13 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
               <Icon size={18} /><span className="hidden lg:inline">{label}</span>
             </Link>
           ))}
-          <button onClick={onToggle} title="hide sidebar"
-            className="flex items-center justify-center lg:justify-start gap-2 mx-2 mt-auto px-0 lg:px-3 py-2 rounded-[var(--r-md)] text-[var(--muted)] hover:text-[var(--text-2)] transition-colors">
-            <ChevronLeft size={16} /><span className="hidden lg:inline text-xs">hide</span>
-          </button>
+          <div className="mt-auto">
+            <GpuBadge />
+            <button onClick={onToggle} title="hide sidebar"
+              className="flex items-center justify-center lg:justify-start gap-2 mx-2 px-0 lg:px-3 py-2 rounded-[var(--r-md)] text-[var(--muted)] hover:text-[var(--text-2)] transition-colors w-[calc(100%-1rem)]">
+              <ChevronLeft size={16} /><span className="hidden lg:inline text-xs">hide</span>
+            </button>
+          </div>
         </nav>
       )}
       {collapsed && (

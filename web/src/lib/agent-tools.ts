@@ -7,7 +7,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { makeExecutor, TOOL_DEFS, type Executor, type ToolDef } from "./tools";
 import { runToolLoop, type ApproveFn, type ToolLoopEvent, type ToolLoopMsg } from "./toolloop";
-import { webSearch, servingModel, stopServing, ensureServing, allModels, SERVE_PORT } from "./lab";
+import { webSearch, servingModel, stopServing, ensureServing, allModels, SERVE_PORT, runsAreLive, startTrain, stopTrain, trainStatus, listTrainRuns, listDataFiles, listSuites, listBench, TRAIN_BASES } from "./lab";
 import { projectMemoryDir } from "./memory-paths";
 import { searchMemory } from "./memory-pipeline";
 import { recordFinding } from "./fact-store";
@@ -56,6 +56,55 @@ export const AGENT_TOOL_DEFS: ToolDef[] = [
       fact: { type: "string", description: "the finding to record" },
     }, required: ["fact"] },
   } },
+  // ---- training grounds control (the lab's train/bench machinery, driven from chat) ----
+  { type: "function", function: {
+    name: "list_models", description: "List every model available on this machine (locally trained GGUFs and Ollama-pulled ones) with size, plus which one is currently loaded on the GPU.",
+    parameters: { type: "object", properties: {}, required: [] },
+  } },
+  { type: "function", function: {
+    name: "list_data_files", description: "List the training data files in the lab's data/ directory (.txt for raw next-token training, .jsonl for instruction SFT), with sizes.",
+    parameters: { type: "object", properties: {}, required: [] },
+  } },
+  { type: "function", function: {
+    name: "list_train_runs", description: "List past and current fine-tuning runs with status (running/done/failed/stopped), last step, and final loss.",
+    parameters: { type: "object", properties: {}, required: [] },
+  } },
+  { type: "function", function: {
+    name: "train_status", description: "Live status of a training run by name: recent progress rows (step/loss/val) from its log. Works while training is in progress — it only reads log files, never the GPU.",
+    parameters: { type: "object", properties: { name: { type: "string", description: "run name, e.g. victory9-8b" } }, required: ["name"] },
+  } },
+  { type: "function", function: {
+    name: "train_start", description: "Start a LoRA fine-tune on this machine's GPU. IMPORTANT: the GPU is single-tenant — training unloads the chat model, so the run is scheduled to begin right after your current reply finishes, and the user cannot chat with a local model until it completes. Make this your LAST tool call of the turn, then tell the user training is scheduled and how to watch it (/train page, or ask for train_status later). Modes: 'hqq' (4-bit, required for 3B+ bases on this 8GB card), 'sft' (fp16 instruction SFT, ≤2B), 'raw' (plain next-token on a .txt). Known-good recipe on this box: mode hqq, block 1536, val_frac 0.1, patience 500.",
+    parameters: { type: "object", properties: {
+      name: { type: "string", description: "name for the run/output model, e.g. victory10-8b" },
+      // NOTE: this description must stay a static literal — agent-tools.ts sits in
+      // an import cycle with lab.ts (lab → graders → agent-tools → lab), so lab's
+      // consts (TRAIN_BASES) are in temporal-dead-zone while this array evaluates.
+      // The run() handler validates against the real TRAIN_BASES at call time and
+      // returns the full list on a miss.
+      base: { type: "string", description: "base model checkpoint, e.g. Qwen/Qwen3-8B, Qwen/Qwen3-4B, Qwen/Qwen3-1.7B (an invalid value is rejected with the full allowed list)" },
+      data_file: { type: "string", description: ".jsonl in data/ for sft/hqq mode (see list_data_files); omit for raw mode" },
+      text: { type: "string", description: "raw training text (raw mode only, written to data/<name>.txt)" },
+      steps: { type: "number", description: "training steps, e.g. 3000" },
+      lr: { type: "number", description: "learning rate, e.g. 0.00005" },
+      mode: { type: "string", enum: ["raw", "sft", "hqq"], description: "training mode (default hqq for 4B/8B bases)" },
+      val_frac: { type: "number", description: "validation split fraction, e.g. 0.1 (sft/hqq)" },
+      block: { type: "number", description: "token block size, e.g. 1536 (sft/hqq)" },
+      auto_bench: { type: "array", items: { type: "string" }, description: "suite ids to auto-bench after training (see bench_list), e.g. [\"coding\",\"planning\"]" },
+    }, required: ["name", "base", "steps", "lr"] },
+  } },
+  { type: "function", function: {
+    name: "train_stop", description: "Stop the currently running fine-tune (kills the trainer process; the merge/GGUF/bench pipeline will NOT run). Check list_train_runs first if unsure what's running.",
+    parameters: { type: "object", properties: {}, required: [] },
+  } },
+  { type: "function", function: {
+    name: "bench_list", description: "List the benchmark suites (id, label, item count, categories) available for auto-benching and comparison.",
+    parameters: { type: "object", properties: {}, required: [] },
+  } },
+  { type: "function", function: {
+    name: "bench_results", description: "Stored benchmark results: suite, model, score/total, tok/s, and whether the result is a pinned baseline. Use to compare a fresh model against the champion.",
+    parameters: { type: "object", properties: { suite: { type: "string", description: "optional: only results for this suite id" }, model: { type: "string", description: "optional: only results for this model" } }, required: [] },
+  } },
   { type: "function", function: {
     name: "spawn_agent", description: "Delegate a self-contained subtask to a helper agent that has the same file/web/python tools (but cannot spawn further agents). It works autonomously and returns a final report. Good for research questions or exploring a codebase corner while you continue the main plan. Optionally hand the task to a DIFFERENT local model via `model` (e.g. a small fast one for research/extraction, a strong one for implementation, a different one for independent red-team critique) — this machine has one GPU, so a different model means a real reload (seconds to ~a minute); batch several spawns on the same model consecutively rather than alternating models call-by-call. Omit `model` to reuse whatever is already serving (zero swap cost).",
     parameters: { type: "object", properties: {
@@ -66,7 +115,12 @@ export const AGENT_TOOL_DEFS: ToolDef[] = [
   } },
 ];
 
-const SUB_TOOL_DEFS = AGENT_TOOL_DEFS.filter((t) => t.function.name !== "spawn_agent");
+// Training/bench control stays with the TOP-LEVEL agent only: helper sub-agents,
+// planner/implementer phases, and orchestrator mode must never fire a training run
+// (same "remove the option" principle as those restrictions themselves — the
+// PLANNER/IMPLEMENTER/ORCHESTRATOR allowlists exclude these by construction).
+const TRAINING_TOOLS = new Set(["list_models", "list_data_files", "list_train_runs", "train_status", "train_start", "train_stop", "bench_list", "bench_results"]);
+const SUB_TOOL_DEFS = AGENT_TOOL_DEFS.filter((t) => t.function.name !== "spawn_agent" && !TRAINING_TOOLS.has(t.function.name));
 
 function runPython(root: string, code: string): Promise<string> {
   return new Promise((resolve) => {
@@ -274,6 +328,8 @@ export function makeAgentExecutor(opts: {
   depth?: number;
   approve?: ApproveFn;              // propagated to sub-agents so their writes/shell respect user approval too
   orchestratorMode?: boolean;       // true -> spawn_agent auto-records sub-agent findings (see fact-store.ts)
+  signal?: AbortSignal;             // run-level stop, propagated into spawn_agent's inner loop so
+  // Stop kills helper agents mid-flight too (not just the top-level loop)
 }): AgentExecutor {
   const base = makeExecutor(opts.workspaceDir);
   const depth = opts.depth ?? 0;
@@ -297,6 +353,78 @@ export function makeAgentExecutor(opts: {
         return searchMemory(base.root, String(args.query ?? ""));
       case "record_finding":
         return recordFinding(base.root, opts.baseUrl, opts.model, String(args.fact ?? ""));
+      case "list_models": {
+        const cur = servingModel();
+        const rows = allModels().map((m) => `${m.name}  (${m.source}, ${m.gb}GB)${m.name === cur ? "  ← loaded on GPU" : ""}`);
+        return rows.join("\n") || "(no models found)";
+      }
+      case "list_data_files": {
+        const rows = listDataFiles().map((f) => `${f.name}  (${f.kind}, ${(f.chars / 1e6).toFixed(1)}MB)`);
+        return rows.join("\n") || "(no data files)";
+      }
+      case "list_train_runs": {
+        const rows = listTrainRuns().map((r) => `${r.name}: ${r.status}, step ${r.lastStep}${r.finalLoss != null ? ", loss " + r.finalLoss : ""}`);
+        return rows.slice(0, 40).join("\n") || "(no training runs yet)";
+      }
+      case "train_status": {
+        const s = trainStatus(String(args.name ?? ""));
+        const rows = (s.rows as Record<string, unknown>[]).filter((r) => r && typeof r === "object");
+        const steps = rows.filter((r) => r.event === "step");
+        const tail = [...steps.slice(-5), ...rows.slice(-3).filter((r) => r.event !== "step")];
+        return JSON.stringify({ running: s.running, recent: tail }, null, 1).slice(0, 3000);
+      }
+      case "train_start": {
+        if (depth >= 1) return "error: only the top-level agent may start training";
+        const name = String(args.name ?? "").trim();
+        const bse = String(args.base ?? "").trim();
+        if (!name || !bse) return "error: name and base are required";
+        if (!TRAIN_BASES.includes(bse)) return "error: unknown base — must be one of: " + TRAIN_BASES.join(", ");
+        const o = {
+          name, base: bse,
+          steps: Math.max(1, Number(args.steps) || 0),
+          lr: Number(args.lr) || 5e-5,
+          mode: (["raw", "sft", "hqq"].includes(String(args.mode)) ? String(args.mode) : "hqq") as "raw" | "sft" | "hqq",
+          dataFile: args.data_file ? String(args.data_file) : undefined,
+          text: args.text ? String(args.text) : undefined,
+          valFrac: args.val_frac != null ? Number(args.val_frac) : undefined,
+          block: args.block != null ? Number(args.block) : undefined,
+          autoBench: Array.isArray(args.auto_bench) ? (args.auto_bench as unknown[]).map(String) : undefined,
+          targetLoss: 0, // the EMA gate is bs=1-flawed on this box (HANDOFF 2026-07-04); val-aware patience is the stop condition
+        };
+        if ((o.mode === "sft" || o.mode === "hqq") && !o.dataFile) return "error: sft/hqq mode needs data_file (see list_data_files)";
+        if (o.mode === "raw" && !o.text) return "error: raw mode needs text";
+        // One GPU: training unloads the chat model, which would kill THIS session
+        // mid-reply. Defer the actual start until no run is live (i.e. right after
+        // this reply lands), then fire it. 15-minute patience, then give up.
+        const t0 = Date.now();
+        const timer = setInterval(async () => {
+          if (runsAreLive()) {
+            if (Date.now() - t0 > 15 * 60e3) clearInterval(timer);
+            return;
+          }
+          clearInterval(timer);
+          try { await startTrain(o); } catch { /* outcome visible on /train; nothing left to notify */ }
+        }, 5000);
+        timer.unref?.();
+        return `training run "${name}" is scheduled — it starts as soon as this reply finishes (the chat model unloads then; local chat is unavailable until training completes). Progress: /train page, or train_status/list_train_runs in a later session. Tell the user this now and end your turn.`;
+      }
+      case "train_stop": {
+        if (depth >= 1) return "error: only the top-level agent may stop training";
+        const r = stopTrain();
+        return r.ok ? `stopped training run "${r.stopped}" (merge/GGUF/bench pipeline skipped)` : "error: " + (r.note || "nothing is training");
+      }
+      case "bench_list": {
+        const rows = listSuites().map((s) => `${s.id}: ${s.label} (${s.count} items)`);
+        return rows.join("\n") || "(no suites)";
+      }
+      case "bench_results": {
+        const wantSuite = args.suite ? String(args.suite) : null;
+        const wantModel = args.model ? String(args.model) : null;
+        const rows = (listBench() as Record<string, unknown>[])
+          .filter((r) => (!wantSuite || r.suite === wantSuite) && (!wantModel || r.model === wantModel))
+          .map((r) => `${r.suite} / ${r.model}: ${r.score}/${r.total}${r.tokSec ? " · " + r.tokSec + " tok/s" : ""}${r.pinned ? " · pinned" + (r.stale ? " (STALE)" : "") : ""}`);
+        return rows.slice(-60).join("\n") || "(no bench results" + (wantSuite || wantModel ? " matching that filter" : "") + ")";
+      }
       case "spawn_agent": {
         if (depth >= 1) return "error: helper agents cannot spawn further agents";
         const task = String(args.task ?? "").trim();
@@ -315,6 +443,7 @@ export function makeAgentExecutor(opts: {
             baseUrl, model, messages, tools: SUB_TOOL_DEFS,
             exec: sub, onEvent: tagged,
             maxRounds, maxTokens: 2048, think: opts.think, approve: opts.approve,
+            signal: opts.signal,
           });
           const last = out[out.length - 1];
           const report = (last?.role === "assistant" && typeof last.content === "string" && last.content.trim()) || "(helper produced no report)";
@@ -334,6 +463,9 @@ export function makeAgentExecutor(opts: {
           tagged({ k: "model_swap", v: { from: servingModel(), to: reqModel } });
           return await withModelServed(reqModel, (baseUrl) => runSub(baseUrl, reqModel));
         } catch (e) {
+          // A user Stop must unwind the WHOLE run, not get reported to the model
+          // as a recoverable helper failure it might retry.
+          if ((e as Error).name === "AbortError" || opts.signal?.aborted) throw e;
           return "error: helper agent failed — " + (e as Error).message;
         }
       }
@@ -348,7 +480,9 @@ export function makeAgentExecutor(opts: {
     // rather than re-declaring them here — a second hand-copied map is exactly the
     // kind of drift the ORCHESTRATOR_TOOLS comment below warns about for tool lists.
     // Research/python/vision/memory/spawn_agent are sandboxed or read-only — auto-run.
-    approve: { ...base.approve },
+    // Training mutations are approval-gated: they commandeer the single GPU for
+    // hours (train_start) or kill an hours-long run (train_stop).
+    approve: { ...base.approve, train_start: true, train_stop: true },
     run,
     defs: depth >= 1 ? SUB_TOOL_DEFS : AGENT_TOOL_DEFS,
   };

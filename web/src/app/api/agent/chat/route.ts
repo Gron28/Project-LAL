@@ -1,5 +1,6 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { ensureServing, readSettings, getConvo, saveConvo, newId, webSearch, retrieveDocs, servingModel, stopServing, SERVE_PORT } from "@/lib/lab";
+import { startRun, type EmitFn } from "@/lib/runs";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
@@ -23,6 +24,11 @@ function stripDataUrl(s: string): string {
   return m ? m[1] : s;
 }
 
+// Chat generations run through the run manager like /code loops do: POST returns
+// {runId, conversationId} immediately and the generation continues server-side
+// regardless of what the browser does. The client (or any later client) follows
+// via GET /api/agent/runs/<id>/stream; Stop is POST /api/agent/runs/<id>/stop —
+// which actually cancels the upstream decode, unlike the old no-op stop.
 export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
   const incoming = (b.messages || []) as { role: string; content: string }[];
@@ -46,129 +52,127 @@ export async function POST(req: NextRequest) {
   convo.messages = incoming.slice();
   saveConvo(convo);
 
-  const enc = new TextEncoder();
+  const saveReply = (full: string) => {
+    try { convo.messages = [...incoming, { role: "assistant", content: full }]; saveConvo(convo); } catch {}
+  };
 
   if (attachments.length) {
     const visionModel = attachments.length > VISION_FAST_THRESHOLD ? VISION_MODEL_FAST : VISION_MODEL_QUALITY;
-    // GPU is single-tenant: park our own llama-server (if resident) before Ollama
-    // loads Gemma — HANDOFF bug #1 was exactly this pair of backends colliding.
-    const parked = servingModel();
-    if (parked) stopServing();
+    const meta = startRun({ kind: "chat", conversationId: cid, model: visionModel }, async (emit, signal) => {
+      // GPU is single-tenant: park our own llama-server (if resident) before Ollama
+      // loads Gemma — HANDOFF bug #1 was exactly this pair of backends colliding.
+      const parked = servingModel();
+      if (parked) stopServing();
 
-    const ollamaMessages = incoming.map((m, i) =>
-      i === incoming.length - 1 && m.role === "user"
-        ? { role: m.role, content: m.content, images: attachments.map(stripDataUrl) }
-        : { role: m.role, content: m.content });
-    if (system) ollamaMessages.unshift({ role: "system", content: system });
+      const ollamaMessages = incoming.map((m, i) =>
+        i === incoming.length - 1 && m.role === "user"
+          ? { role: m.role, content: m.content, images: attachments.map(stripDataUrl) }
+          : { role: m.role, content: m.content });
+      if (system) ollamaMessages.unshift({ role: "system", content: system });
 
-    let upstream: Response;
-    try {
-      upstream = await fetch("http://127.0.0.1:11434/api/chat", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: visionModel, messages: ollamaMessages, stream: true, options: { temperature: s.options.temperature } }),
-      });
-    } catch (e) {
-      if (parked) { try { await ensureServing(parked); } catch {} }
-      return new Response("vision call failed: " + (e as Error).message, { status: 502 });
-    }
-    if (!upstream.ok || !upstream.body) {
-      if (parked) { try { await ensureServing(parked); } catch {} }
-      return new Response("vision upstream error: " + upstream.status, { status: 502 });
-    }
-
-    const reader = upstream.body.getReader();
-    const dec = new TextDecoder();
-    let full = "";
-    const stream = new ReadableStream({
-      async start(controller) {
+      const acc = { full: "" };
+      try {
         // Tell the UI which vision model actually answered — "fast" vs "quality" is
         // otherwise invisible; the user asked to be able to notice which one ran.
-        controller.enqueue(enc.encode(JSON.stringify({ k: "model", v: visionModel }) + "\n"));
-        let buf = "";
-        try {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += dec.decode(value, { stream: true });
-            let i: number;
-            while ((i = buf.indexOf("\n")) >= 0) {
-              const line = buf.slice(0, i).trim();
-              buf = buf.slice(i + 1);
-              if (!line) continue;
-              try {
-                const j = JSON.parse(line); // Ollama's /api/chat streams NDJSON, not SSE
-                const tok = j.message?.content || "";
-                if (tok) { full += tok; controller.enqueue(enc.encode(JSON.stringify({ k: "text", v: tok }) + "\n")); }
-              } catch {}
-            }
-          }
-        } catch {}
-        try { convo.messages = [...incoming, { role: "assistant", content: full }]; saveConvo(convo); } catch {}
+        emit({ k: "model", v: visionModel });
+        const upstream = await fetch("http://127.0.0.1:11434/api/chat", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: visionModel, messages: ollamaMessages, stream: true, options: { temperature: s.options.temperature } }),
+          signal,
+        });
+        if (!upstream.ok || !upstream.body) throw new Error("vision upstream error: " + upstream.status);
+        await pumpOllama(upstream, emit, signal, acc);
+      } finally {
+        // A stopped/failed generation still persists whatever streamed so far —
+        // same behavior the old inline stream had.
+        if (acc.full) saveReply(acc.full);
         if (parked) { try { await ensureServing(parked); } catch { /* next text message will surface it */ } }
-        try { controller.close(); } catch {}
-      },
+      }
     });
-    return new Response(stream, {
-      headers: { "content-type": "text/plain; charset=utf-8", "x-conversation-id": cid, "x-generation-id": newId() },
-    });
+    return NextResponse.json({ runId: meta.id, conversationId: cid }, { headers: { "x-conversation-id": cid } });
   }
 
   if (!s.model) return new Response("no model available — train or install one", { status: 409 });
-  try {
+
+  const meta = startRun({ kind: "chat", conversationId: cid, model: s.model }, async (emit, signal) => {
+    // Serving happens INSIDE the run — a cold model load can take a minute, and the
+    // POST reply must not wait on it (the client is already attached and watching).
     await ensureServing(s.model);
-  } catch (e) {
-    return new Response("serve failed: " + (e as Error).message, { status: 500 });
-  }
 
-  const payload: Record<string, unknown> = {
-    messages: system ? [{ role: "system", content: system }, ...incoming] : incoming,
-    stream: true,
-    temperature: s.options.temperature,
-    top_p: s.options.top_p,
-    top_k: s.options.top_k,
-    repeat_penalty: s.options.repeat_penalty,
-  };
-  if (s.options.num_predict > 0) payload.max_tokens = s.options.num_predict;
+    const payload: Record<string, unknown> = {
+      messages: system ? [{ role: "system", content: system }, ...incoming] : incoming,
+      stream: true,
+      temperature: s.options.temperature,
+      top_p: s.options.top_p,
+      top_k: s.options.top_k,
+      repeat_penalty: s.options.repeat_penalty,
+    };
+    if (s.options.num_predict > 0) payload.max_tokens = s.options.num_predict;
 
-  const upstream = await fetch(`http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
+    const acc = { full: "" };
+    try {
+      const upstream = await fetch(`http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+        signal,
+      });
+      if (!upstream.ok || !upstream.body) throw new Error("upstream error: " + upstream.status);
+      await pumpOpenAI(upstream, emit, acc);
+    } finally {
+      if (acc.full) saveReply(acc.full);
+    }
   });
-  if (!upstream.ok || !upstream.body) return new Response("upstream error", { status: 502 });
 
-  const reader = upstream.body.getReader();
+  return NextResponse.json({ runId: meta.id, conversationId: cid }, { headers: { "x-conversation-id": cid } });
+}
+
+// Both pumps accumulate into a caller-owned object so a mid-stream abort/error
+// still leaves the partial text where the caller's `finally` can persist it.
+// Ollama's /api/chat streams NDJSON, not SSE.
+async function pumpOllama(upstream: Response, emit: EmitFn, signal: AbortSignal, acc: { full: string }): Promise<void> {
+  const reader = upstream.body!.getReader();
   const dec = new TextDecoder();
-  let full = "";
-
-  const stream = new ReadableStream({
-    async start(controller) {
-      let buf = "";
+  let buf = "";
+  for (;;) {
+    if (signal.aborted) { try { await reader.cancel(); } catch {} break; }
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i: number;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line) continue;
       try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          let i: number;
-          while ((i = buf.indexOf("\n")) >= 0) {
-            const line = buf.slice(0, i).trim();
-            buf = buf.slice(i + 1);
-            if (!line.startsWith("data:")) continue;
-            const data = line.slice(5).trim();
-            if (data === "[DONE]") continue;
-            try {
-              const tok = JSON.parse(data).choices?.[0]?.delta?.content || "";
-              if (tok) { full += tok; controller.enqueue(enc.encode(JSON.stringify({ k: "text", v: tok }) + "\n")); }
-            } catch {}
-          }
-        }
+        const j = JSON.parse(line);
+        const tok = j.message?.content || "";
+        if (tok) { acc.full += tok; emit({ k: "text", v: tok }); }
       } catch {}
-      try { convo.messages = [...incoming, { role: "assistant", content: full }]; saveConvo(convo); } catch {}
-      try { controller.close(); } catch {}
-    },
-  });
+    }
+  }
+}
 
-  return new Response(stream, {
-    headers: { "content-type": "text/plain; charset=utf-8", "x-conversation-id": cid, "x-generation-id": newId() },
-  });
+async function pumpOpenAI(upstream: Response, emit: EmitFn, acc: { full: string }): Promise<void> {
+  const reader = upstream.body!.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i: number;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (data === "[DONE]") continue;
+      try {
+        const delta = JSON.parse(data).choices?.[0]?.delta || {};
+        if (delta.reasoning_content) emit({ k: "think", v: delta.reasoning_content });
+        if (delta.content) { acc.full += delta.content; emit({ k: "text", v: delta.content }); }
+      } catch {}
+    }
+  }
 }

@@ -400,7 +400,6 @@ export default function AgentChat() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const atBottomRef = useRef(true); // is the user pinned to the bottom of the chat?
 
   const onScroll = () => {
@@ -409,16 +408,17 @@ export default function AgentChat() {
     if (revealedIdx !== null) setRevealedIdx(null); // scrolling dismisses a long-press menu
   };
   const convoIdRef = useRef(""); // live convoId for callbacks that must not capture a stale value
-  const genIdRef = useRef<string>(""); // server-side generation id (for Stop + reconcile)
+  const genIdRef = useRef<string>(""); // the current generation's run id (for Stop + reattach)
   const reconcileIdxRef = useRef<number>(-1); // assistant index of an in-flight turn, for visibility-resync
-  const turnRef = useRef(0); // bumps per send; a reconcile bumps it to neutralize a dead/late stream
-  const reconcilePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Stop = explicitly cancel the server generation (a plain disconnect does NOT,
-  // so it keeps running + persists). Then tear down the local stream + voice.
+  const turnRef = useRef(0); // bumps per send; a reattach bumps it to neutralize a dead/late stream
+  const esChatRef = useRef<EventSource | null>(null);
+  useEffect(() => () => { esChatRef.current?.close(); }, []); // unmount: detach (run unaffected)
+  // Stop = a REAL server-side cancel now: generations run in the run manager, so
+  // stopping aborts the model decode itself (the old endpoint was a no-op and the
+  // GPU kept generating after every Stop). Then tear down the voice.
   const stop = () => {
     const g = genIdRef.current;
-    if (g) fetch("/api/agent/chat/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ genId: g }) }).catch(() => {});
-    abortRef.current?.abort();
+    if (g) fetch("/api/agent/chat/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ runId: g }) }).catch(() => {});
     stopSpeech();
   };
 
@@ -448,67 +448,105 @@ export default function AgentChat() {
     } catch { /* ignore */ }
   }, []);
 
-  const openConvo = useCallback(async (id: string) => {
+  const openConvo = useCallback(async (id: string): Promise<ServerMsg[] | null> => {
     setListOpen(false);
     try {
       const r = await fetch(`/api/agent/conversations/${id}`);
-      if (!r.ok) return;
+      if (!r.ok) return null;
       const j = await r.json();
       setMessages((j.messages ?? []).map(msgFromServer));
       setConvoId(id);
-    } catch { /* ignore */ }
+      return (j.messages ?? []) as ServerMsg[];
+    } catch { return null; }
   }, []);
 
-  // Pull the persisted reply from the DB and adopt it. Used when the client comes
-  // back after navigating away / a backgrounded (screen-off) tab dropped the live
-  // stream: the server kept generating and saved the answer, so we resync to it.
-  // Returns true once the turn's assistant reply is present on the server.
-  const reconcile = useCallback(async (assistantIdx: number): Promise<boolean> => {
-    const id = convoIdRef.current;
-    if (!id) return false;
-    try {
-      const r = await fetch(`/api/agent/conversations/${id}`);
-      if (!r.ok) return false;
-      const j = await r.json();
-      const server: ServerMsg[] = j.messages ?? [];
-      const done = server.length > assistantIdx && server[assistantIdx]?.role === "assistant" && !!server[assistantIdx]?.content?.trim();
-      if (!done) return false;
-      // Adopt the server's authoritative reply and neutralize any still-pending
-      // local stream for this turn (bump turnRef so its late callbacks no-op).
-      turnRef.current++;
-      reconcileIdxRef.current = -1;
-      genIdRef.current = "";
-      setMessages(server.map(msgFromServer));
-      setStreaming(false);
-      return true;
-    } catch {
-      return false;
-    }
-  }, []);
-
-  // Poll the server for the persisted reply (used when we returned to a tab whose
-  // live stream died and the answer isn't saved yet — generation may still run).
-  const startReconcilePoll = useCallback((assistantIdx: number) => {
-    if (reconcilePollRef.current) return;
-    let tries = 0;
-    reconcilePollRef.current = setInterval(async () => {
-      tries++;
-      const ok = await reconcile(assistantIdx);
-      if (ok || tries > 48) { // ~2 min ceiling
-        if (reconcilePollRef.current) { clearInterval(reconcilePollRef.current); reconcilePollRef.current = null; }
+  // Attach to a chat generation's run stream (live send or reattach after the tab
+  // was suspended/closed) and render its tokens into the assistant slot at `idx`.
+  // Replay from seq 0 rebuilds the full text deterministically, so attaching late
+  // shows exactly what attaching live would have. Resolves when the run settles.
+  const attachChatRun = useCallback((runId: string, idx: number, myTurn: number, willSpeak: boolean) => new Promise<void>((resolve) => {
+    esChatRef.current?.close();
+    genIdRef.current = runId;
+    const es = new EventSource(`/api/agent/runs/${runId}/stream`);
+    esChatRef.current = es;
+    let content = "";
+    let thinking = "";
+    let visionModel = "";
+    let spokenLen = 0;
+    const paint = () => {
+      const c = content, t = thinking, vm = visionModel;
+      setMessages((p) => {
+        const copy = [...p];
+        copy[idx] = { role: "assistant", content: c, thinking: t, ...(vm ? { visionModel: vm } : {}) };
+        return copy;
+      });
+    };
+    const finish = (status: string, errText?: string) => {
+      es.close();
+      if (esChatRef.current === es) esChatRef.current = null;
+      if (turnRef.current === myTurn) {
+        if (status === "stopped") content = (content || "") + "\n\n_(stopped)_";
+        else if (status === "error" || status === "interrupted") content = (content ? content + "\n\n" : "") + `Error: ${(errText || status).slice(0, 200)}`;
+        paint();
+        genIdRef.current = "";
+        reconcileIdxRef.current = -1;
+        setStreaming(false);
+        loadConvos();
+        if (willSpeak && content.length > spokenLen) enqueueSpeech(content.slice(spokenLen)); // read the tail
       }
-    }, 2500);
-  }, [reconcile]);
+      resolve();
+    };
+    es.onmessage = (ev) => {
+      if (turnRef.current !== myTurn) { es.close(); if (esChatRef.current === es) esChatRef.current = null; resolve(); return; }
+      let e: { k: string; v?: unknown; error?: string };
+      try { e = JSON.parse(ev.data); } catch { return; }
+      if (e.k === "think") { thinking += String(e.v ?? ""); paint(); }
+      else if (e.k === "text") {
+        content += String(e.v ?? "");
+        paint();
+        if (willSpeak) {
+          let r;
+          while ((r = nextSpeakChunk(content, spokenLen))) { enqueueSpeech(r.chunk); spokenLen = r.newLen; }
+        }
+      } else if (e.k === "model") { visionModel = String(e.v ?? ""); paint(); }
+      else if (e.k === "transcript") {
+        const heard = String(e.v ?? "");
+        if (heard) setMessages((p) => { const c = [...p]; if (c[idx - 1]?.role === "user") c[idx - 1] = { ...c[idx - 1], content: heard }; return c; });
+      } else if (e.k === "status") {
+        const v = String(e.v);
+        if (["done", "error", "stopped", "interrupted"].includes(v)) finish(v, e.error);
+      }
+    };
+    // EventSource reconnects on its own (resuming via Last-Event-ID); if the run
+    // ended while disconnected, the reconnect replays the terminal status.
+  }), [loadConvos]);
 
-  // When the tab becomes visible again (or the network returns) and a reply was
-  // in flight, the live stream may have been killed by the OS suspending the tab.
-  // Resync from the DB — the server kept generating and saved the answer.
+  // When the tab becomes visible again (or the network returns) and a reply was in
+  // flight but nothing is attached, ask the run manager whether the generation is
+  // still live — reattach if so, adopt the persisted reply if it already finished.
   useEffect(() => {
-    const resync = () => {
+    const resync = async () => {
       if (document.visibilityState !== "visible") return;
-      if (!streamingRef.current || reconcileIdxRef.current < 0) return;
+      if (!streamingRef.current || esChatRef.current) return;
       const idx = reconcileIdxRef.current;
-      reconcile(idx).then((ok) => { if (!ok) startReconcilePoll(idx); });
+      const cid = convoIdRef.current;
+      if (idx < 0 || !cid) return;
+      try {
+        const runs: { id: string; status: string; conversationId: string; kind: string }[] =
+          await fetch("/api/agent/runs?limit=20").then((r) => r.json());
+        const liveRun = runs.find((x) => x.status === "running" && x.kind === "chat" && x.conversationId === cid);
+        if (liveRun) { attachChatRun(liveRun.id, idx, turnRef.current, false); return; }
+        // Not live: the reply (possibly partial) is whatever got persisted.
+        const r = await fetch(`/api/agent/conversations/${cid}`);
+        if (r.ok) {
+          const j = await r.json();
+          turnRef.current++;
+          reconcileIdxRef.current = -1;
+          genIdRef.current = "";
+          setMessages(((j.messages ?? []) as ServerMsg[]).map(msgFromServer));
+        }
+        setStreaming(false);
+      } catch { /* offline — the next visibility change retries */ }
     };
     document.addEventListener("visibilitychange", resync);
     window.addEventListener("online", resync);
@@ -517,25 +555,50 @@ export default function AgentChat() {
       document.removeEventListener("visibilitychange", resync);
       window.removeEventListener("online", resync);
       window.removeEventListener("focus", resync);
-      if (reconcilePollRef.current) { clearInterval(reconcilePollRef.current); reconcilePollRef.current = null; }
     };
-  }, [reconcile, startReconcilePoll]);
+  }, [attachChatRun]);
 
-  // On mount: models + conversation list, and resume the most recent chat.
+  // On mount: models + conversation list, resume the most recent chat, and — a
+  // fully closed-and-reopened tab has no memory a generation might still be going —
+  // reattach to a live run for that conversation if the run manager has one.
   useEffect(() => {
     fetch("/api/agent/models")
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => { if (j) { setModels(j.models ?? []); setModel(j.current ?? ""); } })
       .catch(() => {});
     loadConvos().then(() => {});
+    const reattachIfLive = async (cid: string, msgs: ServerMsg[] | null) => {
+      try {
+        const runs: { id: string; status: string; conversationId: string; kind: string }[] =
+          await fetch("/api/agent/runs?limit=20").then((r) => r.json());
+        const liveRun = runs.find((x) => x.status === "running" && x.kind === "chat" && x.conversationId === cid);
+        if (!liveRun) return;
+        const base = msgs ?? [];
+        const idx = base.length;
+        setMessages([...base.map(msgFromServer), { role: "assistant", content: "", thinking: "" }]);
+        setStreaming(true);
+        reconcileIdxRef.current = idx;
+        convoIdRef.current = cid;
+        attachChatRun(liveRun.id, idx, ++turnRef.current, false);
+      } catch { /* server unreachable — visibility resync will retry */ }
+    };
     // Deep-link from Library ("open in /chat"): ?conv=<id> opens that specific
     // conversation instead of whichever is most recent.
     const deepLinkId = new URLSearchParams(window.location.search).get("conv");
-    if (deepLinkId) { openConvo(deepLinkId); window.history.replaceState(null, "", "/chat"); return; }
+    if (deepLinkId) {
+      openConvo(deepLinkId).then((msgs) => reattachIfLive(deepLinkId, msgs));
+      window.history.replaceState(null, "", "/chat");
+      return;
+    }
     fetch("/api/agent/conversations?kind=chat")
       .then((r) => (r.ok ? r.json() : []))
-      .then((list: Convo[]) => { if (list?.[0]) openConvo(list[0].id); })
+      .then(async (list: Convo[]) => {
+        if (!list?.[0]) return;
+        const msgs = await openConvo(list[0].id);
+        await reattachIfLive(list[0].id, msgs);
+      })
       .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadConvos, openConvo]);
 
   useEffect(() => {
@@ -593,118 +656,51 @@ export default function AgentChat() {
       setMessages(next);
       setStreaming(true);
       const idx = next.length;
-      const myTurn = ++turnRef.current; // identity of this turn; a reconcile invalidates it
+      const myTurn = ++turnRef.current; // identity of this turn; a reattach invalidates it
       reconcileIdxRef.current = idx;
       setMessages([...next, { role: "assistant", content: "", thinking: "" }]);
       atBottomRef.current = true; // a fresh send pins to the bottom
-      const controller = new AbortController();
-      abortRef.current = controller;
 
       try {
+        // POST returns {runId, conversationId} immediately — the generation runs
+        // detached in the server's run manager. Rendering happens through the
+        // attached SSE stream (same code path a reattach uses), so a suspended or
+        // closed tab changes nothing about the generation itself.
         const res = await fetch("/api/agent/chat", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ messages: next.map(({ role, content }) => ({ role, content })), conversationId: convoId || undefined, think: audioB64 ? false : think, attachments: imgs, currentArtifact: currentArtifact || undefined, audio: audioB64 || undefined }),
-          signal: controller.signal,
         });
-        const cid = res.headers.get("x-conversation-id");
-        if (cid && cid !== convoId) setConvoId(cid);
-        genIdRef.current = res.headers.get("x-generation-id") || "";
-
-        if (!res.ok || !res.body) {
+        if (!res.ok) {
           const err = await res.text().catch(() => "error");
           setMessages((p) => {
             const c = [...p];
             c[idx] = { role: "assistant", content: `Error: ${err.slice(0, 200)}` };
             return c;
           });
+          setStreaming(false);
           return;
         }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
-        let content = "";
-        let thinking = "";
-        let visionModel = "";
-        let spokenLen = 0;
-        const willSpeak = speakOverride ?? speakOn;
-        const flush = (line: string) => {
-          if (!line.trim()) return;
-          try {
-            const ev = JSON.parse(line) as { k?: string; v?: string };
-            if (ev.k === "think") thinking += ev.v ?? "";
-            else if (ev.k === "text") content += ev.v ?? "";
-            else if (ev.k === "model") visionModel = ev.v ?? "";
-            else if (ev.k === "transcript") {
-              const heard = ev.v ?? "";
-              if (heard) setMessages((p) => { const c = [...p]; if (c[idx - 1]?.role === "user") c[idx - 1] = { ...c[idx - 1], content: heard }; return c; });
-            }
-          } catch { content += line; }
-        };
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          for (const l of lines) flush(l);
-          if (turnRef.current !== myTurn) break; // a reconcile took over this turn → stop touching state
-          const c = content, t = thinking, vm = visionModel;
-          setMessages((p) => {
-            const copy = [...p];
-            copy[idx] = { role: "assistant", content: c, thinking: t, ...(vm ? { visionModel: vm } : {}) };
-            return copy;
-          });
-          if (willSpeak) {
-            let r;
-            while ((r = nextSpeakChunk(content, spokenLen))) { enqueueSpeech(r.chunk); spokenLen = r.newLen; }
-          }
-        }
-        if (buf.trim()) flush(buf);
+        const j = await res.json();
+        const cid = j.conversationId || res.headers.get("x-conversation-id");
+        if (cid && cid !== convoId) { setConvoId(cid); convoIdRef.current = cid; }
+        await attachChatRun(j.runId, idx, myTurn, speakOverride ?? speakOn);
+      } catch (e) {
         if (turnRef.current === myTurn) {
           setMessages((p) => {
-            const copy = [...p];
-            copy[idx] = { role: "assistant", content, thinking, ...(visionModel ? { visionModel } : {}) };
-            return copy;
-          });
-          loadConvos();
-          if (willSpeak && content.length > spokenLen) enqueueSpeech(content.slice(spokenLen)); // read the tail
-        }
-      } catch (e) {
-        if (turnRef.current !== myTurn) {
-          // a reconcile already adopted the server's reply for this turn — ignore
-        } else if (e instanceof DOMException && e.name === "AbortError") {
-          // User-initiated stop: keep whatever streamed so far, just mark it.
-          setMessages((p) => {
             const c = [...p];
-            const cur = c[idx];
-            c[idx] = { ...cur, content: (cur?.content || "") + "\n\n_(stopped)_" };
+            c[idx] = { role: "assistant", content: `Error: ${(e as Error).message.slice(0, 200)}` };
             return c;
           });
-        } else {
-          // Connection dropped (often a backgrounded/screen-off tab). The server
-          // kept generating — try to adopt the persisted reply; if it's not ready
-          // yet, keep polling rather than clobbering with an error.
-          const ok = await reconcile(idx);
-          if (!ok) {
-            startReconcilePoll(idx);
-            setMessages((p) => {
-              const c = [...p];
-              const cur = c[idx];
-              c[idx] = { ...cur, content: (cur?.content || ""), thinking: cur?.thinking };
-              return c;
-            });
-          }
+          genIdRef.current = "";
+          reconcileIdxRef.current = -1;
+          setStreaming(false);
         }
       } finally {
-        if (turnRef.current === myTurn) { genIdRef.current = ""; reconcileIdxRef.current = -1; }
-        abortRef.current = null;
-        setStreaming(false);
         setTimeout(() => taRef.current?.focus(), 0);
       }
     },
-    [messages, streaming, convoId, loadConvos, think, attached, speakOn, reconcile, startReconcilePoll],
+    [messages, streaming, convoId, think, attached, speakOn, attachChatRun],
   );
 
   const patchConvo = (op: "delete" | "truncate", index: number) =>
@@ -738,10 +734,7 @@ export default function AgentChat() {
     if (streaming) return;
     setRevealedIdx(null);
     setStreaming(true);
-    const controller = new AbortController();
-    abortRef.current = controller;
     const base = messages[i]?.content ?? "";
-    let cont = "";
     try {
       const res = await fetch("/api/agent/chat", {
         method: "POST",
@@ -752,29 +745,31 @@ export default function AgentChat() {
           continueIndex: i,
           think,
         }),
-        signal: controller.signal,
       });
-      genIdRef.current = res.headers.get("x-generation-id") || "";
-      if (!res.ok || !res.body) return;
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const l of lines) {
-          if (!l.trim()) continue;
-          try { const ev = JSON.parse(l); if (ev.k === "text") cont += ev.v ?? ""; } catch { /* ignore */ }
-        }
-        setMessages((p) => { const c = [...p]; if (c[i]) c[i] = { ...c[i], content: base + cont }; return c; });
-      }
+      if (!res.ok) return;
+      const j = await res.json();
+      genIdRef.current = j.runId || "";
+      await new Promise<void>((resolve) => {
+        esChatRef.current?.close();
+        const es = new EventSource(`/api/agent/runs/${j.runId}/stream`);
+        esChatRef.current = es;
+        let cont = "";
+        es.onmessage = (ev) => {
+          let e: { k: string; v?: unknown };
+          try { e = JSON.parse(ev.data); } catch { return; }
+          if (e.k === "text") {
+            cont += String(e.v ?? "");
+            setMessages((p) => { const c = [...p]; if (c[i]) c[i] = { ...c[i], content: base + cont }; return c; });
+          } else if (e.k === "status" && ["done", "error", "stopped", "interrupted"].includes(String(e.v))) {
+            es.close();
+            if (esChatRef.current === es) esChatRef.current = null;
+            resolve();
+          }
+        };
+      });
       loadConvos();
-    } catch { /* abort/error: keep what streamed (server persisted the continuation) */ } finally {
+    } catch { /* error: keep what streamed (server persisted the continuation) */ } finally {
       genIdRef.current = "";
-      abortRef.current = null;
       setStreaming(false);
     }
   };
@@ -808,7 +803,7 @@ export default function AgentChat() {
       // guards against the speaker→mic echo false-triggering on short blips.
       if (vm && bargeInRef.current && speakingRef.current && heard.replace(/\s+/g, "").length >= 5) {
         stopSpeech();
-        if (streamingRef.current) abortRef.current?.abort();
+        if (streamingRef.current) stop(); // barge-in: cancel the generation server-side
         speakingRef.current = "";
       }
       if (!vm) setInput(heard);
@@ -1120,7 +1115,7 @@ export default function AgentChat() {
             onClick={() => {
               if (listening) { recogRef.current?.stop(); return; } // stop & send
               stopSpeech();                                        // interrupt the voice
-              if (streaming) abortRef.current?.abort();            // interrupt a reply in progress
+              if (streaming) stop();                               // interrupt a reply in progress (server-side)
               startVoice();
             }}
             className="relative flex items-center justify-center w-60 h-60 select-none"

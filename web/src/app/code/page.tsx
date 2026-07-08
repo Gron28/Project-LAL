@@ -200,7 +200,6 @@ export default function CodePage() {
   const toggleTree = (v: boolean) => { setTreeOpen(v); try { localStorage.setItem("code_tree_open", v ? "1" : "0"); } catch {} };
   const workspaceRef = useRef(""); // openConvo can run before the workspace fetch lands in state
   const history = useRef<HistMsg[]>([]);
-  const abortRef = useRef<AbortController | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);   // auto-follow only while the user is at the bottom
@@ -239,11 +238,11 @@ export default function CodePage() {
     } catch { /* ignore */ }
   };
 
-  const openConvo = async (id: string) => {
+  const openConvo = async (id: string): Promise<RawMsg[] | null> => {
     setSessionsOpen(false);
     try {
       const r = await fetch(`/api/agent/conversations/${id}`);
-      if (!r.ok) return;
+      if (!r.ok) return null;
       const j = await r.json();
       const { blocks: b, history: h } = reconstructSession((j.messages ?? []) as RawMsg[]);
       // Restore the session's project folder BEFORE rendering, so the file tree /
@@ -265,7 +264,8 @@ export default function CodePage() {
       setBlocks(projWarning ? [...b, { t: "error", text: projWarning }] : b);
       setConvoId(id);
       setInstructionFiles([]);
-    } catch { /* ignore */ }
+      return (j.messages ?? []) as RawMsg[];
+    } catch { return null; }
   };
 
   const newSession = () => {
@@ -283,59 +283,119 @@ export default function CodePage() {
     if (id === convoId) newSession();
   };
 
-  // The tool loop runs to completion server-side regardless of the client
-  // connection (verified: killing the client mid-tool-call still let an 8s shell
-  // command finish and the model produce its final reply, all persisted) — but
-  // the UI had no way to learn the outcome if the live stream died, e.g. the tab
-  // was closed and reopened, or a mobile browser suspended/killed the background
-  // connection. On return, pull the persisted conversation and adopt it if it's
-  // moved on from — or finished past — what's on screen.
+  // A run lives server-side in the run manager, welded to nothing — this client
+  // (or any other tab/device) just ATTACHES to its SSE event stream and renders.
+  // Closing the tab changes nothing about the run; reopening reattaches and
+  // replays. Run status ("running"/"done"/"error"/"stopped"/"interrupted") comes
+  // from the server — the old transcript-shape guessing (and its permanently
+  // stuck busy spinner) is gone.
   const convoIdRef = useRef("");
   useEffect(() => { convoIdRef.current = convoId; }, [convoId]);
-  const busyRef = useRef(false);
-  useEffect(() => { busyRef.current = busy; }, [busy]);
-  const reconcilePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+  const runIdRef = useRef("");
+  useEffect(() => () => { esRef.current?.close(); }, []); // unmount: detach (run unaffected)
 
-  const reconcile = async (): Promise<boolean> => {
+  // Rebuild history (with full tool_calls/tool messages) from the saved transcript
+  // once a run settles — carrying forward only the streamed text once meant the
+  // model had NO memory of tool calls it already made (it would re-describe images,
+  // re-write files). The server persists the real transcript; build on that.
+  const adoptSavedTranscript = async () => {
     const id = convoIdRef.current;
-    if (!id) return false;
+    if (!id) return;
     try {
       const r = await fetch(`/api/agent/conversations/${id}`);
-      if (!r.ok) return false;
+      if (!r.ok) return;
       const j = await r.json();
-      const msgs = (j.messages ?? []) as RawMsg[];
-      if (!msgs.length) return false;
-      const last = msgs[msgs.length - 1];
-      // An assistant turn is only "still going" if it has tool_calls pending —
-      // NOT if its content happens to be empty. A model that acts via tools with
-      // no closing remark ends with content:"" and no tool_calls, which is a
-      // legitimately finished turn, not an unfinished one. Requiring non-empty
-      // content here misdiagnosed that as "still running" forever (no live fetch
-      // to ever prove otherwise), which is what made Stop and the busy spinner
-      // get stuck.
-      const finished = last?.role === "assistant" && !last.tool_calls?.length;
-      const { blocks: b, history: h } = reconstructSession(msgs);
+      const { history: h } = reconstructSession((j.messages ?? []) as RawMsg[]);
       history.current = h;
-      setBlocks(b);
-      if (finished) { setBusy(false); return true; }
-      return false;
-    } catch { return false; }
+    } catch { /* keep whatever local history we had */ }
   };
-  const startReconcilePoll = () => {
-    if (reconcilePollRef.current) return;
-    let tries = 0;
-    reconcilePollRef.current = setInterval(async () => {
-      tries++;
-      const done = await reconcile();
-      if (done || tries > 48) { // ~2min ceiling
-        if (reconcilePollRef.current) { clearInterval(reconcilePollRef.current); reconcilePollRef.current = null; }
+
+  // Attach to a run's event stream. `savedMsgs` non-null = reattach mode: on the
+  // run's turn-boundary event, the view is rebuilt as reconstruct(saved[..base]) +
+  // replay(all run events) — byte-equivalent to having watched live from the start.
+  const attachRun = (runId: string, savedMsgs: RawMsg[] | null) => {
+    esRef.current?.close();
+    runIdRef.current = runId;
+    const es = new EventSource(`/api/agent/runs/${runId}/stream`);
+    esRef.current = es;
+    const finish = async (status: string, errText?: string) => {
+      es.close();
+      if (esRef.current === es) { esRef.current = null; runIdRef.current = ""; }
+      if (status === "error") setBlocks((prev) => [...prev, { t: "error", text: "run failed: " + (errText || "unknown error") }]);
+      else if (status === "interrupted") setBlocks((prev) => [...prev, { t: "error", text: errText || "the app restarted while this run was in progress" }]);
+      else if (status === "stopped") setBlocks((prev) => [...prev, { t: "status", text: "── stopped ──" }]);
+      setApproval(null);
+      await adoptSavedTranscript();
+      setBusy(false);
+      loadConvos();
+    };
+    es.onmessage = (ev) => {
+      // The wire carries the Ev union PLUS run-manager envelope kinds
+      // (run/turn/status/approval_result) — parse loosely, narrow per kind.
+      let raw: { k: string; v?: unknown; error?: string };
+      try { raw = JSON.parse(ev.data); } catch { return; }
+      if (raw.k === "run") return; // meta preamble — status handling happens via "status" events
+      if (raw.k === "turn") {
+        if (savedMsgs) {
+          const base = (raw.v as { base?: number } | undefined)?.base ?? 0;
+          const nonSystem = savedMsgs.filter((m) => m.role !== "system");
+          const { blocks: b, history: h } = reconstructSession(nonSystem.slice(0, base));
+          history.current = h;
+          setBlocks(b);
+        }
+        return;
       }
-    }, 2500);
+      if (raw.k === "status") {
+        const v = String(raw.v);
+        if (["done", "error", "stopped", "interrupted"].includes(v)) finish(v, raw.error);
+        return;
+      }
+      if (raw.k === "approval_needed") {
+        const call = raw.v as { id: string; name: string; args: Record<string, unknown> };
+        setBlocks((prev) => {
+          const next = prev.slice();
+          for (let j = next.length - 1; j >= 0; j--) {
+            const b = next[j];
+            if (b.t === "tool" && b.call.id === call.id) { next[j] = { t: "tool", call: { ...b.call, pendingApproval: true } }; break; }
+          }
+          return next;
+        });
+        setApproval(call);
+        return;
+      }
+      if (raw.k === "approval_result") {
+        const v = raw.v as { id: string };
+        setBlocks((prev) => prev.map((b) => (b.t === "tool" && b.call.id === v.id ? { ...b, call: { ...b.call, pendingApproval: false } } : b)));
+        setApproval((a) => (a && a.id === v.id ? null : a));
+        return;
+      }
+      const e = raw as unknown as Ev;
+      setBlocks((prev) => { const next = prev.slice(); applyEvent(next, e); return next; });
+      if (e.k === "tool_result" && ["write_file", "edit_file", "run_shell", "run_python", "git"].includes(e.v.name)) setFsTick((t) => t + 1);
+      if (e.k === "project") setInstructionFiles(e.v.instructionFiles || []);
+      if (e.k === "done" && e.v.conversationId) { setConvoId(e.v.conversationId); convoIdRef.current = e.v.conversationId; }
+    };
+    // EventSource reconnects on its own (resuming via Last-Event-ID). If the run
+    // ended while we were away, the server replays the terminal status and we
+    // settle through finish() above — no polling, no guessing.
   };
+
+  // Coming back to the tab/network with nothing attached: ask the server the one
+  // truthful question — is a run live for this conversation? — and reattach if so.
   useEffect(() => {
-    const resync = () => {
-      if (document.visibilityState !== "visible" || !busyRef.current) return;
-      reconcile().then((done) => { if (!done) startReconcilePoll(); });
+    const resync = async () => {
+      if (document.visibilityState !== "visible" || esRef.current) return;
+      const id = convoIdRef.current;
+      if (!id) return;
+      try {
+        const runs: { id: string; status: string; conversationId: string }[] = await fetch("/api/agent/runs?limit=20").then((r) => r.json());
+        const r = runs.find((x) => x.status === "running" && x.conversationId === id);
+        if (!r) return;
+        const c = await fetch(`/api/agent/conversations/${id}`).then((x) => (x.ok ? x.json() : null)).catch(() => null);
+        setBusy(true);
+        attachRun(r.id, (c?.messages ?? []) as RawMsg[]);
+      } catch { /* offline — next visibility change retries */ }
     };
     document.addEventListener("visibilitychange", resync);
     window.addEventListener("online", resync);
@@ -344,7 +404,6 @@ export default function CodePage() {
       document.removeEventListener("visibilitychange", resync);
       window.removeEventListener("online", resync);
       window.removeEventListener("focus", resync);
-      if (reconcilePollRef.current) { clearInterval(reconcilePollRef.current); reconcilePollRef.current = null; }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -379,19 +438,17 @@ export default function CodePage() {
         const deepLinkId = qs.get("conv");
         const targetId = deepLinkId || list?.[0]?.id;
         if (!targetId) return;
-        await openConvo(targetId);
+        const msgs = await openConvo(targetId);
         if (deepLinkId) window.history.replaceState(null, "", "/code");
-        // A fully closed-and-reopened tab (not just backgrounded) is a fresh
-        // mount — it has no memory that a task might still be running. If the
-        // resumed session's last message isn't a finished assistant reply, the
-        // loop may still be going server-side; start polling rather than sitting
-        // there looking done when it might not be.
-        const r2 = await fetch(`/api/agent/conversations/${targetId}`).catch(() => null);
-        const j2 = await r2?.json().catch(() => null);
-        const msgs = (j2?.messages ?? []) as RawMsg[];
-        const last = msgs[msgs.length - 1];
-        const looksUnfinished = msgs.length > 0 && !(last?.role === "assistant" && !last.tool_calls?.length);
-        if (looksUnfinished) { setBusy(true); startReconcilePoll(); }
+        // A fully closed-and-reopened tab is a fresh mount with no memory that a
+        // task might still be running — so ask the run manager instead of guessing
+        // from the transcript's shape. A live run for this conversation gets
+        // reattached (replay + tail); anything else is genuinely not running.
+        try {
+          const runs: { id: string; status: string; conversationId: string }[] = await fetch("/api/agent/runs?limit=20").then((r) => r.json());
+          const live = runs.find((x) => x.status === "running" && x.conversationId === targetId);
+          if (live) { setBusy(true); attachRun(live.id, msgs ?? []); }
+        } catch { /* server unreachable — visibility resync will retry */ }
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -450,51 +507,19 @@ export default function CodePage() {
     stickRef.current = true;
     setShowJump(false);
     setBlocks((prev) => [...prev, { t: "user", text: query, hIdx: -1 }]);
-
-    const ac = new AbortController();
-    abortRef.current = ac;
     try {
       const res = await fetch("/api/agent/deliberate", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ query, minutes, model, autoApprove: auto, project: project || undefined }),
-        signal: ac.signal,
       });
-      if (!res.ok || !res.body) throw new Error(await res.text());
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        let i: number;
-        while ((i = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, i).trim();
-          buf = buf.slice(i + 1);
-          if (!line) continue;
-          let e: Ev;
-          try { e = JSON.parse(line); } catch { continue; }
-          if (e.k === "approval_needed") {
-            setBlocks((prev) => {
-              const next = prev.slice();
-              for (let j = next.length - 1; j >= 0; j--) {
-                const bl = next[j];
-                if (bl.t === "tool" && bl.call.id === e.v.id) { next[j] = { t: "tool", call: { ...bl.call, pendingApproval: true } }; break; }
-              }
-              return next;
-            });
-            setApproval(e.v);
-          } else {
-            setBlocks((prev) => { const next = prev.slice(); applyEvent(next, e); return next; });
-          }
-        }
-      }
+      if (!res.ok) throw new Error(await res.text());
+      const j = await res.json();
+      if (j.conversationId) { setConvoId(j.conversationId); convoIdRef.current = j.conversationId; }
+      attachRun(j.runId, null); // busy clears when the run's terminal status arrives
     } catch (err) {
-      if ((err as Error).name !== "AbortError") setBlocks((prev) => [...prev, { t: "error", text: (err as Error).message }]);
+      setBlocks((prev) => [...prev, { t: "error", text: (err as Error).message }]);
+      setBusy(false);
     }
-    setBusy(false);
-    setApproval(null);
-    abortRef.current = null;
   };
 
   const send = async () => {
@@ -529,83 +554,32 @@ export default function CodePage() {
     history.current.push({ role: "user", content: withAttachments });
     setBlocks((prev) => [...prev, { t: "user", text: withAttachments, hIdx }]);
 
-    const ac = new AbortController();
-    abortRef.current = ac;
-    let doneCid = "";
     try {
+      // POST returns {runId, conversationId} immediately — the loop runs detached
+      // in the server's run manager. Rendering (and history rebuild on settle)
+      // happens through the attached SSE stream, same path as a reattach.
       const res = await fetch("/api/agent/loop", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ messages: history.current, model, autoApprove: auto, think, mode, project: project || undefined, conversationId: convoId || undefined }),
-        signal: ac.signal,
       });
-      if (!res.ok || !res.body) throw new Error(await res.text());
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        let i: number;
-        while ((i = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, i).trim();
-          buf = buf.slice(i + 1);
-          if (!line) continue;
-          let e: Ev;
-          try { e = JSON.parse(line); } catch { continue; }
-          setBlocks((prev) => {
-            const next = prev.slice();
-            if (e.k === "approval_needed") {
-              for (let j = next.length - 1; j >= 0; j--) {
-                const b = next[j];
-                if (b.t === "tool" && b.call.id === e.v.id) { next[j] = { t: "tool", call: { ...b.call, pendingApproval: true } }; break; }
-              }
-            } else {
-              applyEvent(next, e);
-            }
-            return next;
-          });
-          // agent (or a helper sub-agent) may have touched files — refresh tree/git/editor
-          if (e.k === "tool_result" && ["write_file", "edit_file", "run_shell", "run_python", "git"].includes(e.v.name)) setFsTick((t) => t + 1);
-          if (e.k === "project") setInstructionFiles(e.v.instructionFiles || []);
-          if (e.k === "approval_needed") setApproval(e.v);
-          if (e.k === "done") { doneCid = e.v.conversationId || ""; if (e.v.conversationId) { setConvoId(e.v.conversationId); loadConvos(); } }
-          if (e.k === "done" || e.k === "error") setApproval(null);
-        }
-      }
+      if (!res.ok) throw new Error(await res.text());
+      const j = await res.json();
+      if (j.conversationId) { setConvoId(j.conversationId); convoIdRef.current = j.conversationId; loadConvos(); }
+      attachRun(j.runId, null); // busy clears when the run's terminal status arrives
     } catch (err) {
-      if ((err as Error).name !== "AbortError") setBlocks((prev) => [...prev, { t: "error", text: (err as Error).message }]);
+      setBlocks((prev) => [...prev, { t: "error", text: (err as Error).message }]);
+      setBusy(false);
     }
-    // Rebuild history from the server's saved transcript (full tool_calls/tool
-    // messages included) rather than appending just the final text summary.
-    // Carrying forward only the text meant the model had NO memory of tool calls
-    // it already made — asked to describe an image, then given a follow-up, it
-    // couldn't see it had already called describe_image and would call it again;
-    // same for files it had already written. The server persists the real
-    // transcript regardless (verified) — the client should build on that, not a
-    // lossy summary of it.
-    if (doneCid) {
-      try {
-        const r = await fetch(`/api/agent/conversations/${doneCid}`);
-        if (r.ok) {
-          const j = await r.json();
-          const { history: h } = reconstructSession((j.messages ?? []) as RawMsg[]);
-          history.current = h;
-        }
-      } catch { /* keep whatever local history we had */ }
-    }
-    setBusy(false);
-    setApproval(null);
-    abortRef.current = null;
   };
 
-  // Always resolves the stuck UI state locally even if there's no live fetch to
-  // abort (e.g. busy was set by the reconnect-poll path, not an active send()) —
-  // the user should never be unable to escape a spinner from this button.
+  // Stop is a real server-side operation now: it aborts the run's controller,
+  // which cancels the model decode and unwinds the tool loop. The local escape
+  // hatch remains for the no-run-attached case — the user should never be unable
+  // to escape a spinner from this button.
   const stop = () => {
-    abortRef.current?.abort();
-    if (reconcilePollRef.current) { clearInterval(reconcilePollRef.current); reconcilePollRef.current = null; }
-    setBusy(false);
+    const id = runIdRef.current;
+    if (id) fetch(`/api/agent/runs/${id}/stop`, { method: "POST" }).catch(() => {});
+    else { esRef.current?.close(); esRef.current = null; setBusy(false); }
   };
 
   const inp = "bg-[var(--surface-1)] border border-[var(--border)] rounded px-2 py-1.5 text-xs";

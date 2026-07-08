@@ -1,5 +1,64 @@
 # Handoff — Beat Gemma 12B with Qwen3-4B
 
+## 🔧 2026-07-07 (5) — AGENT RUNTIME REWORK: server-side persistent runs (coded on the Windows box, NEEDS deploy+verify on main-pc)
+
+Root cause of "chat dies on tab switch / phantom running spinner / invisible GPU loops"
+was architectural: every agent run was welded to the browser HTTP request that started
+it. Reworked to the OpenHands/opencode pattern — runs live server-side as persisted
+event logs; every UI is a detachable client. Plan: `~/.claude/plans/help-me-fix-the-snappy-badger.md`.
+
+**What changed (all build-verified + endpoint-smoke-tested on Windows; NOT yet run on main-pc):**
+- **`web/src/lib/runs.ts` (new)** — run manager: `.data/runs/<id>.json` (meta) +
+  `<id>.ndjson` (append-only event log); live registry on globalThis; startup sweep
+  marks orphaned "running" runs `interrupted` (re-deriving seq from the log tail so
+  post-crash events can't collide); 30-day prune; per-run approvals (a client
+  disconnect no longer denies anything — the old loop route denied ALL pending
+  approvals globally on any stream cancel).
+- **POST /api/agent/loop|chat|deliberate return `{runId, conversationId}` IMMEDIATELY**;
+  the work runs detached. Model serving happens INSIDE the run (a cold 8B load is ~a
+  minute; the POST must not wait). Clients attach via
+  `GET /api/agent/runs/[id]/stream` (SSE; `?after=<seq>` or Last-Event-ID resume — no
+  dupes on EventSource auto-reconnect), stop via `POST /api/agent/runs/[id]/stop`,
+  list via `GET /api/agent/runs`.
+- **Stop is real now**: AbortSignal threaded through runToolLoop (upstream fetch +
+  checks between rounds/tools), spawn_agent's inner loop, deliberate's askOnce (whose
+  retry loop must NOT retry an abort), and both chat pumps. The old
+  /api/agent/chat/stop was literally a no-op; /code's Stop only aborted the client
+  fetch while the loop kept running unattended (up to 120 rounds in orchestrator mode).
+- **Clients rewired** (/code page + agent-chat): busy state comes ONLY from run
+  status; reconcile()/startReconcilePoll() transcript-shape guessing deleted (it
+  could set a busy spinner forever on a dead run). Mid-run reattach rebuilds the
+  view as reconstruct(saved[..base]) + replay — the loop emits a `{k:"turn",v:{base}}`
+  boundary event for this.
+- **GPU idle reaper** (lab.ts): llama-server auto-unloads after `serveIdleMinutes`
+  (settings.json, default 10, 0=never) of no use, held while any run is live or
+  training. Nav rail shows a GPU badge (model + idle time) with manual unload
+  (DELETE /api/sysinfo, 409 while a run is live). Before this the singleton stayed
+  GPU-resident forever after any use.
+- **Weak-model harness**: edit_file now returns a ±3-line numbered excerpt of the
+  file as it ACTUALLY reads after the edit (blind repeated edits were how both eval
+  models corrupted files); first truncated tool-call JSON doubles maxTokens (cap 16k)
+  for the retry instead of hitting the same wall.
+- **Training via chat**: new top-level-agent-only tools list_models / list_data_files /
+  list_train_runs / train_status / train_start / train_stop / bench_list /
+  bench_results wrapping lab.ts. train_start/train_stop are approval-gated;
+  train_start DEFERS the actual startTrain until no run is live (one GPU — starting
+  immediately would kill the model answering the chat), then fires; excluded from
+  sub-agents/planner/implementer/orchestrator toolsets.
+- **Gotcha found**: agent-tools.ts sits in an import cycle (lab → graders →
+  agent-tools → lab), so lab consts (TRAIN_BASES) are TDZ during AGENT_TOOL_DEFS
+  evaluation — tool descriptions must stay static literals; validate at call time.
+
+**To deploy on main-pc**: `git pull && cd web && npm run build && systemctl restart <app>`
+(build BEFORE restart — see [[deploy-restart-required]]). Then verify: start a /code
+task → close the tab → reopen (should reattach live); Stop mid-run (GPU decode should
+actually halt); restart the service mid-run (run shows `interrupted`, no phantom
+spinner); idle 10+ min (GPU badge disappears, VRAM freed); ask the agent to
+list_train_runs / start a tiny 0.6B train with approval.
+
+**Not done (agreed later passes)**: MCP server, ground-up UI redesign, llama.cpp
+binary upgrade for sampler-level tool-call grammar, Windows port.
+
 ## 🐍 2026-07-07 (4) — victory9-8b run through the snake-roguelike blind test: new failure mode found
 
 Ran victory9-8b through the identical test (procedural maps/powerups/enemies/roguelike

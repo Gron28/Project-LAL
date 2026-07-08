@@ -261,8 +261,20 @@ export function makeExecutor(workspaceDir: string): Executor {
           const replacement = String(args.replace ?? "");
           const next = src.slice(0, idx) + replacement + src.slice(idx + search.length);
           fs.writeFileSync(p, next);
+          // Show the model what the file ACTUALLY looks like around its edit (±3
+          // lines, numbered) instead of a bare "ok" — repeated blind edits are how
+          // both eval models corrupted files (2026-07-07): they trusted their
+          // memory of intent, never the real resulting text.
+          const startLine = next.slice(0, idx).split("\n").length; // 1-based first line of the replacement
+          const endLine = startLine + (replacement.split("\n").length - 1);
+          const lines = next.split("\n");
+          const from = Math.max(0, startLine - 1 - 3);
+          const to = Math.min(lines.length, endLine + 3);
+          const excerpt = lines.slice(from, to).map((l, i) => `${from + i + 1}: ${l}`).join("\n").slice(0, 2000);
           const warn = verifySyntax(p, next);
-          return warn ? `ok, but the file has a syntax error: ${warn} — the file WAS written as-is; fix it now before considering this done` : "ok";
+          return (warn
+            ? `ok, but the file has a syntax error: ${warn} — the file WAS written as-is; fix it now before considering this done`
+            : "ok") + `\nfile now reads (lines ${from + 1}-${to}):\n${excerpt}`;
         }
         case "grep": {
           const dir = resolveSafe(root, String(args.path ?? "."));

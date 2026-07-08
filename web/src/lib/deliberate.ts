@@ -88,6 +88,7 @@ async function askOnce(opts: {
   baseUrl: string; model: string; exec: Executor; tools: ToolDef[];
   prompt: string; maxRounds: number; minResearchCalls?: number;
   phase: string; role?: string; sampling: Sampling; approve?: ApproveFn;
+  signal?: AbortSignal;
   onEvent: (e: DeliberateEvent) => void;
 }): Promise<string> {
   // A deliberation is many minutes and many calls deep by design — one transient
@@ -106,11 +107,15 @@ async function askOnce(opts: {
         maxRounds: opts.maxRounds, maxTokens: 4096, think: true,
         temperature: opts.sampling.temperature ?? 0.3, topP: opts.sampling.topP, topK: opts.sampling.topK, repeatPenalty: opts.sampling.repeatPenalty,
         minResearchCalls: opts.minResearchCalls, approve: opts.approve,
+        signal: opts.signal,
         onEvent: (e) => opts.onEvent({ k: "inner", v: { phase: opts.phase, role: opts.role, event: e } }),
       });
       const last = final[final.length - 1];
       return typeof last?.content === "string" ? last.content : "";
     } catch (e) {
+      // A user Stop is not a transient failure — retrying it would resurrect the
+      // very run the user just killed.
+      if ((e as Error).name === "AbortError" || opts.signal?.aborted) throw e;
       lastErr = e as Error;
       if (attempt === ASK_RETRIES) break;
       await new Promise((r) => setTimeout(r, 3000));
@@ -130,6 +135,7 @@ export async function runDeliberation(opts: {
   tools: ToolDef[];
   sampling?: Sampling;
   approve?: ApproveFn;
+  signal?: AbortSignal;
   onEvent: (e: DeliberateEvent) => void;
 }): Promise<string> {
   const { onEvent } = opts;
@@ -146,7 +152,7 @@ export async function runDeliberation(opts: {
   };
 
   const ask = (prompt: string, phase: string, role: string | undefined, maxRounds: number, minResearchCalls?: number) =>
-    askOnce({ baseUrl: opts.baseUrl, model: opts.model, exec: opts.exec, tools: opts.tools, prompt, maxRounds, minResearchCalls, phase, role, sampling, approve: opts.approve, onEvent });
+    askOnce({ baseUrl: opts.baseUrl, model: opts.model, exec: opts.exec, tools: opts.tools, prompt, maxRounds, minResearchCalls, phase, role, sampling, approve: opts.approve, signal: opts.signal, onEvent });
 
   // Phase 0: scope the perspectives themselves, before researching the actual question.
   onEvent({ k: "phase", v: { name: "scoping" } });
