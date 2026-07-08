@@ -28,6 +28,7 @@ export type RunMeta = {
   mode?: string;
   status: RunStatus;
   error?: string;
+  truncated?: boolean; // the final answer hit the token cap — offer Continue
   startedAt: number;
   updatedAt: number;
   seq: number; // last event sequence number written to the log
@@ -132,6 +133,7 @@ export function startRun(
 
   const emit: EmitFn = (e) => {
     touchServing(); // events only flow while a model is working — keep the idle clock honest
+    if (e.k === "truncated") meta.truncated = true; // persisted on settle for cross-device Continue
     const line = appendLog(meta, e);
     meta.updatedAt = Date.now();
     // Token-level events arrive tens of times per second — rewriting the meta JSON

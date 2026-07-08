@@ -1,5 +1,51 @@
 # Handoff — Beat Gemma 12B with Qwen3-4B
 
+## 🎨 2026-07-08 — AGENT UI REBUILT + live telemetry + continue-on-truncation (Windows-coded, NEEDS deploy+verify on main-pc)
+
+Ground-up rework of the /code agent UI on top of the (5) runtime. Build clean,
+endpoints + page smoke-tested on the Windows dev box.
+
+- **Found + fixed a real gap**: `/api/agent/models` was fetched by 6 files
+  (code/chat/llm-settings/benchmark/library/dashboard-widgets) but **no route
+  existed** — every model dropdown came up empty and every settings write silently
+  404'd. Created `web/src/app/api/agent/models/route.ts` (GET models+current+
+  serving+options+system+serveIdleMinutes; PUT patches any subset).
+- **Live telemetry** (`web/src/components/agent/stats-hud.tsx`): context-fill bar
+  (tokens vs ctx window), decode tok/s, GPU%, VRAM, GPU temp, CPU, RAM — context
+  + tok/s come from new SSE `usage` events (toolloop parses llama-server's
+  `usage`+`timings` off the final stream chunk); hardware polls /api/sysinfo (now
+  hardened to return nulls, not 500, off-Linux). Full strip on desktop, tap-to-
+  expand glance on mobile, plus a mini glance in the composer footer.
+- **Continue-on-truncation**: toolloop emits `{k:"truncated"}` when the final
+  answer hits finish_reason "length"; run meta persists a `truncated` flag (so a
+  reply cut off on the PC shows a Continue button when you reopen on your phone).
+  Auto-continue toggle (localStorage, bounded to 4 per user turn) resumes
+  automatically; continue = a normal loop turn against the same conversation with a
+  "pick up where you left off" nudge.
+- **New /code UI** (`web/src/app/code/page.tsx`): sticky command bar (model/mode/
+  project selects, think/auto/panels/sessions/new/settings icon buttons), telemetry
+  strip under it, a real bottom-sheet **mobile controls menu** (all knobs reachable
+  on phone), rounded composer with auto-grow + inline continue banner + footer
+  glance, restyled approval card and empty state. Replaces the old flat wrapping
+  button row and the shared LlmSettings modal.
+- **`web/src/components/agent/agent-settings.tsx`** (new): right-side slide-over /
+  mobile bottom sheet with ALL knobs — model, think, auto-approve, auto-continue,
+  num_ctx, num_predict, num_gpu, temperature/top_p/top_k/repeat_penalty, idle
+  auto-unload minutes, system prompt. Persists via the new models route.
+- Cross-device continue works because runs are server-side (from (5)): open the
+  same tailscale URL on the phone → GET /api/agent/runs finds the live run → SSE
+  reattach replays + tails. Verified in (5); the UI now surfaces it cleanly.
+- **Scope note**: user asked for a "jailbroken/unlimited" model. Declined authoring
+  safety-stripping recipes; the training pipeline stays data-agnostic (fine-tune on
+  any corpus incl. esoteric/introspective material, drivable from chat via the (5)
+  train tools) and the real deep-research lever is harness/source-diversity, not
+  de-safetying weights. Stated this to the user.
+
+**Deploy on main-pc**: `git pull && cd web && npm run build && systemctl restart <app>`
+(build before restart). Then verify on desktop + phone over tailscale: HUD numbers
+move during a run; context bar fills; a long generation shows Continue (or auto-
+continues); starting on PC and reopening on phone shows the same live chat.
+
 ## 🔧 2026-07-07 (5) — AGENT RUNTIME REWORK: server-side persistent runs (coded on the Windows box, NEEDS deploy+verify on main-pc)
 
 Root cause of "chat dies on tab switch / phantom running spinner / invisible GPU loops"

@@ -284,6 +284,7 @@ export async function POST(req: NextRequest) {
         baseUrl, model, messages, tools: exec.defs, exec,
         maxRounds: preset.maxRounds, maxTokens: preset.maxTokens, think, temperature: preset.temperature,
         minResearchCalls: preset.minResearchCalls, maxResearchCalls,
+        ctx: preset.ctx,
         onEvent: (e) => emit(e),
         onSnapshot: snapshot,
         approve,

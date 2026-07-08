@@ -24,7 +24,13 @@ export type ToolLoopEvent =
   | { k: "think_recovered"; v: { count: number } }
   | { k: "forced_verify" }
   | { k: "stall_nudge" }
-  | { k: "research_depth_nudge"; v: { count: number; min: number } };
+  | { k: "research_depth_nudge"; v: { count: number; min: number } }
+  // Live meter: emitted after each round from llama-server's usage/timings so the
+  // UI can show context fill (promptTokens+completionTokens vs ctx) and decode speed.
+  | { k: "usage"; v: { promptTokens: number; completionTokens: number; totalTokens: number; tokPerSec: number | null; ctx: number } }
+  // The model's final answer was cut off by the per-round token cap (finish_reason
+  // "length") rather than finishing — the "Continue" affordance keys off this.
+  | { k: "truncated"; v: { round: number } };
 
 // Motivated by a real failure (2026-07-07 snake-roguelike eval): victory9-8b wrote
 // itself a detailed plan, implemented almost none of it, then reported full
@@ -112,6 +118,7 @@ export async function runToolLoop(opts: {
   repeatPenalty?: number;
   minResearchCalls?: number;  // deep-research mode's depth floor — see researchDepthNudge above
   maxResearchCalls?: number; // planning/default modes' depth ceiling — see researchCeilingRefusal above
+  ctx?: number;               // serving context window, for the UI's context-fill meter (denominator)
   signal?: AbortSignal;       // real server-side stop: aborts the upstream fetch (llama-server
   // stops decoding when the socket closes) and is checked between rounds and before
   // every tool execution — without it, "Stop" could only ever abort the client's own
@@ -171,6 +178,8 @@ export async function runToolLoop(opts: {
     let think = "";
     const callAcc: Record<number, { id: string; name: string; args: string }> = {};
     let finishReason: string | null = null;
+    let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
+    let timings: { predicted_per_second?: number } | null = null;
 
     for (;;) {
       const { done, value } = await reader.read();
@@ -183,8 +192,12 @@ export async function runToolLoop(opts: {
         if (!line.startsWith("data:")) continue;
         const data = line.slice(5).trim();
         if (data === "[DONE]") continue;
-        let j: { choices?: { delta?: ChoiceDelta; finish_reason?: string }[] };
+        // llama-server puts usage + timings on the FINAL chunk (top level, not in
+        // choices); Ollama's OpenAI shim omits them. Capture when present.
+        let j: { choices?: { delta?: ChoiceDelta; finish_reason?: string }[]; usage?: typeof usage; timings?: typeof timings };
         try { j = JSON.parse(data); } catch { continue; }
+        if (j.usage) usage = j.usage;
+        if (j.timings) timings = j.timings;
         const choice = j.choices?.[0];
         if (choice?.finish_reason) finishReason = choice.finish_reason;
         const delta = choice?.delta;
@@ -201,6 +214,20 @@ export async function runToolLoop(opts: {
           }
         }
       }
+    }
+
+    // Emit the live meter once per round. prompt_tokens is the running context the
+    // model just consumed; completion is what it produced — together they're the
+    // best signal of "how full is the window right now" the UI has.
+    if (usage && opts.ctx) {
+      const promptTokens = usage.prompt_tokens ?? 0;
+      const completionTokens = usage.completion_tokens ?? 0;
+      onEvent({ k: "usage", v: {
+        promptTokens, completionTokens,
+        totalTokens: usage.total_tokens ?? promptTokens + completionTokens,
+        tokPerSec: timings?.predicted_per_second != null ? Math.round(timings.predicted_per_second * 10) / 10 : null,
+        ctx: opts.ctx,
+      } });
     }
 
     let calls = Object.values(callAcc);
@@ -226,6 +253,11 @@ export async function runToolLoop(opts: {
         onEvent({ k: "forced_verify" });
         continue;
       }
+      // The model produced a final answer with no tool calls — but if the round
+      // hit the token cap (finish_reason "length") the answer is CUT MID-THOUGHT,
+      // not finished. Surface it so the UI can offer Continue (and auto-continue
+      // can resume) instead of silently presenting half an answer as complete.
+      if (finishReason === "length") onEvent({ k: "truncated", v: { round } });
       messages.push({ role: "assistant", content });
       return messages;
     }

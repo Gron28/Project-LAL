@@ -2,14 +2,15 @@
 // Mini claude code: agentic coding chat over the workspace, with live tool activity,
 // sub-agent traces, approval gating, and vision via the Gemma backend.
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, Bot, Brain, Check, ChevronDown, ChevronRight, CircleStop, Copy, ExternalLink, Hammer, MessageSquarePlus, PanelLeft, Paperclip, Pencil, Send, Settings, ShieldCheck, Trash2, X, Zap } from "lucide-react";
+import { ArrowDown, ArrowRight, Bot, Brain, Check, ChevronDown, ChevronRight, CircleStop, Copy, ExternalLink, FolderGit2, Hammer, Menu, MessageSquarePlus, PanelLeft, Paperclip, Pencil, Send, Settings, ShieldCheck, Sparkles, Trash2, X, Zap } from "lucide-react";
 import MarkdownView from "@/components/markdown-view";
 import DirPicker from "@/components/code/dir-picker";
 import FileTree from "@/components/code/file-tree";
 import EditorPane from "@/components/code/editor-pane";
 import GitPanel from "@/components/code/git-panel";
 import RunPanel from "@/components/code/run-panel";
-import LlmSettings from "@/app/agent/llm-settings";
+import AgentSettings from "@/components/agent/agent-settings";
+import StatsHud, { StatsGlance, type Usage } from "@/components/agent/stats-hud";
 import { useNavCollapsed } from "@/app/nav-context";
 
 type Ev =
@@ -197,6 +198,17 @@ export default function CodePage() {
   const [openFile, setOpenFile] = useState<string | null>(null);
   const [fsTick, setFsTick] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // New UI state: live meter, truncation/continue, mobile menu, HUD visibility.
+  const [usage, setUsage] = useState<Usage>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [autoContinue, setAutoContinue] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);        // mobile: model/mode/project sheet
+  const [hudOpen, setHudOpen] = useState(true);           // desktop: expanded telemetry strip
+  const [servingModel, setServingModel] = useState<string | null>(null);
+  const autoContinueCount = useRef(0);                    // cap auto-continues per user turn
+  const truncatedRef = useRef(false);                     // live truncated flag seen this run
+  useEffect(() => { try { setAutoContinue(localStorage.getItem("code_autocontinue") === "1"); } catch {} }, []);
+  const changeAutoContinue = (v: boolean) => { setAutoContinue(v); try { localStorage.setItem("code_autocontinue", v ? "1" : "0"); } catch {} };
   const toggleTree = (v: boolean) => { setTreeOpen(v); try { localStorage.setItem("code_tree_open", v ? "1" : "0"); } catch {} };
   const workspaceRef = useRef(""); // openConvo can run before the workspace fetch lands in state
   const history = useRef<HistMsg[]>([]);
@@ -317,6 +329,8 @@ export default function CodePage() {
   const attachRun = (runId: string, savedMsgs: RawMsg[] | null) => {
     esRef.current?.close();
     runIdRef.current = runId;
+    truncatedRef.current = false;
+    setTruncated(false);
     const es = new EventSource(`/api/agent/runs/${runId}/stream`);
     esRef.current = es;
     const finish = async (status: string, errText?: string) => {
@@ -329,13 +343,27 @@ export default function CodePage() {
       await adoptSavedTranscript();
       setBusy(false);
       loadConvos();
+      // A reply cut off by the token cap: auto-resume if enabled (bounded), else
+      // surface the Continue affordance. Only for a clean finish, never after an
+      // error/stop/interrupt (those aren't "the model ran out of room mid-thought").
+      if (status === "done" && truncatedRef.current) {
+        if (autoContinue && autoContinueCount.current < 4) { autoContinueCount.current++; continueRun(); }
+        else setTruncated(true);
+      }
     };
     es.onmessage = (ev) => {
       // The wire carries the Ev union PLUS run-manager envelope kinds
-      // (run/turn/status/approval_result) — parse loosely, narrow per kind.
+      // (run/turn/status/approval_result/usage/truncated) — parse loosely, narrow per kind.
       let raw: { k: string; v?: unknown; error?: string };
       try { raw = JSON.parse(ev.data); } catch { return; }
-      if (raw.k === "run") return; // meta preamble — status handling happens via "status" events
+      if (raw.k === "run") {
+        // Meta preamble — carries the persisted truncated flag for a run that
+        // finished while we were detached (cross-device Continue).
+        if ((raw.v as { truncated?: boolean } | undefined)?.truncated) truncatedRef.current = true;
+        return;
+      }
+      if (raw.k === "usage") { setUsage(raw.v as Usage); return; }
+      if (raw.k === "truncated") { truncatedRef.current = true; return; }
       if (raw.k === "turn") {
         if (savedMsgs) {
           const base = (raw.v as { base?: number } | undefined)?.base ?? 0;
@@ -530,6 +558,8 @@ export default function CodePage() {
     setInput("");
     setAttached([]);
     setBusy(true);
+    setTruncated(false);
+    autoContinueCount.current = 0; // a fresh user turn resets the auto-continue budget
     stickRef.current = true;
     setShowJump(false);
 
@@ -582,96 +612,132 @@ export default function CodePage() {
     else { esRef.current?.close(); esRef.current = null; setBusy(false); }
   };
 
-  const inp = "bg-[var(--surface-1)] border border-[var(--border)] rounded px-2 py-1.5 text-xs";
+  // Resume a reply the model cut off at the token limit. It's just another loop
+  // turn against the SAME conversation — the saved transcript already ends with the
+  // truncated assistant text, so the model continues from there. Works whether the
+  // truncation happened on this device or another (the run meta persists the flag).
+  const continueRun = async () => {
+    if (busy) return;
+    setTruncated(false);
+    setBusy(true);
+    stickRef.current = true;
+    const nudge = "Continue exactly where you left off — your previous reply was cut off by the token limit. Do not repeat what you already wrote; pick up mid-sentence if needed.";
+    history.current.push({ role: "user", content: nudge });
+    // No visible user bubble for a continue — it reads as one flowing reply.
+    try {
+      const res = await fetch("/api/agent/loop", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messages: history.current, model, autoApprove: auto, think, mode, project: project || undefined, conversationId: convoId || undefined }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const j = await res.json();
+      if (j.conversationId) { setConvoId(j.conversationId); convoIdRef.current = j.conversationId; }
+      attachRun(j.runId, null);
+    } catch (err) {
+      setBlocks((prev) => [...prev, { t: "error", text: (err as Error).message }]);
+      setBusy(false);
+    }
+  };
+
+  const inp = "bg-[var(--surface-2)] border border-[var(--border-soft)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text-2)] outline-none focus:border-[var(--border-loud)] max-w-[46vw] sm:max-w-none";
+  const iconBtn = "flex items-center justify-center h-8 w-8 rounded-lg border border-[var(--border-soft)] text-[var(--text-2)] hover:border-[var(--border)] hover:text-[var(--text)] transition-colors";
+  const modeLabel = modes.find((m) => m.id === mode)?.label ?? mode;
   // Panels reflow the chat via PADDING on this outer wrapper only — the chat column
   // must never gain a nested scroll container (the stick/jump logic is built on
   // window scrolling; see the scroll-effect comment above).
   return (
     <div className={(treeOpen ? "xl:pl-64 " : "") + (openFile ? "lg:pr-[min(52vw,760px)]" : "")}>
-    <div className="max-w-4xl mx-auto px-4 pb-32 pt-4 flex flex-col min-h-dvh">
-      <header className="flex items-center gap-3 flex-wrap mb-4">
-        <span className="text-[var(--accent-ai)] font-bold tracking-widest text-sm flex items-center gap-2"><Bot size={18} /> MINI CLAUDE CODE</span>
-        <select value={model} onChange={(e) => setModel(e.target.value)} className={inp}>
-          {models.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-        <select value={mode} onChange={(e) => setMode(e.target.value)} className={inp} title="agent workflow mode">
-          {modes.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-        </select>
-        {mode === "deliberate" && (
-          <span className="flex items-center gap-1.5 text-xs border border-[var(--border)] rounded px-2.5 py-1.5" title="time budget for the debate/follow-up cycle — scoping, initial research, and the final synthesis run regardless">
-            <input type="range" min={2} max={60} step={1} value={minutes}
-              onChange={(e) => setMinutes(parseInt(e.target.value, 10))}
-              className="w-24 accent-[var(--accent-ai)]" />
-            <span className="text-[var(--text-2)] tabular-nums w-14">{minutes} min</span>
-          </span>
-        )}
-        <button onClick={() => setAuto(!auto)} title={auto ? "tools auto-approved" : "file/shell tools ask first"}
-          className="flex items-center gap-1.5 text-xs border rounded px-2.5 py-1.5"
-          style={{ borderColor: auto ? "var(--accent-warn, #d29922)" : "var(--border)", color: auto ? "var(--accent-warn, #d29922)" : "var(--text-2)" }}>
-          {auto ? <Zap size={13} /> : <ShieldCheck size={13} />}{auto ? "auto-approve" : "ask first"}
-        </button>
-        <button onClick={() => setThink(!think)} title={think ? "thinking enabled" : "thinking disabled (faster, less deliberation)"}
-          className="flex items-center gap-1.5 text-xs border rounded px-2.5 py-1.5"
-          style={{ borderColor: think ? "var(--accent-ai)" : "var(--border)", color: think ? "var(--accent-ai)" : "var(--muted)" }}>
-          <Brain size={13} />{think ? "think" : "no-think"}
-        </button>
-        <button onClick={() => setSettingsOpen(true)} title="LLM settings — temperature, context size, sampling"
-          className="flex items-center text-xs border border-[var(--border)] rounded px-2 py-1.5 text-[var(--text-2)]">
-          <Settings size={13} />
-        </button>
-        <div className="flex items-center gap-1">
-          <button onClick={newSession} title="new session in this workspace"
-            className="flex items-center text-xs border border-[var(--border)] rounded px-2 py-1.5 text-[var(--accent-ai)]">
-            <MessageSquarePlus size={13} />
-          </button>
-          <div className="relative">
-            <button onClick={() => setSessionsOpen((o) => !o)} title="past sessions"
-              className="flex items-center gap-1.5 text-xs border border-[var(--border)] rounded px-2.5 py-1.5 text-[var(--text-2)]">
-              sessions <ChevronDown size={12} />
-            </button>
-            {sessionsOpen && (
-              <div className="absolute left-0 top-full mt-1 z-30 w-72 max-h-80 overflow-auto bg-[var(--surface-1)] border border-[var(--border)] rounded-lg shadow-xl">
-                {convos.length === 0 && <div className="text-xs text-[var(--muted)] px-3 py-2">no past sessions</div>}
-              {convos.map((c) => (
-                <button key={c.id} onClick={() => openConvo(c.id)}
-                  className={"w-full flex items-center gap-2 text-xs px-3 py-2 hover:bg-[var(--surface-2)] text-left " + (c.id === convoId ? "bg-[var(--surface-2)]" : "")}>
-                  <span className="flex-1 truncate">{c.title}</span>
-                  {c.project && c.project !== workspace && (
-                    <span className="text-[10px] text-[var(--muted)] font-mono max-w-[80px] truncate shrink-0" title={c.project}>{c.project.split("/").pop()}</span>
-                  )}
-                  <button onClick={(e) => deleteSession(c.id, e)} className="text-[var(--muted)] hover:text-[var(--accent-danger)] shrink-0"><Trash2 size={12} /></button>
-                </button>
-              ))}
-              </div>
-            )}
-          </div>
-        </div>
-        <span className="flex items-center gap-1.5 ml-auto">
-          <button onClick={() => toggleTree(!treeOpen)}
-            title="file tree & git panel" className="flex items-center text-xs border rounded px-2 py-1.5"
-            style={{ borderColor: treeOpen ? "var(--accent-ai)" : "var(--border)", color: treeOpen ? "var(--accent-ai)" : "var(--text-2)" }}>
-            <PanelLeft size={13} />
-          </button>
-          <select value={project} onChange={(e) => { setProject(e.target.value); setOpenFile(null); newSession(); }}
-            className={inp + " max-w-[240px]"} title="project directory the agent works in (switching starts a fresh session)">
-            <option value="">{workspace ? "workspace (default)" : "workspace"}</option>
-            {projects.filter((p) => p !== workspace).map((p) => <option key={p} value={p}>{p.split("/").slice(-2).join("/")}</option>)}
-          </select>
-          <button onClick={() => setPickerOpen(true)} className="text-xs border border-[var(--border)] rounded px-2 py-1.5" title="open another project">＋</button>
-          {instructionFiles.length > 0 && (
-            <span className="text-[10px] px-2 py-1 rounded border border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" title={"loaded into the agent's system prompt: " + instructionFiles.join(", ")}>
-              {instructionFiles.join(" + ")}
-            </span>
-          )}
-        </span>
-      </header>
+    <div className="max-w-4xl mx-auto px-3 sm:px-4 pb-40 flex flex-col min-h-dvh">
+      {/* ── Sticky command bar + telemetry ───────────────────────────────── */}
+      <div className="sticky top-0 z-30 -mx-3 sm:-mx-4 px-3 sm:px-4 bg-[var(--bg)]/92 backdrop-blur-md border-b border-[var(--border-soft)]">
+        <header className="flex items-center gap-2 h-14">
+          {/* Mobile: menu opens the full control sheet */}
+          <button onClick={() => setMenuOpen(true)} className={iconBtn + " sm:hidden"} title="controls"><Menu size={16} /></button>
+          <span className="hidden sm:flex text-[var(--accent-ai)] font-bold tracking-widest text-xs items-center gap-2 shrink-0"><Bot size={17} /> AGENT</span>
 
-      <div className="flex-1 space-y-3">
+          {/* Desktop inline controls */}
+          <div className="hidden sm:flex items-center gap-1.5 flex-1 min-w-0">
+            <select value={model} onChange={(e) => setModel(e.target.value)} className={inp} title="model">
+              {model && !models.includes(model) && <option value={model}>{model}</option>}
+              {models.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <select value={mode} onChange={(e) => setMode(e.target.value)} className={inp} title="workflow mode">
+              {modes.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+            {mode === "deliberate" && (
+              <span className="flex items-center gap-1.5 text-xs bg-[var(--surface-2)] border border-[var(--border-soft)] rounded-lg px-2.5 py-1" title="deliberation time budget">
+                <input type="range" min={2} max={60} step={1} value={minutes} onChange={(e) => setMinutes(parseInt(e.target.value, 10))} className="w-20 accent-[var(--accent-ai)]" />
+                <span className="text-[var(--text-2)] tabular-nums w-12">{minutes}m</span>
+              </span>
+            )}
+            <select value={project} onChange={(e) => { setProject(e.target.value); setOpenFile(null); newSession(); }}
+              className={inp + " max-w-[180px]"} title="project (switching starts a fresh session)">
+              <option value="">{workspace ? "workspace" : "workspace"}</option>
+              {projects.filter((p) => p !== workspace).map((p) => <option key={p} value={p}>{p.split("/").slice(-2).join("/")}</option>)}
+            </select>
+            <button onClick={() => setPickerOpen(true)} className={iconBtn} title="open another project"><FolderGit2 size={15} /></button>
+          </div>
+
+          {/* Right cluster (both layouts) */}
+          <div className="flex items-center gap-1.5 ml-auto shrink-0">
+            <button onClick={() => setThink(!think)} title={think ? "thinking on" : "thinking off"}
+              className={iconBtn} style={{ borderColor: think ? "var(--accent-ai)" : undefined, color: think ? "var(--accent-ai)" : undefined }}><Brain size={15} /></button>
+            <button onClick={() => setAuto(!auto)} title={auto ? "tools auto-approved" : "tools ask first"}
+              className={iconBtn} style={{ borderColor: auto ? "var(--accent-warn)" : undefined, color: auto ? "var(--accent-warn)" : undefined }}>{auto ? <Zap size={15} /> : <ShieldCheck size={15} />}</button>
+            <button onClick={() => toggleTree(!treeOpen)} title="files · git · run" className={iconBtn}
+              style={{ borderColor: treeOpen ? "var(--accent-ai)" : undefined, color: treeOpen ? "var(--accent-ai)" : undefined }}><PanelLeft size={15} /></button>
+            <div className="relative">
+              <button onClick={() => setSessionsOpen((o) => !o)} title="past sessions" className={iconBtn}><ChevronDown size={15} /></button>
+              {sessionsOpen && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setSessionsOpen(false)} />
+                  <div className="absolute right-0 top-full mt-1.5 z-30 w-72 max-h-[60vh] overflow-auto bg-[var(--surface-1)] border border-[var(--border)] rounded-xl shadow-2xl p-1">
+                    {convos.length === 0 && <div className="text-xs text-[var(--muted)] px-3 py-2">no past sessions</div>}
+                    {convos.map((c) => (
+                      <button key={c.id} onClick={() => openConvo(c.id)}
+                        className={"w-full flex items-center gap-2 text-xs px-3 py-2 rounded-lg hover:bg-[var(--surface-2)] text-left " + (c.id === convoId ? "bg-[var(--surface-2)]" : "")}>
+                        <span className="flex-1 truncate">{c.title}</span>
+                        {c.project && c.project !== workspace && (
+                          <span className="text-[10px] text-[var(--muted)] font-mono max-w-[80px] truncate shrink-0" title={c.project}>{c.project.split("/").pop()}</span>
+                        )}
+                        <button onClick={(e) => deleteSession(c.id, e)} className="text-[var(--muted)] hover:text-[var(--accent-danger)] shrink-0"><Trash2 size={12} /></button>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            <button onClick={newSession} title="new session" className={iconBtn + " text-[var(--accent-ai)]"}><MessageSquarePlus size={15} /></button>
+            <button onClick={() => setSettingsOpen(true)} title="settings" className={iconBtn}><Settings size={15} /></button>
+          </div>
+        </header>
+
+        {/* Telemetry: full strip on desktop, tap-to-expand glance on mobile */}
+        <div className="pb-2">
+          <div className="hidden sm:block"><StatsHud usage={usage} active={busy} onServingChange={setServingModel} /></div>
+          <button onClick={() => setHudOpen((o) => !o)} className="sm:hidden flex items-center gap-2 w-full">
+            <StatsGlance usage={usage} />
+            <ChevronDown size={12} className={"ml-auto text-[var(--muted)] transition-transform " + (hudOpen ? "rotate-180" : "")} />
+          </button>
+          {hudOpen && <div className="sm:hidden pt-2"><StatsHud usage={usage} active={busy} onServingChange={setServingModel} /></div>}
+        </div>
+      </div>
+
+      <div className="flex-1 space-y-3 pt-4">
+        {instructionFiles.length > 0 && (
+          <div className="flex items-center gap-2 text-[10px] text-[var(--accent-ai)]">
+            <Sparkles size={11} />
+            <span title="loaded into the agent's system prompt">project instructions: {instructionFiles.join(" + ")}</span>
+          </div>
+        )}
         {blocks.length === 0 && (
-          <div className="text-sm text-[var(--muted)] leading-relaxed border border-[var(--border-soft)] rounded-lg p-5">
-            An agent with real tools over <span className="font-mono text-[var(--text-2)]">{workspace || "the workspace"}</span>:
-            files, grep, shell, a Python REPL, web search/fetch, image understanding (via Gemma), and helper sub-agents.
-            Ask it to build, fix, or research something.
+          <div className="mt-6 text-center">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-[var(--surface-2)] border border-[var(--border-soft)] mb-4"><Bot size={22} className="text-[var(--accent-ai)]" /></div>
+            <p className="text-sm text-[var(--text-2)] max-w-md mx-auto leading-relaxed">
+              An agent with real tools over <span className="font-mono text-[var(--text)]">{project ? project.split("/").pop() : (workspace ? "workspace" : "the workspace")}</span>:
+              files, shell, a Python REPL, web research, image understanding, and helper sub-agents.
+            </p>
+            <p className="text-xs text-[var(--muted)] mt-2">Ask it to build, fix, research — or train a model.</p>
           </div>
         )}
         {blocks.map((b, i) => {
@@ -709,58 +775,109 @@ export default function CodePage() {
         // floating pill would otherwise render above it (z-40 > editor's z-30)
         // regardless of DOM order, visually leaking into an unrelated full-screen view.
         <button onClick={jumpToBottom} title="jump to latest"
-          className={(openFile ? "hidden lg:flex " : "flex ") + "fixed bottom-24 left-1/2 -translate-x-1/2 z-40 items-center gap-1.5 text-xs bg-[var(--surface-1)] border border-[var(--border)] rounded-full shadow-lg px-3 py-1.5 text-[var(--text-2)]"}>
+          className={(openFile ? "hidden lg:flex " : "flex ") + "fixed bottom-32 left-1/2 -translate-x-1/2 z-40 items-center gap-1.5 text-xs bg-[var(--surface-1)] border border-[var(--border)] rounded-full shadow-lg px-3 py-1.5 text-[var(--text-2)]"}>
           <ArrowDown size={13} /> jump to latest
         </button>
       )}
 
       {approval && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40 bg-[var(--surface-1)] border border-[var(--accent-warn,#d29922)] rounded-xl shadow-xl px-4 py-3 max-w-[90vw] w-[560px]">
-          <div className="text-xs font-semibold mb-1.5">{approval.name}</div>
+        <div className="fixed bottom-24 md:bottom-24 left-1/2 -translate-x-1/2 z-40 bg-[var(--surface-1)] border border-[var(--accent-warn)] rounded-xl shadow-2xl px-4 py-3 max-w-[92vw] w-[560px] animate-fade-in">
+          <div className="flex items-center gap-2 text-xs font-semibold mb-1.5"><ShieldCheck size={14} className="text-[var(--accent-warn)]" /> approve <span className="font-mono text-[var(--accent-warn)]">{approval.name}</span>?</div>
           {/* Full args, not a truncated summary — a 90-char preview once hid the
               back half of a run_shell command behind the one place blind trust
               is most dangerous: what you're about to let it execute. */}
-          <pre className="text-[11px] font-mono bg-[var(--surface-2,#11151c)] border border-[var(--border-soft)] rounded p-2 max-h-56 overflow-auto whitespace-pre-wrap mb-2">
+          <pre className="text-[11px] font-mono bg-[var(--surface-2)] border border-[var(--border-soft)] rounded-lg p-2 max-h-56 overflow-auto whitespace-pre-wrap mb-2">
             {approval.name === "run_shell" ? String(approval.args.command ?? "")
               : approval.name === "git" ? "git " + [approval.args.command, ...(Array.isArray(approval.args.args) ? approval.args.args : [])].join(" ")
               : JSON.stringify(approval.args, null, 1)}
           </pre>
           <div className="flex justify-end gap-2">
-            <button onClick={() => decide(approval.id, false)} className="text-xs border border-[var(--border)] rounded px-3 py-1.5">Deny</button>
-            <button onClick={() => decide(approval.id, true)} className="text-xs font-semibold bg-[var(--accent-ai)] text-[#05090c] rounded px-3 py-1.5">Approve</button>
+            <button onClick={() => decide(approval.id, false)} className="text-xs border border-[var(--border)] rounded-lg px-3 py-1.5">Deny</button>
+            <button onClick={() => decide(approval.id, true)} className="text-xs font-semibold bg-[var(--accent-ai)] text-[#05090c] rounded-lg px-3 py-1.5">Approve</button>
           </div>
         </div>
       )}
 
-      <div className={"fixed bottom-14 md:bottom-0 left-0 right-0 bg-[var(--bg)] border-t border-[var(--border)] p-3"
+      <div className={"fixed bottom-14 md:bottom-0 left-0 right-0 bg-[var(--bg)]/95 backdrop-blur-md border-t border-[var(--border)] px-3 pt-2.5 pb-[calc(env(safe-area-inset-bottom)+0.625rem)]"
         + (navCollapsed ? "" : " md:left-14 lg:left-44")
         + (openFile ? " lg:right-[min(52vw,760px)]" : "") + (treeOpen ? (navCollapsed ? " xl:left-64" : " xl:left-[27rem]") : "")}>
         <div className="max-w-4xl mx-auto">
+          {/* Continue affordance: the last reply hit the token ceiling mid-thought. */}
+          {truncated && !busy && (
+            <button onClick={continueRun}
+              className="flex items-center gap-2 text-xs mb-2 px-3 py-1.5 rounded-lg border border-[var(--accent-warn)] text-[var(--accent-warn)] hover:bg-[var(--accent-warn)]/10 transition-colors animate-fade-in">
+              <ArrowRight size={13} /> reply was cut off — continue
+            </button>
+          )}
           {attached.length > 0 && (
             <div className="flex gap-2 mb-2 flex-wrap">
               {attached.map((f, i) => (
-                <span key={i} className="flex items-center gap-1.5 text-[11px] bg-[var(--surface-1)] border border-[var(--border)] rounded px-2 py-1">
+                <span key={i} className="flex items-center gap-1.5 text-[11px] bg-[var(--surface-2)] border border-[var(--border-soft)] rounded-lg px-2 py-1">
                   {f.name}
                   <button onClick={() => setAttached((a) => a.filter((_, j) => j !== i))} className="text-[var(--muted)] hover:text-[var(--accent-danger)]"><X size={12} /></button>
                 </span>
               ))}
             </div>
           )}
-          <div className="flex gap-2">
+          <div className="flex items-end gap-2 bg-[var(--surface-1)] border border-[var(--border)] focus-within:border-[var(--border-loud)] rounded-2xl px-2 py-1.5 transition-colors">
             <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-            <button onClick={() => fileRef.current?.click()} title="attach image (for the agent's describe_image tool)"
-              className="px-3 rounded border border-[var(--border)] text-[var(--text-2)]"><Paperclip size={15} /></button>
-            <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={2}
+            <button onClick={() => fileRef.current?.click()} title="attach image (for describe_image)"
+              className="h-9 w-9 flex items-center justify-center rounded-lg text-[var(--muted)] hover:text-[var(--text-2)] shrink-0"><Paperclip size={16} /></button>
+            <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={1}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
               onPaste={(e) => { const files = e.clipboardData?.files; if (files?.length) addFiles(files); }}
-              placeholder={mode === "deliberate" ? "What question should the deliberation settle?" : "Build me… / Fix… / Research…"} className={inp + " flex-1 resize-none text-sm"} />
+              placeholder={mode === "deliberate" ? "What question should the deliberation settle?" : "Build, fix, research…"}
+              className="flex-1 resize-none bg-transparent text-sm text-[var(--text)] placeholder:text-[var(--muted)] outline-none py-1.5 max-h-40 min-h-[2.25rem]"
+              style={{ height: "auto" }}
+              onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; }} />
             {busy
-              ? <button onClick={stop} className="px-4 rounded bg-[var(--accent-danger)] text-[#05090c] flex items-center gap-1.5 text-sm font-semibold"><CircleStop size={15} /> Stop</button>
-              : <button onClick={send} disabled={!input.trim() && !attached.length} className="px-4 rounded bg-[var(--accent-ai)] text-[#05090c] flex items-center gap-1.5 text-sm font-semibold disabled:opacity-40"><Send size={15} /> Send</button>}
+              ? <button onClick={stop} className="h-9 px-3.5 rounded-xl bg-[var(--accent-danger)] text-[#05090c] flex items-center gap-1.5 text-sm font-semibold shrink-0"><CircleStop size={15} /> Stop</button>
+              : <button onClick={send} disabled={!input.trim() && !attached.length} className="h-9 px-3.5 rounded-xl bg-[var(--accent-ai)] text-[#05090c] flex items-center gap-1.5 text-sm font-semibold disabled:opacity-40 shrink-0"><Send size={15} /></button>}
+          </div>
+          <div className="flex items-center justify-between mt-1.5 px-1 text-[10px] text-[var(--muted)]">
+            <span className="truncate">{servingModel ? <span className="text-[var(--text-3)]">{servingModel}</span> : model} · {modeLabel}{autoContinue ? " · auto-continue" : ""}</span>
+            <span className="tabular-nums shrink-0"><StatsGlance usage={usage} /></span>
           </div>
         </div>
       </div>
     </div>
+
+    {/* Mobile control sheet: model / mode / project / toggles */}
+    {menuOpen && (
+      <div className="fixed inset-0 z-[55] sm:hidden flex items-end bg-black/50 animate-fade-in" onClick={() => setMenuOpen(false)}>
+        <div onClick={(e) => e.stopPropagation()} className="w-full bg-[var(--surface-1)] border-t border-[var(--border)] rounded-t-2xl p-4 space-y-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+          <div className="flex items-center justify-between"><span className="text-sm font-semibold">Controls</span><button onClick={() => setMenuOpen(false)} className="text-[var(--muted)] p-1"><X size={18} /></button></div>
+          <label className="block text-[11px] text-[var(--muted)]">Model
+            <select value={model} onChange={(e) => setModel(e.target.value)} className={inp + " w-full mt-1 max-w-none"}>
+              {model && !models.includes(model) && <option value={model}>{model}</option>}
+              {models.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </label>
+          <label className="block text-[11px] text-[var(--muted)]">Mode
+            <select value={mode} onChange={(e) => setMode(e.target.value)} className={inp + " w-full mt-1 max-w-none"}>
+              {modes.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+          </label>
+          {mode === "deliberate" && (
+            <label className="block text-[11px] text-[var(--muted)]">Time budget: {minutes}m
+              <input type="range" min={2} max={60} step={1} value={minutes} onChange={(e) => setMinutes(parseInt(e.target.value, 10))} className="w-full accent-[var(--accent-ai)] mt-1" />
+            </label>
+          )}
+          <label className="block text-[11px] text-[var(--muted)]">Project
+            <select value={project} onChange={(e) => { setProject(e.target.value); setOpenFile(null); newSession(); }} className={inp + " w-full mt-1 max-w-none"}>
+              <option value="">workspace</option>
+              {projects.filter((p) => p !== workspace).map((p) => <option key={p} value={p}>{p.split("/").slice(-2).join("/")}</option>)}
+            </select>
+          </label>
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button onClick={() => setThink(!think)} className="flex items-center gap-1.5 text-xs border rounded-lg px-3 py-2" style={{ borderColor: think ? "var(--accent-ai)" : "var(--border-soft)", color: think ? "var(--accent-ai)" : "var(--text-2)" }}><Brain size={14} />{think ? "think" : "no-think"}</button>
+            <button onClick={() => setAuto(!auto)} className="flex items-center gap-1.5 text-xs border rounded-lg px-3 py-2" style={{ borderColor: auto ? "var(--accent-warn)" : "var(--border-soft)", color: auto ? "var(--accent-warn)" : "var(--text-2)" }}>{auto ? <Zap size={14} /> : <ShieldCheck size={14} />}{auto ? "auto" : "ask"}</button>
+            <button onClick={() => { setPickerOpen(true); setMenuOpen(false); }} className="flex items-center gap-1.5 text-xs border border-[var(--border-soft)] rounded-lg px-3 py-2 text-[var(--text-2)]"><FolderGit2 size={14} /> open</button>
+            <button onClick={() => { toggleTree(!treeOpen); setMenuOpen(false); }} className="flex items-center gap-1.5 text-xs border border-[var(--border-soft)] rounded-lg px-3 py-2 text-[var(--text-2)]"><PanelLeft size={14} /> panels</button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {treeOpen && (
       <>
@@ -797,7 +914,11 @@ export default function CodePage() {
 
     <DirPicker open={pickerOpen} recents={projects} onClose={() => setPickerOpen(false)}
       onPick={(p) => { setPickerOpen(false); setProjects((prev) => [p, ...prev.filter((x) => x !== p)]); setProject(p); setOpenFile(null); newSession(); }} />
-    <LlmSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} model={model} models={models} onModelChange={setModel} think={think} onThinkChange={setThink} />
+    <AgentSettings open={settingsOpen} onClose={() => setSettingsOpen(false)}
+      model={model} models={models} onModelChange={setModel}
+      think={think} onThinkChange={setThink}
+      auto={auto} onAutoChange={setAuto}
+      autoContinue={autoContinue} onAutoContinueChange={changeAutoContinue} />
     </div>
   );
 }

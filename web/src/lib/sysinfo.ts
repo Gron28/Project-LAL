@@ -29,14 +29,23 @@ function hwmonTemp(want: string): number | null {
 }
 
 export async function readSysInfo(): Promise<SysInfo> {
-  const a = cpuSnap();
-  await new Promise((r) => setTimeout(r, 200));
-  const b = cpuSnap();
-  const cpu = Math.max(0, Math.round(100 * (1 - (b.idle - a.idle) / Math.max(1, b.total - a.total))));
+  // Every reader here is Linux sysfs/procfs; on any other OS (or a locked-down
+  // container) they throw. Degrade to nulls instead of 500ing the whole endpoint —
+  // the HUD that polls this should show "—", not go blank on an error.
+  let cpu = 0;
+  try {
+    const a = cpuSnap();
+    await new Promise((r) => setTimeout(r, 200));
+    const b = cpuSnap();
+    cpu = Math.max(0, Math.round(100 * (1 - (b.idle - a.idle) / Math.max(1, b.total - a.total))));
+  } catch {}
 
-  const mi = fs.readFileSync("/proc/meminfo", "utf8");
-  const mt = +(mi.match(/MemTotal:\s+(\d+)/)?.[1] || 0);
-  const ma = +(mi.match(/MemAvailable:\s+(\d+)/)?.[1] || 0);
+  let mt = 0, ma = 0;
+  try {
+    const mi = fs.readFileSync("/proc/meminfo", "utf8");
+    mt = +(mi.match(/MemTotal:\s+(\d+)/)?.[1] || 0);
+    ma = +(mi.match(/MemAvailable:\s+(\d+)/)?.[1] || 0);
+  } catch {}
 
   const card = "/sys/class/drm/card1/device";
   const vu = num(card + "/mem_info_vram_used");

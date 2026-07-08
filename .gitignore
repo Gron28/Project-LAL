@@ -2,8 +2,12 @@
 .venv/
 .venv-rocm/
 llama/
-models/
+# the trained-model GGUF dir at the repo root — anchored so it doesn't also swallow
+# source paths like web/src/app/api/agent/models/ (that bug hid the models route).
+/models/
 out/
+# skill-registry tool cache
+.atl/
 data/*.bin
 *.gguf
 *.safetensors
