@@ -1,0 +1,6 @@
+# Shell scripts MUST keep LF endings or they fail on Linux with
+# "bad interpreter: /usr/bin/env bash^M". This repo is authored across Windows and
+# Linux, so pin line endings explicitly rather than trusting each clone's autocrlf.
+*.sh   text eol=lf
+gpu.sh text eol=lf
+*.py   text eol=lf

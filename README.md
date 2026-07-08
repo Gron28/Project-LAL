@@ -48,6 +48,22 @@ curl -s http://127.0.0.1:8099/v1/chat/completions \
 - `tokens.css` — design tokens (match the Fractal Lab dashboard) for the future UI
 - `gpu.sh` — runs a command on the GPU venv with the gfx override
 
-## Next: training-grounds UI
-A dashboard (using `tokens.css`) to: upload .txt → train (live loss curve) → convert →
-launch server → chat with the result. Backend = the commands above.
+## Run the app (one click)
+
+```bash
+./start.sh                     # builds if needed, serves on :8770, opens the browser
+./start.sh --install-launcher  # once: adds a double-clickable "Local AI Lab" icon
+```
+
+`start.sh` is self-contained: it installs web deps on first run, rebuilds only when the
+code changed (a stale bundle is a known footgun — see [[deploy-restart-required]]),
+frees the port from any old instance, exposes the app on your tailnet via
+`tailscale serve` (so your phone opens the *same* live session at
+`https://<your-tailnet-host>:8443`), then starts it and opens it. Stop with Ctrl-C.
+
+- **App:** Next.js in `web/`, production `next start` on **:8770** (override `PORT`).
+- **GPU serving** (llama.cpp, :8099) and **Ollama** (:11434) are launched **on demand
+  by the app**, not by the script — and llama-server auto-unloads when idle.
+- **Training, benchmarking, chat, and the coding agent** all live in the UI; the agent
+  can even drive training itself. The `## Commands` block above is the same pipeline the
+  app automates, kept for reference / manual runs.

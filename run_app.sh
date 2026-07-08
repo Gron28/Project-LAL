@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-cd ~/Desktop/local-ai-lab
-source .venv/bin/activate
-export HSA_OVERRIDE_GFX_VERSION=10.3.0
-exec python -u app.py
+# Kept for muscle memory — the launcher is now start.sh (Next.js app in web/,
+# not the old python app.py). Delegates so either name works.
+HERE="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
+exec "$HERE/start.sh" "$@"
