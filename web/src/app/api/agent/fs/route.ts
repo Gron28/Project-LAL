@@ -119,3 +119,25 @@ export async function PUT(req: NextRequest) {
   const st = fs.statSync(target);
   return NextResponse.json({ ok: true, mtimeMs: st.mtimeMs, size: st.size });
 }
+
+// DELETE ?project&path= — remove a single FILE (not a directory — deliberately no
+// recursive delete here; a whole-folder wipe is destructive enough that it belongs
+// in a terminal, not a one-click library button).
+export async function DELETE(req: NextRequest) {
+  const sp = req.nextUrl.searchParams;
+  const pr = projectRoot(sp.get("project"));
+  if ("error" in pr) return NextResponse.json({ error: pr.error }, { status: 400 });
+  const rel = sp.get("path");
+  if (!rel) return NextResponse.json({ error: "path required" }, { status: 400 });
+  let target: string;
+  try {
+    target = resolveSafe(pr.root, rel);
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 400 });
+  }
+  let st: fs.Stats;
+  try { st = fs.statSync(target); } catch { return NextResponse.json({ error: "not found" }, { status: 404 }); }
+  if (!st.isFile()) return NextResponse.json({ error: "not a file (directories aren't deletable here)" }, { status: 400 });
+  fs.unlinkSync(target);
+  return NextResponse.json({ ok: true });
+}

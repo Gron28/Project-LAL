@@ -3,8 +3,50 @@
 // are flagged via `approve` so callers can gate them behind human confirmation.
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import vm from "node:vm";
 import { structuralSummary } from "./ast-cache";
+
+// Auto-verification after every write_file/edit_file: catches syntax errors the
+// SAME turn they're introduced, fed back as part of the tool result — no reliance
+// on the model thinking to check itself. Motivated by two real failures (2026-07-07
+// snake-roguelike eval): a file with the same `const` redeclared 4x in one scope,
+// and a garbled `main(); === 'ArrowUp'...` mid-statement fragment from a botched
+// edit_file — both are mechanically detectable and both slipped through as
+// "done" with nothing ever parsing the result. Best-effort/silent for anything
+// not covered (css, md, unknown extensions) — this is a safety net, not a linter.
+function verifySyntax(p: string, content: string): string | null {
+  const ext = path.extname(p).toLowerCase();
+  try {
+    if (ext === ".js" || ext === ".mjs" || ext === ".cjs") {
+      new vm.Script(content, { filename: p });
+      return null;
+    }
+    if (ext === ".json") {
+      JSON.parse(content);
+      return null;
+    }
+    if (ext === ".html" || ext === ".htm") {
+      // Only inline, non-module scripts — vm.Script doesn't parse ES module
+      // import/export syntax, and external <script src> has nothing to check here.
+      const scripts = content.matchAll(/<script(?![^>]*\bsrc=)(?![^>]*\btype=["']module["'])[^>]*>([\s\S]*?)<\/script>/gi);
+      for (const m of scripts) {
+        const code = m[1];
+        if (!code.trim()) continue;
+        new vm.Script(code, { filename: p + " (inline <script>)" });
+      }
+      return null;
+    }
+    if (ext === ".py") {
+      const r = spawnSync("python3", ["-c", "import ast,sys; ast.parse(open(sys.argv[1], encoding='utf-8').read())", p], { timeout: 5000 });
+      if (r.status !== 0) return (r.stderr?.toString() || "python syntax error").trim().slice(0, 500);
+      return null;
+    }
+  } catch (e) {
+    return (e as Error).message;
+  }
+  return null;
+}
 
 export type ToolDef = {
   type: "function";
@@ -201,8 +243,10 @@ export function makeExecutor(workspaceDir: string): Executor {
         case "write_file": {
           const p = resolveSafe(root, String(args.path ?? ""));
           fs.mkdirSync(path.dirname(p), { recursive: true });
-          fs.writeFileSync(p, String(args.content ?? ""));
-          return "ok";
+          const content = String(args.content ?? "");
+          fs.writeFileSync(p, content);
+          const warn = verifySyntax(p, content);
+          return warn ? `ok, but the file has a syntax error: ${warn} — the file WAS written as-is; fix it now before considering this done` : "ok";
         }
         case "edit_file": {
           const p = resolveSafe(root, String(args.path ?? ""));
@@ -215,8 +259,10 @@ export function makeExecutor(workspaceDir: string): Executor {
           // search value is a plain string — any real code containing a literal "$"
           // (shell vars, regex, jQuery, template refs) silently corrupted the file.
           const replacement = String(args.replace ?? "");
-          fs.writeFileSync(p, src.slice(0, idx) + replacement + src.slice(idx + search.length));
-          return "ok";
+          const next = src.slice(0, idx) + replacement + src.slice(idx + search.length);
+          fs.writeFileSync(p, next);
+          const warn = verifySyntax(p, next);
+          return warn ? `ok, but the file has a syntax error: ${warn} — the file WAS written as-is; fix it now before considering this done` : "ok";
         }
         case "grep": {
           const dir = resolveSafe(root, String(args.path ?? "."));

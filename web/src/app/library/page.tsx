@@ -1,9 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
+import { ExternalLink, FolderOpen, MessageSquare, Pencil, Terminal, Trash2, X } from "lucide-react";
+import FileTree from "@/components/code/file-tree";
+import EditorPane from "@/components/code/editor-pane";
+import DirPicker from "@/components/code/dir-picker";
 
 type M = { name: string; source: "local" | "ollama"; gb: number };
 type Doc = { id: string; name: string; folder: string; chars: number; ts: number };
 type DataFile = { name: string; chars: number; kind: "raw" | "sft" };
+type ConvoRow = { id: string; title: string; updatedAt: number; kind: "chat" | "code"; project?: string };
+type ProjectRow = { path: string; exists: boolean };
 
 const DATASETS = "__datasets";
 
@@ -190,18 +196,170 @@ function Documents() {
   );
 }
 
+function relTime(ts: number) {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+
+function Chats() {
+  const [convos, setConvos] = useState<ConvoRow[]>([]);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameVal, setRenameVal] = useState("");
+  const [filter, setFilter] = useState<"all" | "chat" | "code">("all");
+
+  const load = () => fetch("/api/agent/conversations").then((r) => r.json()).then(setConvos).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  const del = async (id: string) => {
+    if (!confirm("Delete this conversation? This can't be undone.")) return;
+    await fetch(`/api/agent/conversations/${id}`, { method: "DELETE" });
+    load();
+  };
+  const startRename = (c: ConvoRow) => { setRenamingId(c.id); setRenameVal(c.title); };
+  const doRename = async (id: string) => {
+    const title = renameVal.trim();
+    setRenamingId(null);
+    if (!title) return;
+    await fetch(`/api/agent/conversations/${id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ title }) });
+    load();
+  };
+
+  const shown = filter === "all" ? convos : convos.filter((c) => c.kind === filter);
+  const chip = (id: typeof filter, label: string) => (
+    <button key={id} onClick={() => setFilter(id)} className="px-3 py-1.5 text-[11px] tracking-wide rounded-[var(--r-md)] border"
+      style={{ color: filter === id ? "#05090c" : "var(--text-2)", background: filter === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)", fontWeight: filter === id ? 700 : 400 }}>
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex gap-2 flex-wrap">{chip("all", "All")}{chip("chat", "Chat")}{chip("code", "Code")}</div>
+      <div className={card}>
+        <div className={head}><span className="text-[var(--accent-ai)]">◆</span> CONVERSATIONS <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">{shown.length}</span></div>
+        {shown.length === 0 && <div className="p-6 text-center text-[var(--muted)] text-xs">No conversations yet.</div>}
+        {shown.map((c) => (
+          <div key={c.id} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
+            {c.kind === "code" ? <Terminal size={13} className="text-[var(--accent-ai)] shrink-0" /> : <MessageSquare size={13} className="text-[var(--muted)] shrink-0" />}
+            {renamingId === c.id ? (
+              <input autoFocus className="flex-1 text-sm bg-[var(--surface-2)] border border-[var(--border-loud)] rounded px-2 py-0.5 outline-none"
+                value={renameVal} onChange={(e) => setRenameVal(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") doRename(c.id); if (e.key === "Escape") setRenamingId(null); }}
+                onBlur={() => doRename(c.id)} />
+            ) : (
+              <a href={(c.kind === "code" ? "/code" : "/chat") + "?conv=" + encodeURIComponent(c.id)}
+                className="flex-1 min-w-0 flex flex-col hover:text-[var(--accent-ai)]">
+                <span className="truncate text-sm">{c.title}</span>
+                {c.project && <span className="text-[10px] text-[var(--muted)] truncate font-mono">{c.project}</span>}
+              </a>
+            )}
+            <span className="text-[10px] text-[var(--muted)] hidden sm:inline shrink-0">{relTime(c.updatedAt)}</span>
+            <a href={(c.kind === "code" ? "/code" : "/chat") + "?conv=" + encodeURIComponent(c.id)} title="Open" className={btn}><ExternalLink size={12} /></a>
+            <button className={btn} title="Rename" onClick={() => startRename(c)}><Pencil size={12} /></button>
+            <button className={btn} title="Delete" onClick={() => del(c.id)}><Trash2 size={12} /></button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Projects() {
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [openFile, setOpenFile] = useState<string | null>(null);
+  const [fsTick, setFsTick] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const load = () => fetch("/api/agent/projects").then((r) => r.json()).then((j) => setProjects(j.projects || [])).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  const forget = async (p: string) => {
+    if (!confirm("Remove \"" + p + "\" from the library? This does NOT delete any files.")) return;
+    await fetch("/api/agent/projects?path=" + encodeURIComponent(p), { method: "DELETE" });
+    if (selected === p) { setSelected(null); setOpenFile(null); }
+    load();
+  };
+
+  // Browse/clone picks aren't registered server-side yet (only /code's chat loop
+  // does that on first use) — re-POSTing here registers them immediately, and is a
+  // harmless no-op for a "new" pick (already registered by its own create call).
+  const onPick = async (p: string) => {
+    setPickerOpen(false);
+    await fetch("/api/agent/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: p }) }).catch(() => {});
+    await load();
+    setSelected(p);
+    setOpenFile(null);
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className={card}>
+        <div className={head}>
+          <span className="text-[var(--accent-ai)]">◆</span> PROJECT FOLDERS <span className="text-[var(--muted)] normal-case tracking-normal">{projects.length}</span>
+          <button onClick={() => setPickerOpen(true)} className="ml-auto text-[10px] tracking-widest uppercase text-[var(--accent-ai)] border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)]">
+            + Create / Import
+          </button>
+        </div>
+        {projects.length === 0 && <div className="p-6 text-center text-[var(--muted)] text-xs">No projects yet — create or import one above.</div>}
+        {projects.map((p) => (
+          <div key={p.path} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
+            <FolderOpen size={13} className="text-[var(--muted)] shrink-0" />
+            <button onClick={() => { setSelected(p.path); setOpenFile(null); }}
+              className="flex-1 min-w-0 truncate text-sm text-left hover:text-[var(--accent-ai)]"
+              style={{ color: selected === p.path ? "var(--accent-ai)" : "var(--text)" }}>
+              {p.path}
+            </button>
+            {!p.exists && <span className="text-[10px] text-[var(--accent-danger)] shrink-0">missing</span>}
+            <a href={"/code?project=" + encodeURIComponent(p.path)} title="Open in /code" className={btn}><ExternalLink size={12} /></a>
+            <button className={btn} title="Forget (doesn't delete files)" onClick={() => forget(p.path)}><Trash2 size={12} /></button>
+          </div>
+        ))}
+      </div>
+
+      {selected && (
+        <div className={card + " overflow-hidden"}>
+          <div className={head}>
+            <span className="text-[var(--accent-ai)]">◆</span> <span className="truncate">{selected}</span>
+            <button onClick={() => { setSelected(null); setOpenFile(null); }} className="ml-auto text-[var(--muted)] hover:text-[var(--text)]"><X size={14} /></button>
+          </div>
+          <div className="flex flex-col md:flex-row" style={{ height: 420 }}>
+            <div className="w-full md:w-64 shrink-0 overflow-auto border-b md:border-b-0 md:border-r border-[var(--border-soft)]">
+              <FileTree project={selected} refreshTick={fsTick} onOpenFile={setOpenFile} selected={openFile} />
+            </div>
+            <div className="flex-1 min-w-0 min-h-0">
+              {openFile ? (
+                <EditorPane project={selected} filePath={openFile} refreshTick={fsTick}
+                  rawHref={"/api/agent/file/" + btoa(unescape(encodeURIComponent(selected))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") + "/" + openFile.split("/").filter(Boolean).map(encodeURIComponent).join("/")}
+                  onClose={() => setOpenFile(null)} onSaved={() => setFsTick((t) => t + 1)} />
+              ) : (
+                <div className="h-full flex items-center justify-center text-xs text-[var(--muted)]">select a file to view/edit it</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <DirPicker open={pickerOpen} recents={projects.map((p) => p.path)} onClose={() => setPickerOpen(false)} onPick={onPick} />
+    </div>
+  );
+}
+
 export default function Library() {
-  const [tab, setTab] = useState<"models" | "docs" | "projects">("models");
+  const [tab, setTab] = useState<"models" | "docs" | "chats" | "projects">("models");
   const tabBtn = (id: typeof tab, label: string) => (
-    <button onClick={() => id !== "projects" && setTab(id)} disabled={id === "projects"} className="px-4 py-2 text-[11px] tracking-widest uppercase rounded-[var(--r-md)] border"
-      style={{ color: tab === id ? "#05090c" : id === "projects" ? "var(--muted)" : "var(--text-2)", background: tab === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)", fontWeight: tab === id ? 700 : 400, cursor: id === "projects" ? "not-allowed" : "pointer", opacity: id === "projects" ? 0.5 : 1 }}>{label}</button>
+    <button onClick={() => setTab(id)} className="px-4 py-2 text-[11px] tracking-widest uppercase rounded-[var(--r-md)] border"
+      style={{ color: tab === id ? "#05090c" : "var(--text-2)", background: tab === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)", fontWeight: tab === id ? 700 : 400 }}>{label}</button>
   );
   return (
     <div className="font-chat min-h-dvh bg-[var(--bg)] text-[var(--text)] p-4 pb-16">
       <div className="max-w-3xl mx-auto flex flex-col gap-4">
         <h1 className="text-[var(--accent-ai)] tracking-widest font-bold">◉ LIBRARY</h1>
-        <div className="flex gap-2 flex-wrap">{tabBtn("models", "▤ Models")}{tabBtn("docs", "▦ Documents")}{tabBtn("projects", "▧ Projects · soon")}</div>
-        {tab === "models" ? <Models /> : <Documents />}
+        <div className="flex gap-2 flex-wrap">{tabBtn("models", "▤ Models")}{tabBtn("docs", "▦ Documents")}{tabBtn("chats", "▥ Chats")}{tabBtn("projects", "▧ Projects")}</div>
+        {tab === "models" ? <Models /> : tab === "docs" ? <Documents /> : tab === "chats" ? <Chats /> : <Projects />}
       </div>
     </div>
   );

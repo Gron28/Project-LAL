@@ -1,0 +1,48 @@
+// Project list for the Library "Projects" tab — same store /code's picker uses
+// (lib/lab.ts listProjects/forgetProject), so opening/forgetting a project here
+// stays in sync with the /code page's recents dropdown.
+import { NextRequest, NextResponse } from "next/server";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { listProjects, rememberProject, forgetProject } from "@/lib/lab";
+
+export const dynamic = "force-dynamic";
+
+export async function GET() {
+  const projects = listProjects().map((p) => ({ path: p, exists: fs.existsSync(p) }));
+  return NextResponse.json({ projects });
+}
+
+// POST {path, create?} — register an existing directory as a project ("import"),
+// or create a brand-new empty one first ("create") then register it. Same $HOME
+// confinement posture as /api/agent/browse (single-user LAN/tailscale app).
+export async function POST(req: NextRequest) {
+  const b = await req.json().catch(() => null);
+  if (!b || typeof b.path !== "string" || !b.path.trim()) {
+    return NextResponse.json({ error: "path required" }, { status: 400 });
+  }
+  const p = path.resolve(b.path.trim());
+  if (b.create) {
+    const home = fs.realpathSync(os.homedir());
+    if (p !== home && !p.startsWith(home + path.sep)) {
+      return NextResponse.json({ error: "new projects must be created under your home directory" }, { status: 403 });
+    }
+    if (fs.existsSync(p)) return NextResponse.json({ error: "already exists: " + p }, { status: 400 });
+    fs.mkdirSync(p, { recursive: true });
+  } else if (!fs.existsSync(p) || !fs.statSync(p).isDirectory()) {
+    return NextResponse.json({ error: "not a directory: " + p }, { status: 400 });
+  }
+  rememberProject(p);
+  return NextResponse.json({ ok: true, path: p });
+}
+
+// DELETE ?path=<abs> — forgets the project (removes it from the recents list).
+// Does NOT touch anything on disk; this is the safe/non-destructive "remove from
+// library" action, distinct from deleting the folder's actual files.
+export async function DELETE(req: NextRequest) {
+  const p = req.nextUrl.searchParams.get("path");
+  if (!p) return NextResponse.json({ error: "path required" }, { status: 400 });
+  forgetProject(p);
+  return NextResponse.json({ ok: true });
+}

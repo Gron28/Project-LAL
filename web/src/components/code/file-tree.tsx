@@ -3,7 +3,7 @@
 // expand; refreshTick refetches everything currently expanded (bumped by the
 // page when an agent tool mutates files, or after a human save/commit).
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, File, Folder } from "lucide-react";
+import { ChevronDown, ChevronRight, File, Folder, Trash2 } from "lucide-react";
 
 type Entry = { name: string; dir: boolean; size?: number };
 
@@ -52,6 +52,15 @@ export default function FileTree({ project, refreshTick, onOpenFile, selected }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshTick]);
 
+  const deleteFile = async (rel: string, parentRel: string) => {
+    if (!confirm("Delete " + rel + "? This removes the file from disk.")) return;
+    const qs = new URLSearchParams({ path: rel });
+    if (project) qs.set("project", project);
+    const r = await fetch("/api/agent/fs?" + qs.toString(), { method: "DELETE" });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || "delete failed"); return; }
+    fetchDir(parentRel).then((e) => setDirs((prev) => new Map(prev).set(parentRel, e))).catch(() => {});
+  };
+
   const toggle = (rel: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -90,13 +99,19 @@ export default function FileTree({ project, refreshTick, onOpenFile, selected }:
         );
       }
       return (
-        <button key={childRel} onClick={() => onOpenFile(childRel)}
-          className={"w-full flex items-center gap-1.5 text-[11px] font-mono py-1 rounded text-left hover:bg-[var(--surface-2,#11151c)] "
-            + (selected === childRel ? "text-[var(--accent-ai)] bg-[var(--surface-2,#11151c)]" : "text-[var(--text-2)]")}
-          style={{ paddingLeft: depth * 12 + 20 }}>
-          <File size={11} className="shrink-0 text-[var(--muted)]" />
-          <span className="truncate">{e.name}</span>
-        </button>
+        <div key={childRel} className="group flex items-center">
+          <button onClick={() => onOpenFile(childRel)}
+            className={"flex-1 min-w-0 flex items-center gap-1.5 text-[11px] font-mono py-1 rounded text-left hover:bg-[var(--surface-2,#11151c)] "
+              + (selected === childRel ? "text-[var(--accent-ai)] bg-[var(--surface-2,#11151c)]" : "text-[var(--text-2)]")}
+            style={{ paddingLeft: depth * 12 + 20 }}>
+            <File size={11} className="shrink-0 text-[var(--muted)]" />
+            <span className="truncate">{e.name}</span>
+          </button>
+          <button onClick={() => deleteFile(childRel, rel)} title="delete file"
+            className="shrink-0 px-1.5 text-[var(--muted)] hover:text-[var(--accent-danger)] opacity-0 group-hover:opacity-100">
+            <Trash2 size={11} />
+          </button>
+        </div>
       );
     });
   };

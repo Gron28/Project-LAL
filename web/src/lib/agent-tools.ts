@@ -378,3 +378,41 @@ export function makeOrchestratorExecutor(fullExec: AgentExecutor): AgentExecutor
         : Promise.resolve(`error: "${name}" isn't available in orchestrator mode — delegate this via spawn_agent instead.`),
   };
 }
+
+// Same lesson as ORCHESTRATOR_TOOLS above, applied to a plan/implement split: a model
+// asked nicely to "just plan, don't code yet" or "stop researching and implement" will
+// drift back into the wrong mode under its own momentum (this is exactly what happened
+// live — gemma4:12b, told repeatedly to implement, spent its whole remaining budget
+// re-researching techniques it had already researched hours earlier). Removing the
+// option is the fix, not a firmer prompt.
+//
+// Planner: can look around (including research) but cannot touch code — forces the
+// plan to come out as a text reply, never a premature/half-formed edit.
+export const PLANNER_TOOLS = new Set(["list_files", "read_file", "read_file_outline", "grep", "web_search", "web_fetch", "memory_read", "memory_write", "memory_search"]);
+export function makePlannerExecutor(fullExec: AgentExecutor): AgentExecutor {
+  return {
+    root: fullExec.root,
+    approve: fullExec.approve,
+    defs: fullExec.defs.filter((t) => PLANNER_TOOLS.has(t.function.name)),
+    run: (name: string, args: Record<string, unknown>) =>
+      PLANNER_TOOLS.has(name) ? fullExec.run(name, args)
+        : Promise.resolve(`error: "${name}" isn't available while planning — finish and state your plan as a text reply instead of acting on it.`),
+  };
+}
+
+// Implementer: can read/write/run but has NO research tools and cannot spawn_agent —
+// removes the exact escape hatch that let gemma4:12b loop back into research instead
+// of coding. If it's unsure of a detail, it has to make a reasonable call and keep
+// going, the same way a human implementer works from a design doc without re-opening
+// the research phase over every small uncertainty.
+export const IMPLEMENTER_TOOLS = new Set(["list_files", "read_file", "read_file_outline", "grep", "write_file", "edit_file", "run_shell", "memory_read", "memory_write"]);
+export function makeImplementerExecutor(fullExec: AgentExecutor): AgentExecutor {
+  return {
+    root: fullExec.root,
+    approve: fullExec.approve,
+    defs: fullExec.defs.filter((t) => IMPLEMENTER_TOOLS.has(t.function.name)),
+    run: (name: string, args: Record<string, unknown>) =>
+      IMPLEMENTER_TOOLS.has(name) ? fullExec.run(name, args)
+        : Promise.resolve(`error: "${name}" isn't available while implementing — you already have the plan, act on it directly instead of researching further.`),
+  };
+}

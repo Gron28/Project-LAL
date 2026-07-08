@@ -1,7 +1,212 @@
 # Handoff — Beat Gemma 12B with Qwen3-4B
 
+## 🐍 2026-07-07 (4) — victory9-8b run through the snake-roguelike blind test: new failure mode found
+
+Ran victory9-8b through the identical test (procedural maps/powerups/enemies/roguelike
+structure, single HTML file), same toolset-restricted planner→critique→replan→implement
+split as round 4, driven directly via `/api/agent/loop` (script:
+`/tmp/.../scratchpad/snake_v9_driver.py`, not saved in-repo — recreate if repeating this).
+Output: `agent-eval-scratch/snake-roguelike-victory9-8b/`.
+
+**Infra note before the result**: first attempt was invalid and discarded — PLANNER_TOOLS
+includes web_search/web_fetch, and victory9-8b spent all 14 rounds on web_search for a task
+it already knows from training, exhausting the 16k ctx window and returning zero final text
+(not a real capability signal). Fixed by instructing it not to search; also hit one `fetch
+failed` from calling the API again within 2s of the prior call finishing (mid model-swap) —
+added a 4s gap + retry. Both are test-harness issues, not model behavior, but worth knowing
+if this test is repeated.
+
+**Real result, verified by reading the actual files + `node --check`:**
+
+| Model | `node --check` | Procedural map | Powerups | Enemies | Roguelike structure |
+|---|---|---|---|---|---|
+| **victory9-8b** | **valid** | none | none | none | none |
+| victory6-8b (existing round-4 file) | SyntaxError (`const map`/`snake`/`head` redeclared 4×) | attempted, unreachable | attempted, calls undefined fns | attempted, undefined fns | attempted |
+| gemma4:12b (existing round-4 file) | SyntaxError (garbled `main(); === 'ArrowUp'...`) | attempted (real flood-fill CA) | attempted | attempted | attempted |
+
+victory9-8b wrote itself a detailed, correct plan (Drunkard's Walk map gen, named powerup/
+enemy/permadeath systems, 6.7KB) via its own planner→critique→replan pass, then the
+implement phase silently dropped every one of those systems and shipped 79 lines of bare
+classic Snake (movement, one food pellet, wall/self collision, alert-and-reload). **Its own
+final_report.md then claimed all four required systems were implemented** — verified false
+by reading `game.js`. This is a distinct, new failure mode from round 4's (which produced
+fatally broken code while attempting everything asked): clean/valid code by implementing
+almost nothing, plus a confabulated completion report.
+
+**Honest verdict: still a 3-way failure, no promotion, no regression either** — two models
+ship ambitious code that doesn't parse, one ships trivial code that runs but ignores the
+brief and lies about it. Not comparable to the autoBench battery result above; this is a
+qualitative agentic-honesty finding, worth tracking if the training data ever targets
+self-verification (re-reading output against the stated plan before reporting done).
+
+## ⏳ 2026-07-07 (3) — victory9-8b FINISHED + autoBenched: mixed result, NOT promoted
+
+Training completed cleanly: early-stopped at step 1600/3000 on the plateau gate (patience
+500, no bug — best-val checkpoint was step 1100, val 0.2595), merged, converted to GGUF,
+quantized to Q4_K_M, full 7-suite autoBench ran automatically. Honest comparison vs
+victory6-8b (real bench JSONs, `web/.data/bench/*__victory{6,9}-8b.json`):
+
+| Suite | victory6-8b | victory9-8b | Verdict |
+|---|---|---|---|
+| coding | 20/20 | 20/20 | tie |
+| planning | 11/14 | **9/14** | **regression (-2)** |
+| agentic | 8/8 | 8/8 | tie |
+| instruct | 15/15 | 15/15 | tie |
+| gsm8k | 51/60 | 51/60 | tie |
+| capability | 31/31 | 31/31 | tie |
+| webgen | 8/12 | 9/12 | +1 |
+| speed (tok/s) | 28.9–44.4 | 32.8–48 | +8–13% faster across every suite |
+
+5/7 suites tie exactly, webgen +1, meaningfully faster everywhere — but planning regressed
+2 points. Per [[victory-track-rollback-decision]]'s bar (≥ everywhere, ties at ceiling
+count; victory7 was rejected for a 5/7 regression), **any regression fails the bar**, so
+victory9-8b is NOT promoted to the served model despite the smaller/cleaner regression than
+victory7 had. Checkpoint + GGUF exist (`out/victory9-8b*`, quantized model on disk) as a
+side artifact only; victory6-8b remains what should be served. If revisited: investigate
+whether the 18-row followthrough_sft addition diluted planning coverage, or whether this is
+run-variance (single run, no repeat) before drawing a stronger conclusion.
+
 **Goal:** fine-tune Qwen3-4B to beat locally-hosted Gemma 12B (Ollama) on every suite of a
 6-suite battery, and run faster. Then optionally scale to 7-8B.
+
+## 🌙 2026-07-07 night — "final attempt" snake roguelike test: HONEST RESULT = neither model succeeded
+
+User's explicit test (framed as prompt-only: Claude may not write the game's code or
+research it directly, only drive the /code agent's own tools): build a roguelike snake game
+(procedural maps, powerups, enemies) end-to-end via `/code` in orchestrator mode, comparing
+**victory6-8b** vs **gemma4:12b** as the driving model, in
+`agent-eval-scratch/snake-roguelike-{victory6-8b,gemma12b}`. User then went to sleep and
+explicitly put Claude in charge overnight (memory: `overnight-autonomy-2026-07-07.md`).
+
+**Honest final verdict — neither model produced a working roguelike:**
+- **victory6-8b**: real classic snake (movement/scoring/collision/restart) + a genuine
+  cellular-automata procedural map generator (real CA smoothing rules, not decoration) — BUT
+  **the generated wall grid is only consulted in `draw()`, never in `update()`'s collision
+  check, so walls render but don't block the snake at all**. Functionally cosmetic. Zero
+  powerups, zero enemies, no real roguelike structure.
+- **gemma4:12b**: clean, bug-free classic snake (nice touch: buffered direction input
+  preventing same-tick reversal) — but zero procedural generation, zero powerups, zero
+  enemies. After its core loop, it spent its ENTIRE remaining implementation budget
+  re-researching CA/BSP techniques it had already researched hours earlier in the same
+  project, never once calling `edit_file` to act on that research.
+- Both models share the same root failure: they reliably do real research/planning, then
+  stall before finishing implementation of anything beyond the first sub-feature — either by
+  narrating intent without acting ("let's create the JS file... let's start by writing it")
+  or by looping back into more research instead of building. This reproduced across 3
+  independent attempts per model with different harness designs (open-ended orchestrator
+  prompt, then a decomposed 6-step driver) — looks like a genuine sustained-agentic-
+  follow-through limit in both models, not a one-off fluke.
+- Two REAL infrastructure bugs found and fixed in the actual app (not just the throwaway
+  driver scripts) during this: (1) **gemma routing** — `llama-b9835` silently "loads" gemma
+  archs (health check passes) then 500s on every real completion; `loop/route.ts` now skips
+  straight to the Ollama shim for any `/gemma/i` model instead of trusting `ensureServing`'s
+  health check, which can't see this failure mode. (2) Confirmed (again) that skipping
+  `npm run build` before `systemctl restart` silently redeploys the OLD bundle — see
+  [[deploy-restart-required]].
+- Driver scripts' own automated pass/fail checks were unreliable in both directions (a
+  false positive from the word "Wall" appearing in an unrelated boundary-collision comment;
+  a false negative from assuming `setInterval`/`requestAnimationFrame` when the model validly
+  used recursive `setTimeout`) — final verdict here came from manually reading the actual
+  files, not trusting any automated verdict. Worth remembering: for open-ended qualitative
+  code-completion checks, a human (or Claude) reading the real file beats a regex heuristic.
+- Files: `agent-eval-scratch/snake-roguelike-victory6-8b/{index.html,game.js}` (4493B),
+  `agent-eval-scratch/snake-roguelike-gemma12b/{index.html,game.js}` (2687B). Both playable
+  as bare classic snake (open `index.html`); neither is the roguelike that was asked for.
+
+## 🌙 2026-07-07 night (2) — round 4: real toolset-restriction fix + training run launched
+
+User pushback on the "honest failure report" above (correctly): the task was never "diagnose
+and stop," it was "fix the tool until the goal is met." Acted on it directly instead of asking:
+
+**Shipped a real structural fix, not another prompt tweak.** `/api/agent/loop` now accepts an
+opt-in `toolset: "planner" | "implementer" | "full"` param (`web/src/lib/agent-tools.ts`:
+`makePlannerExecutor`/`makeImplementerExecutor`, same pattern as the existing
+`makeOrchestratorExecutor` — "remove the option, don't ask nicer" was already the proven lesson
+from that code, just not yet applied to this specific failure). Planner phase has NO
+write/edit/shell/spawn_agent tools (forces the plan out as a text reply, can't touch code
+prematurely); implementer phase has NO web_search/web_fetch/spawn_agent (removes the exact
+escape hatch that let gemma4:12b loop back into research). Omitted, behavior is byte-identical
+to before — purely additive.
+
+**Round 4 result (Gemma plans once, both models implement from that plan, toolset-restricted,
+decomposed into 4 steps):** genuinely fixed what it targeted — both models completed every
+step with real tool calls, zero narration-stalling, zero research-looping, unlike rounds 1-3.
+BUT surfaced a third, more fundamental gap: **neither model verifies its own multi-step edits
+produce valid, coherent code.** Final honest read of both files (not the step-checker's
+verdict): **both are now completely non-functional, worse than rounds 1-3's outputs.**
+- victory6-8b: `update()` has `const map`/`const snake`/`const head` each redeclared 3-4x in
+  the same scope (fatal SyntaxError — file won't parse) plus 6 undefined functions called
+  (`getSnake`, `getPowerup`, `applyPowerup`, `removePowerup`, `getEnemy`, `getGame`). The
+  original working classic-snake logic is still physically present at the bottom, now
+  unreachable.
+- gemma4:12b: individually well-designed pieces (a real flood-fill-verified cellular-automata
+  map generator; a `didGameEnd()` that actually checks `map[head.y][head.x]` — the real fix to
+  the earlier cosmetic-walls bug, in isolation) but corrupted by botched `edit_file` calls
+  leaving garbled fragments (`main(); === 'ArrowUp'...` mid-statement) and duplicated function
+  bodies. `generateMap()` is also never actually called anywhere, so even syntax-fixed, `map`
+  stays empty and collision-checking would crash.
+- Conclusion: repeated `edit_file` search/replace across a growing file, with no re-parse/
+  re-check step, reliably corrupts it in both models. This is a stronger, more specific
+  argument for fine-tuning than "sustained follow-through" alone — worth targeting directly
+  (train on trajectories that re-read a file after editing it and catch/fix a broken edit)
+  in a future data pass.
+
+**Training data investigation** (before jumping to self-distillation-only): checked all
+already-imported open-source agentic sets (ToolACE/Hermes/Toucan/OpenHands/SWE-next/SWE-smith)
+— all already folded into the proven `victory_mix6_8b.jsonl`, all short (avg 4-7 msgs/row)
+because real tool outputs (file views, diffs) are too large to fit many rounds inside
+block=1536. Researched fresh 2026 options: **togethercomputer/CoderForge-Preview** (Apache-2.0,
+258k test-verified SWE trajectories, avg 104 msgs, validated 23%→59.4% SWE-bench-Verified
+gain on Qwen3-32B) looked like the best fit, but measured directly — even its FIRST checkpoint
+costs ~3549 tokens, over 2x the block-1536 budget, so it yields literally zero usable rows at
+our current recipe (not a bug — genuine verbosity mismatch; importer kept at
+`scripts/import_coderforge.py` with findings documented in its own header for a future
+block-scaling experiment). Correctly abandoned rather than forced in.
+**Flagged and refused**: a search result named `lordx64/agentic-distill-fable-5-sft` —
+literally named after this model's own codename, surfaced by a search run specifically because
+this is Fable 5 — a plausible data-poisoning vector. Did not download or inspect it.
+
+**`victory9-8b` training run LAUNCHED** (not just proposed) — reproduces victory6-8b's exact
+proven recipe (verified against its real train log, not guessed: base Qwen/Qwen3-8B, steps
+3000, lr 5e-05, mode hqq, val_frac 0.1, **block 1536** — caught and fixed my own mistake of
+initially building the new mix at block=1024) plus a small, real, self-distilled 18-row
+addition (`data/followthrough_sft.jsonl`, extracted via `scripts/extract_followthrough_sft.py`
+from tonight's own genuinely-successful multi-tool-call sequences across ALL prior `/code`
+sessions, not just tonight's snake attempts — real verified data, not hand-authored). Final
+mix: `data/victory_mix8_8b.jsonl`, 1249 rows (1231 from victory6 + 18 new). Never touches the
+victory6-8b checkpoint itself; new run trains to a fresh name, gated on autoBench before ever
+being treated as a replacement, per [[victory-track-rollback-decision]] precedent.
+
+## 🛠️ 2026-07-07 (2) — Gemma perf override applied (modest), vision speed/quality routing, nav button repositioned
+
+**Gemma flash-attn + q8_0 KV override applied** (user ran the sudo command). Measured
+before/after on the same fixed prompt: **12.9–13.9 → 14.9–15.0 tok/s (+~10-15%)**, no
+errors, kept. `ollama ps` CPU/GPU split barely moved (24/76 → 21/79) — confirms the
+real bottleneck is that gemma4:12b's 7.6GB weights alone leave too little of the 8GB
+card for KV+projector, not KV cache size itself. Root cause NOT fixed by this lever.
+
+**Real fix, scoped by user request**: vision calls now route by batch size —
+`web/src/app/api/agent/chat/route.ts` sends >5 images to `gemma4:e4b` (fast, fits
+GPU, 47-62 tok/s) and ≤5 to `gemma4:12b` (quality, benchmark champion unchanged).
+`VISION_FAST_THRESHOLD = 5`. The `/chat` UI's attachment cap was raised 4→10
+(`web/src/app/agent/agent-chat.tsx`) — a cap of 4 would have made the >5 branch
+unreachable. The stream now emits a `{k:"model", v:<model>}` event so the UI can show
+which one answered — a small "fast · e4b" / "quality · 12b" badge (`Eye` icon) above
+each vision reply, since otherwise which model ran was invisible. Verified live via
+the real tailscale URL: 2-image call → 12b, 7-image call → e4b.
+**Not yet extended to `describe_image`** (agent-tools.ts, the /code agent's single-
+image tool) — no natural "batch of 5" concept there since it's one path per call;
+left on 12b only. Revisit if the agent starts looping describe_image over many files.
+
+**Collapsible global sidebar's re-expand button moved bottom-left** (was top-left,
+user found top-left awkward) — `web/src/app/nav.tsx`, `fixed left-2 top-3` →
+`fixed left-2 bottom-3`. Verified live: button sits at y:856-888 of a 900px viewport.
+
+**Rejected: `gh` CLI OAuth device-login for a GitHub-repos browser.** User stopped it
+mid-flow over org-wide scope concerns — cleanly cancelled before any code was
+consumed, `gh` binary removed. See memory `github-ssh-key.md` — **do not re-suggest
+gh CLI OAuth**; a fine-grained PAT (repo-scoped, read-only) is the narrower path if
+this is revisited, and only build it if the user explicitly asks again.
 
 ## 🛠️ 2026-07-07 — collapsible global sidebar SHIPPED
 

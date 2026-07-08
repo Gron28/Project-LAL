@@ -2,7 +2,7 @@
 // Modal directory browser for picking a /code project folder — replaces the old
 // window.prompt. Browses via /api/agent/browse ($HOME-confined, dirs only).
 import { useEffect, useState } from "react";
-import { ArrowUp, Folder, FolderGit2, GitBranch, X } from "lucide-react";
+import { ArrowUp, Folder, FolderGit2, FolderPlus, GitBranch, X } from "lucide-react";
 
 type Listing = { path: string; parent: string | null; home: string; dirs: string[]; isGit: boolean };
 
@@ -23,12 +23,15 @@ export default function DirPicker({ open, recents, onPick, onClose }: {
   const [showHidden, setShowHidden] = useState(false);
   const [manual, setManual] = useState("");
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<"browse" | "clone">("browse");
+  const [tab, setTab] = useState<"browse" | "clone" | "new">("browse");
   const [cloneUrl, setCloneUrl] = useState("");
   const [cloneName, setCloneName] = useState("");
   const [cloneNameTouched, setCloneNameTouched] = useState(false);
   const [cloning, setCloning] = useState(false);
   const [cloneMsg, setCloneMsg] = useState("");
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createMsg, setCreateMsg] = useState("");
 
   const nav = async (path?: string, hidden = showHidden) => {
     setError("");
@@ -46,9 +49,29 @@ export default function DirPicker({ open, recents, onPick, onClose }: {
   };
 
   useEffect(() => {
-    if (open) { setManual(""); setTab("browse"); setCloneUrl(""); setCloneName(""); setCloneNameTouched(false); setCloneMsg(""); nav(listing?.path); }
+    if (open) {
+      setManual(""); setTab("browse"); setCloneUrl(""); setCloneName(""); setCloneNameTouched(false); setCloneMsg("");
+      setNewName(""); setCreateMsg("");
+      nav(listing?.path);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  const doCreate = async () => {
+    if (!listing || !newName.trim() || creating) return;
+    setCreating(true);
+    setCreateMsg("");
+    try {
+      const r = await fetch("/api/agent/projects", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: listing.path + "/" + newName.trim(), create: true }),
+      });
+      const j = await r.json();
+      if (j.ok && j.path) onPick(j.path);
+      else setCreateMsg(j.error || "create failed");
+    } catch (e) { setCreateMsg((e as Error).message); }
+    finally { setCreating(false); }
+  };
 
   const doClone = async () => {
     if (!listing || !cloneUrl.trim() || !cloneName.trim() || cloning) return;
@@ -93,6 +116,10 @@ export default function DirPicker({ open, recents, onPick, onClose }: {
               className={"flex items-center gap-1.5 text-xs font-semibold tracking-widest rounded px-2 py-1 " + (tab === "clone" ? "text-[var(--accent-ai)] bg-[var(--surface-2,#11151c)]" : "text-[var(--muted)]")}>
               <GitBranch size={12} /> CLONE
             </button>
+            <button onClick={() => setTab("new")}
+              className={"flex items-center gap-1.5 text-xs font-semibold tracking-widest rounded px-2 py-1 " + (tab === "new" ? "text-[var(--accent-ai)] bg-[var(--surface-2,#11151c)]" : "text-[var(--muted)]")}>
+              <FolderPlus size={12} /> NEW
+            </button>
           </div>
           <label className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--muted)] cursor-pointer">
             <input type="checkbox" checked={showHidden} onChange={(e) => { setShowHidden(e.target.checked); nav(listing?.path, e.target.checked); }} />
@@ -104,6 +131,11 @@ export default function DirPicker({ open, recents, onPick, onClose }: {
         {tab === "clone" && (
           <div className="px-4 pt-2 pb-1 text-[11px] text-[var(--muted)] border-b border-[var(--border-soft)] shrink-0">
             navigate to the folder to clone into, then fill in the repo below
+          </div>
+        )}
+        {tab === "new" && (
+          <div className="px-4 pt-2 pb-1 text-[11px] text-[var(--muted)] border-b border-[var(--border-soft)] shrink-0">
+            navigate to where the new project should live, then name it below
           </div>
         )}
         {tab === "browse" && recents.length > 0 && (
@@ -162,7 +194,7 @@ export default function DirPicker({ open, recents, onPick, onClose }: {
               Select {manual.trim() ? "path" : "this folder"}
             </button>
           </div>
-        ) : (
+        ) : tab === "clone" ? (
           <div className="flex flex-col gap-2 px-4 py-3 border-t border-[var(--border-soft)] shrink-0">
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-[var(--muted)] shrink-0">into:</span>
@@ -181,6 +213,23 @@ export default function DirPicker({ open, recents, onPick, onClose }: {
               </button>
             </div>
             {cloneMsg && <pre className="text-[10px] text-[var(--accent-danger)] whitespace-pre-wrap max-h-20 overflow-auto">{cloneMsg}</pre>}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2 px-4 py-3 border-t border-[var(--border-soft)] shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-[var(--muted)] shrink-0">into:</span>
+              <span className="text-[11px] font-mono truncate" title={listing?.path}>{listing?.path}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input value={newName} onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && newName.trim()) doCreate(); }}
+                placeholder="new folder name" className="flex-1 bg-[var(--surface-2,#11151c)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono" />
+              <button onClick={doCreate} disabled={!newName.trim() || creating}
+                className="text-xs font-semibold bg-[var(--accent-ai)] text-[#05090c] rounded px-3 py-1.5 disabled:opacity-40 shrink-0">
+                {creating ? "creating…" : "Create project here"}
+              </button>
+            </div>
+            {createMsg && <pre className="text-[10px] text-[var(--accent-danger)] whitespace-pre-wrap max-h-20 overflow-auto">{createMsg}</pre>}
           </div>
         )}
       </div>

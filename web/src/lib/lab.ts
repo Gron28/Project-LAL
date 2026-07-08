@@ -224,7 +224,7 @@ export function newId() { return Date.now().toString(36) + Math.random().toStrin
 // renderer crashes on a code-* conversation. "code-" id prefix is the only signal
 // (no schema field), so callers must filter by kind and never cross the streams.
 export function listConvos(kind?: "chat" | "code") {
-  const out: { id: string; title: string; updatedAt: number; project?: string }[] = [];
+  const out: { id: string; title: string; updatedAt: number; kind: "chat" | "code"; project?: string }[] = [];
   try {
     for (const f of fs.readdirSync(CONVOS_DIR))
       if (f.endsWith(".json")) {
@@ -233,7 +233,7 @@ export function listConvos(kind?: "chat" | "code") {
           const isCode = String(c.id).startsWith("code-");
           if (kind === "chat" && isCode) continue;
           if (kind === "code" && !isCode) continue;
-          out.push({ id: c.id, title: c.title || "chat", updatedAt: c.ts || 0, ...(c.project ? { project: c.project } : {}) });
+          out.push({ id: c.id, title: c.title || "chat", updatedAt: c.ts || 0, kind: isCode ? "code" : "chat", ...(c.project ? { project: c.project } : {}) });
         } catch {}
       }
   } catch {}
@@ -250,6 +250,22 @@ export function saveConvo(c: Convo) {
 }
 export function deleteConvo(id: string) {
   try { fs.unlinkSync(path.join(CONVOS_DIR, id + ".json")); } catch {}
+}
+
+// ---- /code project list (recently-used absolute directories) ----
+// Shared between the /code loop route and the Library "Projects" tab — both must
+// read/write the exact same file, so this lives in one place rather than being
+// redefined per-route.
+const PROJECTS_FILE = path.join(DATA, "code_projects.json");
+export function listProjects(): string[] {
+  try { return JSON.parse(fs.readFileSync(PROJECTS_FILE, "utf8")); } catch { return []; }
+}
+export function rememberProject(p: string) {
+  const rec = [p, ...listProjects().filter((x) => x !== p)].slice(0, 12);
+  try { fs.writeFileSync(PROJECTS_FILE, JSON.stringify(rec, null, 2)); } catch {}
+}
+export function forgetProject(p: string) {
+  try { fs.writeFileSync(PROJECTS_FILE, JSON.stringify(listProjects().filter((x) => x !== p), null, 2)); } catch {}
 }
 
 // ---- benchmark harness (auto-graded; qualify a model before/after training) ----

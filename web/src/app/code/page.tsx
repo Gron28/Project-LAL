@@ -2,13 +2,14 @@
 // Mini claude code: agentic coding chat over the workspace, with live tool activity,
 // sub-agent traces, approval gating, and vision via the Gemma backend.
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, Bot, Brain, Check, ChevronDown, ChevronRight, CircleStop, Copy, ExternalLink, Hammer, MessageSquarePlus, PanelLeft, Paperclip, Pencil, Send, ShieldCheck, Trash2, X, Zap } from "lucide-react";
+import { ArrowDown, Bot, Brain, Check, ChevronDown, ChevronRight, CircleStop, Copy, ExternalLink, Hammer, MessageSquarePlus, PanelLeft, Paperclip, Pencil, Send, Settings, ShieldCheck, Trash2, X, Zap } from "lucide-react";
 import MarkdownView from "@/components/markdown-view";
 import DirPicker from "@/components/code/dir-picker";
 import FileTree from "@/components/code/file-tree";
 import EditorPane from "@/components/code/editor-pane";
 import GitPanel from "@/components/code/git-panel";
 import RunPanel from "@/components/code/run-panel";
+import LlmSettings from "@/app/agent/llm-settings";
 import { useNavCollapsed } from "@/app/nav-context";
 
 type Ev =
@@ -20,14 +21,26 @@ type Ev =
   | { k: "tool_result"; v: { id: string; name: string; ok: boolean; output: string }; agent?: string }
   | { k: "approval_needed"; v: { id: string; name: string; args: Record<string, unknown> } }
   | { k: "project"; v: { root: string; instructionFiles: string[] } }
-  | { k: "done"; v: { conversationId: string } }
-  | { k: "error"; v: string };
+  | { k: "done"; v: { conversationId?: string; dir?: string } }
+  | { k: "error"; v: string }
+  // Deliberate-mode-only events (from /api/agent/deliberate — see lib/deliberate.ts).
+  // "inner" wraps a nested tool-loop event tagged with which phase/role produced it;
+  // it's unwrapped into the SAME shapes above (with `agent` set to that phase/role)
+  // by applyEvent, so this rendering pipeline never needs a second code path.
+  | { k: "roles"; v: { roles: { name: string; lens: string; bias?: string }[] } }
+  | { k: "phase"; v: { name: string } }
+  | { k: "role_progress"; v: { role: string; stage: string } }
+  | { k: "debate_turn"; v: { round: number; role: string; text: string } }
+  | { k: "convergence"; v: { round: number; verdict: string } }
+  | { k: "artifact"; v: { path: string } }
+  | { k: "inner"; v: { phase: string; role?: string; event: Ev } };
 
 type ToolCall = { id: string; name: string; args: Record<string, unknown>; agent?: string; ok?: boolean; output?: string; pendingApproval?: boolean };
 type Block =
   | { t: "user"; text: string; hIdx: number }
   | { t: "assistant"; text: string; think: string; agent?: string }
   | { t: "tool"; call: ToolCall }
+  | { t: "status"; text: string }
   | { t: "error"; text: string };
 type Convo = { id: string; title: string; updatedAt: number; project?: string };
 // Raw shape of a persisted /code conversation turn (server keeps the full tool-loop
@@ -69,6 +82,39 @@ function reconstructSession(messages: RawMsg[]): { blocks: Block[]; history: His
     }
   }
   return { blocks, history };
+}
+
+// Shared by both /api/agent/loop's stream and /api/agent/deliberate's — mutates
+// `next` in place (matching the caller's existing slice-then-mutate pattern).
+// Deliberate's "inner" events wrap a nested tool-loop event tagged with which
+// phase/role produced it; unwrapping them into an `agent`-tagged version of the
+// SAME event shapes means this one function renders both without a second path —
+// a debate turn's tool_request block looks exactly like a sub-agent's would.
+function applyEvent(next: Block[], e: Ev): void {
+  const agent = (e as { agent?: string }).agent;
+  const lastAssistant = () => {
+    const last = next[next.length - 1];
+    if (last?.t === "assistant" && last.agent === agent) return last;
+    const nb = { t: "assistant" as const, text: "", think: "", agent };
+    next.push(nb);
+    return nb;
+  };
+  if (e.k === "text") { const a = lastAssistant(); a.text += e.v; }
+  else if (e.k === "think") { const a = lastAssistant(); a.think += e.v; }
+  else if (e.k === "tool_request") next.push({ t: "tool", call: { ...e.v, agent } });
+  else if (e.k === "tool_result") {
+    for (let j = next.length - 1; j >= 0; j--) {
+      const b = next[j];
+      if (b.t === "tool" && b.call.id === e.v.id) { next[j] = { t: "tool", call: { ...b.call, ok: e.v.ok, output: e.v.output } }; break; }
+    }
+  } else if (e.k === "error") next.push({ t: "error", text: e.v });
+  else if (e.k === "max_rounds") next.push({ t: "error", text: (agent ? `[${agent}] ` : "") + `stopped after ${e.v} tool-call rounds without finishing.` });
+  else if (e.k === "phase") next.push({ t: "status", text: "── " + e.v.name + " ──" });
+  else if (e.k === "roles") next.push({ t: "status", text: "Perspectives: " + e.v.roles.map((r) => `${r.name} (${r.lens})`).join(" · ") });
+  else if (e.k === "debate_turn") next.push({ t: "assistant", text: e.v.text, think: "", agent: e.v.role });
+  else if (e.k === "convergence") next.push({ t: "status", text: `convergence check, round ${e.v.round}: ${e.v.verdict}` });
+  else if (e.k === "artifact") next.push({ t: "status", text: "saved: " + e.v.path.split("/").pop() });
+  else if (e.k === "inner") applyEvent(next, { ...e.v.event, agent: e.v.role || e.v.phase } as Ev);
 }
 
 const summarizeArgs = (a: Record<string, unknown>) => {
@@ -134,6 +180,8 @@ export default function CodePage() {
   const [think, setThink] = useState(true);
   const [modes, setModes] = useState<{ id: string; label: string }[]>([{ id: "default", label: "default" }]);
   const [mode, setMode] = useState("default");
+  const [minutes, setMinutes] = useState(10); // deliberate mode's time-budget slider
+  const [settingsOpen, setSettingsOpen] = useState(false); // same LlmSettings panel /chat uses — temperature/num_ctx/etc, applies here too since serving reads the same saved options
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState("");
   const [blocks, setBlocks] = useState<Block[]>([]);
@@ -308,22 +356,37 @@ export default function CodePage() {
     // /code always looked blank even though every session was saved server-side.
     // The workspace fetch must land first: openConvo needs it to map a saved
     // default-workspace path back to the select's "" option.
+    const qs = new URLSearchParams(window.location.search);
+    const deepLinkProject = qs.get("project");
     fetch("/api/agent/loop").then((r) => r.json()).then((j) => {
       workspaceRef.current = j.workspace || "";
       setWorkspace(j.workspace || ""); setProjects(j.projects || []);
-      if (j.modes?.length) setModes(j.modes);
+      // "deliberate" isn't one of /api/agent/loop's MODES — it's a client-side-only
+      // entry pointing at the separate /api/agent/deliberate endpoint (see
+      // lib/deliberate.ts), since it's a multi-phase, time-boxed orchestration with
+      // its own artifacts, not another single tool-loop preset.
+      if (j.modes?.length) setModes([...j.modes, { id: "deliberate", label: "deliberate (research)" }]);
+      // Deep-link from Library ("open in /code" on a project): jump straight to
+      // that folder with a fresh session, same as picking it from the dropdown.
+      if (deepLinkProject) setProject(deepLinkProject);
     }).catch(() => {})
       .then(() => { loadConvos(); return fetch("/api/agent/conversations?kind=code"); })
       .then((r) => (r.ok ? r.json() : []))
       .then(async (list: Convo[]) => {
-        if (!list?.[0]) return;
-        await openConvo(list[0].id);
+        if (deepLinkProject) { window.history.replaceState(null, "", "/code"); return; }
+        // Deep-link from Library ("open in /code" on a chat): ?conv=<id> opens that
+        // specific session instead of whichever is most recent.
+        const deepLinkId = qs.get("conv");
+        const targetId = deepLinkId || list?.[0]?.id;
+        if (!targetId) return;
+        await openConvo(targetId);
+        if (deepLinkId) window.history.replaceState(null, "", "/code");
         // A fully closed-and-reopened tab (not just backgrounded) is a fresh
         // mount — it has no memory that a task might still be running. If the
         // resumed session's last message isn't a finished assistant reply, the
         // loop may still be going server-side; start polling rather than sitting
         // there looking done when it might not be.
-        const r2 = await fetch(`/api/agent/conversations/${list[0].id}`).catch(() => null);
+        const r2 = await fetch(`/api/agent/conversations/${targetId}`).catch(() => null);
         const j2 = await r2?.json().catch(() => null);
         const msgs = (j2?.messages ?? []) as RawMsg[];
         const last = msgs[msgs.length - 1];
@@ -376,7 +439,66 @@ export default function CodePage() {
     await fetch("/api/agent/loop", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, allow }) }).catch(() => {});
   };
 
+  // Deliberate mode's query is one-shot, not a multi-turn chat: it doesn't append
+  // to `history.current` for a follow-up message the way the normal loop does,
+  // since a deliberation isn't something you continue with "and also...".
+  const sendDeliberate = async () => {
+    const query = input.trim();
+    if (!query || busy) return;
+    setInput("");
+    setBusy(true);
+    stickRef.current = true;
+    setShowJump(false);
+    setBlocks((prev) => [...prev, { t: "user", text: query, hIdx: -1 }]);
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+    try {
+      const res = await fetch("/api/agent/deliberate", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query, minutes, model, autoApprove: auto, project: project || undefined }),
+        signal: ac.signal,
+      });
+      if (!res.ok || !res.body) throw new Error(await res.text());
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i: number;
+        while ((i = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, i).trim();
+          buf = buf.slice(i + 1);
+          if (!line) continue;
+          let e: Ev;
+          try { e = JSON.parse(line); } catch { continue; }
+          if (e.k === "approval_needed") {
+            setBlocks((prev) => {
+              const next = prev.slice();
+              for (let j = next.length - 1; j >= 0; j--) {
+                const bl = next[j];
+                if (bl.t === "tool" && bl.call.id === e.v.id) { next[j] = { t: "tool", call: { ...bl.call, pendingApproval: true } }; break; }
+              }
+              return next;
+            });
+            setApproval(e.v);
+          } else {
+            setBlocks((prev) => { const next = prev.slice(); applyEvent(next, e); return next; });
+          }
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") setBlocks((prev) => [...prev, { t: "error", text: (err as Error).message }]);
+    }
+    setBusy(false);
+    setApproval(null);
+    abortRef.current = null;
+  };
+
   const send = async () => {
+    if (mode === "deliberate") return sendDeliberate();
     const text = input.trim() || "Take a look at the attached image.";
     if ((!input.trim() && !attached.length) || busy) return;
     const pending = attached;
@@ -433,38 +555,21 @@ export default function CodePage() {
           try { e = JSON.parse(line); } catch { continue; }
           setBlocks((prev) => {
             const next = prev.slice();
-            const lastAssistant = () => {
-              const last = next[next.length - 1];
-              if (last?.t === "assistant" && last.agent === (e as { agent?: string }).agent) return last;
-              const nb = { t: "assistant" as const, text: "", think: "", agent: (e as { agent?: string }).agent };
-              next.push(nb);
-              return nb;
-            };
-            if (e.k === "text") { const a = lastAssistant(); a.text += e.v; }
-            else if (e.k === "think") { const a = lastAssistant(); a.think += e.v; }
-            else if (e.k === "tool_request") next.push({ t: "tool", call: { ...e.v, agent: e.agent } });
-            else if (e.k === "tool_result") {
-              for (let j = next.length - 1; j >= 0; j--) {
-                const b = next[j];
-                if (b.t === "tool" && b.call.id === e.v.id) { next[j] = { t: "tool", call: { ...b.call, ok: e.v.ok, output: e.v.output } }; break; }
-              }
-            } else if (e.k === "approval_needed") {
+            if (e.k === "approval_needed") {
               for (let j = next.length - 1; j >= 0; j--) {
                 const b = next[j];
                 if (b.t === "tool" && b.call.id === e.v.id) { next[j] = { t: "tool", call: { ...b.call, pendingApproval: true } }; break; }
               }
-            } else if (e.k === "error") next.push({ t: "error", text: e.v });
-            else if (e.k === "max_rounds") next.push({
-              t: "error",
-              text: (e.agent ? `[${e.agent}] ` : "") + `stopped after ${e.v} tool-call rounds without finishing — the task may be incomplete. Send another message to continue it.`,
-            });
+            } else {
+              applyEvent(next, e);
+            }
             return next;
           });
           // agent (or a helper sub-agent) may have touched files — refresh tree/git/editor
           if (e.k === "tool_result" && ["write_file", "edit_file", "run_shell", "run_python", "git"].includes(e.v.name)) setFsTick((t) => t + 1);
           if (e.k === "project") setInstructionFiles(e.v.instructionFiles || []);
           if (e.k === "approval_needed") setApproval(e.v);
-          if (e.k === "done") { doneCid = e.v.conversationId; setConvoId(e.v.conversationId); loadConvos(); }
+          if (e.k === "done") { doneCid = e.v.conversationId || ""; if (e.v.conversationId) { setConvoId(e.v.conversationId); loadConvos(); } }
           if (e.k === "done" || e.k === "error") setApproval(null);
         }
       }
@@ -518,6 +623,14 @@ export default function CodePage() {
         <select value={mode} onChange={(e) => setMode(e.target.value)} className={inp} title="agent workflow mode">
           {modes.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
         </select>
+        {mode === "deliberate" && (
+          <span className="flex items-center gap-1.5 text-xs border border-[var(--border)] rounded px-2.5 py-1.5" title="time budget for the debate/follow-up cycle — scoping, initial research, and the final synthesis run regardless">
+            <input type="range" min={2} max={60} step={1} value={minutes}
+              onChange={(e) => setMinutes(parseInt(e.target.value, 10))}
+              className="w-24 accent-[var(--accent-ai)]" />
+            <span className="text-[var(--text-2)] tabular-nums w-14">{minutes} min</span>
+          </span>
+        )}
         <button onClick={() => setAuto(!auto)} title={auto ? "tools auto-approved" : "file/shell tools ask first"}
           className="flex items-center gap-1.5 text-xs border rounded px-2.5 py-1.5"
           style={{ borderColor: auto ? "var(--accent-warn, #d29922)" : "var(--border)", color: auto ? "var(--accent-warn, #d29922)" : "var(--text-2)" }}>
@@ -527,6 +640,10 @@ export default function CodePage() {
           className="flex items-center gap-1.5 text-xs border rounded px-2.5 py-1.5"
           style={{ borderColor: think ? "var(--accent-ai)" : "var(--border)", color: think ? "var(--accent-ai)" : "var(--muted)" }}>
           <Brain size={13} />{think ? "think" : "no-think"}
+        </button>
+        <button onClick={() => setSettingsOpen(true)} title="LLM settings — temperature, context size, sampling"
+          className="flex items-center text-xs border border-[var(--border)] rounded px-2 py-1.5 text-[var(--text-2)]">
+          <Settings size={13} />
         </button>
         <div className="flex items-center gap-1">
           <button onClick={newSession} title="new session in this workspace"
@@ -598,6 +715,7 @@ export default function CodePage() {
           );
           if (b.t === "tool") return <ToolBlock key={i} call={b.call} project={project} />;
           if (b.t === "error") return <div key={i} className="text-xs text-[var(--accent-danger)] border border-[var(--accent-danger)]/40 rounded px-3 py-2">{b.text}</div>;
+          if (b.t === "status") return <div key={i} className="text-[11px] uppercase tracking-widest text-[var(--accent-ai)] px-1">{b.text}</div>;
           return (
             <div key={i} {...longPress(i)} className="group text-sm leading-relaxed">
               <div className="flex items-center gap-2">
@@ -661,7 +779,7 @@ export default function CodePage() {
             <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={2}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
               onPaste={(e) => { const files = e.clipboardData?.files; if (files?.length) addFiles(files); }}
-              placeholder="Build me… / Fix… / Research…" className={inp + " flex-1 resize-none text-sm"} />
+              placeholder={mode === "deliberate" ? "What question should the deliberation settle?" : "Build me… / Fix… / Research…"} className={inp + " flex-1 resize-none text-sm"} />
             {busy
               ? <button onClick={stop} className="px-4 rounded bg-[var(--accent-danger)] text-[#05090c] flex items-center gap-1.5 text-sm font-semibold"><CircleStop size={15} /> Stop</button>
               : <button onClick={send} disabled={!input.trim() && !attached.length} className="px-4 rounded bg-[var(--accent-ai)] text-[#05090c] flex items-center gap-1.5 text-sm font-semibold disabled:opacity-40"><Send size={15} /> Send</button>}
@@ -705,6 +823,7 @@ export default function CodePage() {
 
     <DirPicker open={pickerOpen} recents={projects} onClose={() => setPickerOpen(false)}
       onPick={(p) => { setPickerOpen(false); setProjects((prev) => [p, ...prev.filter((x) => x !== p)]); setProject(p); setOpenFile(null); newSession(); }} />
+    <LlmSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} model={model} models={models} onModelChange={setModel} think={think} onThinkChange={setThink} />
     </div>
   );
 }

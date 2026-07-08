@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brain, FileCode, Menu, Sparkles, Paperclip, X, Pencil, Trash2, SlidersHorizontal, Copy, Mic, Volume2, VolumeX, AudioLines, Globe, FileText } from "lucide-react";
+import { Brain, Eye, FileCode, Menu, Sparkles, Paperclip, X, Pencil, Trash2, SlidersHorizontal, Copy, Mic, Volume2, VolumeX, AudioLines, Globe, FileText } from "lucide-react";
 import LlmSettings from "./llm-settings";
 import { enqueueSpeech, stopSpeech, setSpeechListener } from "./voice";
 import MarkdownView from "@/components/markdown-view";
 
-type Msg = { role: "user" | "assistant"; content: string; thinking?: string; images?: string[] };
+type Msg = { role: "user" | "assistant"; content: string; thinking?: string; images?: string[]; visionModel?: string };
 type Convo = { id: string; title: string; model: string; updatedAt: string };
 
 const SUGGESTIONS = [
@@ -424,7 +424,10 @@ export default function AgentChat() {
 
   const addFiles = async (files: FileList | null) => {
     if (!files) return;
-    const imgs = Array.from(files).filter((f) => f.type.startsWith("image/")).slice(0, 4);
+    // Cap raised from 4: the vision backend now routes to a faster (smaller) model
+    // once a batch exceeds 5 images (see VISION_FAST_THRESHOLD, api/agent/chat/route.ts) —
+    // a cap of 4 would have made that branch unreachable.
+    const imgs = Array.from(files).filter((f) => f.type.startsWith("image/")).slice(0, 10);
     const read = await Promise.all(
       imgs.map(
         (f) =>
@@ -435,7 +438,7 @@ export default function AgentChat() {
           }),
       ),
     );
-    setAttached((a) => [...a, ...read].slice(0, 4));
+    setAttached((a) => [...a, ...read].slice(0, 10));
   };
 
   const loadConvos = useCallback(async () => {
@@ -525,6 +528,10 @@ export default function AgentChat() {
       .then((j) => { if (j) { setModels(j.models ?? []); setModel(j.current ?? ""); } })
       .catch(() => {});
     loadConvos().then(() => {});
+    // Deep-link from Library ("open in /chat"): ?conv=<id> opens that specific
+    // conversation instead of whichever is most recent.
+    const deepLinkId = new URLSearchParams(window.location.search).get("conv");
+    if (deepLinkId) { openConvo(deepLinkId); window.history.replaceState(null, "", "/chat"); return; }
     fetch("/api/agent/conversations?kind=chat")
       .then((r) => (r.ok ? r.json() : []))
       .then((list: Convo[]) => { if (list?.[0]) openConvo(list[0].id); })
@@ -619,6 +626,7 @@ export default function AgentChat() {
         let buf = "";
         let content = "";
         let thinking = "";
+        let visionModel = "";
         let spokenLen = 0;
         const willSpeak = speakOverride ?? speakOn;
         const flush = (line: string) => {
@@ -627,6 +635,7 @@ export default function AgentChat() {
             const ev = JSON.parse(line) as { k?: string; v?: string };
             if (ev.k === "think") thinking += ev.v ?? "";
             else if (ev.k === "text") content += ev.v ?? "";
+            else if (ev.k === "model") visionModel = ev.v ?? "";
             else if (ev.k === "transcript") {
               const heard = ev.v ?? "";
               if (heard) setMessages((p) => { const c = [...p]; if (c[idx - 1]?.role === "user") c[idx - 1] = { ...c[idx - 1], content: heard }; return c; });
@@ -641,10 +650,10 @@ export default function AgentChat() {
           buf = lines.pop() ?? "";
           for (const l of lines) flush(l);
           if (turnRef.current !== myTurn) break; // a reconcile took over this turn → stop touching state
-          const c = content, t = thinking;
+          const c = content, t = thinking, vm = visionModel;
           setMessages((p) => {
             const copy = [...p];
-            copy[idx] = { role: "assistant", content: c, thinking: t };
+            copy[idx] = { role: "assistant", content: c, thinking: t, ...(vm ? { visionModel: vm } : {}) };
             return copy;
           });
           if (willSpeak) {
@@ -656,7 +665,7 @@ export default function AgentChat() {
         if (turnRef.current === myTurn) {
           setMessages((p) => {
             const copy = [...p];
-            copy[idx] = { role: "assistant", content, thinking };
+            copy[idx] = { role: "assistant", content, thinking, ...(visionModel ? { visionModel } : {}) };
             return copy;
           });
           loadConvos();
@@ -1051,6 +1060,13 @@ export default function AgentChat() {
                         {m.thinking}
                       </div>
                     </details>
+                  )}
+                  {m.visionModel && (
+                    <span
+                      title={m.visionModel === "gemma4:e4b" ? "5+ images in this turn — routed to the faster, smaller vision model" : "routed to the higher-quality vision model"}
+                      className="self-start inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-[var(--muted)] border border-[var(--border)] rounded-full px-2 py-0.5 w-fit">
+                      <Eye size={10} /> {m.visionModel === "gemma4:e4b" ? "fast" : "quality"} · {m.visionModel.replace("gemma4:", "")}
+                    </span>
                   )}
                   <div {...longPress(i)} className="text-[15px] text-zinc-100 break-words leading-relaxed">
                     <AssistantContent text={m.content} priorHtml={priorArtifactAt(messages, i)} />

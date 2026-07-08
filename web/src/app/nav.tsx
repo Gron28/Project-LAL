@@ -43,7 +43,7 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
       )}
       {collapsed && (
         <button onClick={onToggle} title="show sidebar"
-          className="hidden md:flex fixed left-2 top-3 z-50 items-center justify-center w-8 h-8 rounded-full bg-[var(--surface-1)] border border-[var(--border)] text-[var(--text-2)] hover:text-[var(--accent-ai)] shadow-lg transition-colors">
+          className="hidden md:flex fixed left-2 bottom-3 z-50 items-center justify-center w-8 h-8 rounded-full bg-[var(--surface-1)] border border-[var(--border)] text-[var(--text-2)] hover:text-[var(--accent-ai)] shadow-lg transition-colors">
           <ChevronRight size={15} />
         </button>
       )}

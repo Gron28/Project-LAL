@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
-import { allModels, ensureServing, readSettings, stopServing, saveConvo, newId, SERVE_PORT } from "@/lib/lab";
+import { allModels, ensureServing, readSettings, stopServing, saveConvo, newId, SERVE_PORT, listProjects, rememberProject } from "@/lib/lab";
 import { runToolLoop, type ToolLoopMsg } from "@/lib/toolloop";
-import { makeAgentExecutor, makeOrchestratorExecutor } from "@/lib/agent-tools";
+import { makeAgentExecutor, makeOrchestratorExecutor, makePlannerExecutor, makeImplementerExecutor } from "@/lib/agent-tools";
 import { recordSessionCard, maybeRollupDaily } from "@/lib/memory-pipeline";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +22,32 @@ type ModePreset = {
   temperature: number;
   addendum: string;
   defaultModel?: string;
+  minResearchCalls?: number; // floor on web_search/web_fetch calls before "done" is accepted — see runToolLoop
+  maxResearchCalls?: number; // ceiling on web_search/web_fetch calls — see runToolLoop
 };
+
+// Shared instruction fragment: any planning output (mode:"planning", toolset:"planner",
+// or the orchestrator's PLAN stage) should be small, self-contained, delegable chunks —
+// not prose a single implementer reads end-to-end. Motivated by 2026-07-07 usage: a
+// plan good enough for one big implement call is NOT automatically usable by
+// spawn_agent, which hands each sub-agent ONLY the text of its own step — a step that
+// silently assumes context from earlier steps is invisible to whoever executes it.
+const CHUNKED_PLAN_INSTRUCTION = `Structure the plan as a numbered list of small, self-contained steps. EVERY step must use exactly this format (all four fields, every time):
+
+N. <short title>
+   Goal: <what this step accomplishes>
+   Files: <exact file path(s) this step creates or touches>
+   Depends on: <step number(s) this needs first, or "none">
+   Done when: <a concrete, checkable condition — not "it works", something a different agent could verify without asking you>
+
+Write each step so a DIFFERENT agent could execute it correctly having seen ONLY that step's text — never assume the executor also read the rest of the plan or an earlier step's reasoning. Prefer more, smaller steps over fewer, large ones: if a step would require touching many files or several distinct behaviors, split it further.
+
+Example of one correctly-formatted step:
+3. Add the create-todo endpoint
+   Goal: implement POST /todos that appends a new todo item to the JSON store
+   Files: server.js
+   Depends on: 1, 2
+   Done when: POST /todos with {"title":"..."} returns 201 and the new item appears in todos.json`;
 
 // Prompt-driven pipeline, not hardcoded stages in TypeScript: adjustable by editing
 // this string, no redeploy of application logic. See docs/orchestrator-research.md.
@@ -45,7 +70,7 @@ MODEL TIERS (assign per role; batch calls within a tier before switching):
 
 DEFAULT PIPELINE (adapt the shape to the task and say when you deviate):
 1. RESEARCH — split into independent questions, one spawn_agent per question, all on the research tier, dispatched as a batch. Append findings to findings.md.
-2. PLAN — one spawn_agent (implementation tier): read findings.md, write plan.md.
+2. PLAN — one spawn_agent (implementation tier): read findings.md, write plan.md as a numbered list of small, self-contained steps (exact goal, exact files, dependencies on other step numbers, concrete definition of done) — small enough that the ITERATE stage can hand any single step to a sub-agent with just that step's text and nothing else.
 3. RED-TEAM — one or two spawn_agent calls (critique tier): attack plan.md for missing cases, wrong assumptions, failure modes. Write critique.md.
 4. REPLAN — revise plan.md against critique.md (implementation tier).
 5. ITERATE — implement plan.md step by step (implementation tier); after each step, verify it (a spawn_agent check or a direct run_shell/run_python test) before moving on. If a step fails twice in a row, stop and report rather than looping silently.
@@ -54,18 +79,20 @@ DEFAULT PIPELINE (adapt the shape to the task and say when you deviate):
 PROGRESS RULE: after each stage completes, send one short line to the user naming the stage, its outcome, and what's next.`;
 
 const MODES: Record<string, ModePreset> = {
-  default: { label: "default", maxRounds: 24, maxTokens: 4096, ctx: 16384, think: true, temperature: 0, addendum: "" },
+  default: { label: "default", maxRounds: 24, maxTokens: 4096, ctx: 16384, think: true, temperature: 0, addendum: "", maxResearchCalls: 8 },
   "quick-edit": {
     label: "quick-edit", maxRounds: 8, maxTokens: 2048, ctx: 8192, think: false, temperature: 0,
     addendum: "MODE: quick-edit — make the smallest correct change. Read only what the edit requires. Prefer edit_file (a small exact search/replace) over write_file. Verify the change, then stop. Do not use spawn_agent or web_search/web_fetch in this mode — it's for fast, isolated edits only.",
   },
   planning: {
     label: "planning", maxRounds: 16, maxTokens: 8192, ctx: 16384, think: true, temperature: 0,
-    addendum: "MODE: planning — explore the codebase read-only; do NOT call write_file, edit_file, or run_shell to modify anything. Your final reply must be a complete implementation plan: phases, the exact files to touch, risks, and how to verify the change once implemented.",
+    addendum: "MODE: planning — explore the codebase read-only; do NOT call write_file, edit_file, or run_shell to modify anything. Your final reply must be a complete implementation plan, plus risks and how to verify the change once implemented. " + CHUNKED_PLAN_INSTRUCTION,
+    maxResearchCalls: 6,
   },
   "deep-research": {
-    label: "deep-research", maxRounds: 48, maxTokens: 4096, ctx: 16384, think: true, temperature: 0.3,
-    addendum: "MODE: deep-research — fan independent sub-questions out via spawn_agent rather than researching everything serially yourself, when that saves rounds. Track sources as you go. Your final reply cites URLs and synthesizes the findings into an answer, noting any disagreements or gaps in what you found.",
+    label: "deep-research", maxRounds: 64, maxTokens: 4096, ctx: 16384, think: true, temperature: 0.3,
+    minResearchCalls: 10,
+    addendum: "MODE: deep-research — this is a genuine deep-research pass, not a quick lookup, and should take real time and many steps, the same way Gemini/GPT/Perplexity's deep-research modes do. Start by decomposing the question into as many distinct sub-questions and angles as it warrants (typically 8-15 for a substantial question) — write them out before searching. Research each one with web_search + web_fetch (a snippet alone is never enough to answer from — open the real page). As you read, generate NEW follow-up sub-questions from gaps, contradictions, or unexpected findings instead of stopping after your first pass; fan independent sub-questions out via spawn_agent when that saves rounds. Track sources as you go. Do not synthesize your final answer until you've covered the breadth you identified — a shallow 1-2 search pass is a WRONG answer in this mode, not merely an incomplete one. Your final reply cites URLs and synthesizes the findings into an answer, noting any disagreements or gaps in what you found.",
   },
   orchestrator: {
     label: "orchestrator", maxRounds: 120, maxTokens: 4096, ctx: 16384, think: true, temperature: 0.2,
@@ -76,15 +103,7 @@ const MODES: Record<string, ModePreset> = {
 // Default mini-claude-code workspace. Any directory can be a project: the client
 // passes `project` (absolute path) and the executor confines all file access to it.
 const DEFAULT_WORKSPACE = path.join(path.resolve(process.cwd(), ".."), "workspace");
-const PROJECTS_FILE = path.join(process.cwd(), ".data", "code_projects.json");
 
-function listProjects(): string[] {
-  try { return JSON.parse(fs.readFileSync(PROJECTS_FILE, "utf8")); } catch { return []; }
-}
-function rememberProject(p: string) {
-  const rec = [p, ...listProjects().filter((x) => x !== p)].slice(0, 12);
-  try { fs.writeFileSync(PROJECTS_FILE, JSON.stringify(rec, null, 2)); } catch {}
-}
 function resolveProject(raw: unknown): { root: string } | { error: string } {
   if (!raw) { fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true }); return { root: DEFAULT_WORKSPACE }; }
   const p = path.resolve(String(raw));
@@ -171,15 +190,28 @@ export async function POST(req: NextRequest) {
   // way. Fall back to the shim only for archs b9835 can't load (gemma4).
   const mi = allModels().find((m) => m.name === model);
   let baseUrl: string;
-  try {
-    await ensureServing(model, preset.ctx);
-    baseUrl = `http://127.0.0.1:${SERVE_PORT}`;
-  } catch (e) {
-    if (mi?.source === "ollama") {
-      stopServing();
-      baseUrl = "http://127.0.0.1:11434";
-    } else {
-      return new Response("serve failed: " + (e as Error).message, { status: 500 });
+  // llama-b9835's /health endpoint reports ready once the process is up and
+  // *a* computation graph is loaded — it doesn't validate that graph matches the
+  // model's real architecture. For gemma archs this build can't actually run,
+  // "ensureServing" was observed to succeed (health passing) while every REAL
+  // completion then 500'd — discovered live, mid agentic-build, the expensive way
+  // (a full conversation's worth of instantly-failing turns). Skip straight to the
+  // Ollama shim for gemma models instead of trusting a health check that can't see
+  // this failure mode; matches the fallback this function already documents below.
+  if (mi?.source === "ollama" && /gemma/i.test(model)) {
+    stopServing();
+    baseUrl = "http://127.0.0.1:11434";
+  } else {
+    try {
+      await ensureServing(model, preset.ctx);
+      baseUrl = `http://127.0.0.1:${SERVE_PORT}`;
+    } catch (e) {
+      if (mi?.source === "ollama") {
+        stopServing();
+        baseUrl = "http://127.0.0.1:11434";
+      } else {
+        return new Response("serve failed: " + (e as Error).message, { status: 500 });
+      }
     }
   }
 
@@ -214,8 +246,15 @@ export async function POST(req: NextRequest) {
         orchestratorMode: modeId === "orchestrator",
       });
       // See makeOrchestratorExecutor's own comment (agent-tools.ts) for why this is a
-      // shared helper rather than an inline filter here.
-      const exec = modeId !== "orchestrator" ? fullExec : makeOrchestratorExecutor(fullExec);
+      // shared helper rather than an inline filter here. `toolset` is an explicit opt-in
+      // override (any caller, any mode) for driving a plan/implement split — omitted,
+      // behavior is byte-identical to before this param existed.
+      const toolset = typeof b.toolset === "string" ? b.toolset : undefined;
+      const exec =
+        toolset === "planner" ? makePlannerExecutor(fullExec)
+        : toolset === "implementer" ? makeImplementerExecutor(fullExec)
+        : toolset === "full" ? fullExec
+        : modeId !== "orchestrator" ? fullExec : makeOrchestratorExecutor(fullExec);
       // Base text: unchanged from before modes existed, plus a mention of the core-memory
       // tools added since. mode:"default" still has an empty addendum, so its system
       // content differs from the pre-memory-blocks string only by this one addition —
@@ -229,9 +268,13 @@ export async function POST(req: NextRequest) {
         "For research: web_search first, then web_fetch any result whose snippet looks relevant — a snippet tells you WHERE to look, not the answer itself; don't answer a specific question from search snippets alone. Use describe_image for images, spawn_agent for isolated subtasks. " +
         "You have standing project memory across sessions via memory_read/memory_write (project conventions, known gotchas, current task state) — check it if unsure what's already known about this project, and update it when you learn something worth remembering. " +
         "Keep replies focused on what you did and found. ";
+      const toolsetAddendum =
+        toolset === "planner" ? "You are in a PLANNING-ONLY phase: you have no write_file/edit_file/run_shell/spawn_agent this turn (by design, not by mistake) — produce your plan as your final text reply, not a file. " + CHUNKED_PLAN_INSTRUCTION + " " :
+        toolset === "implementer" ? "You are in an IMPLEMENTATION-ONLY phase: you have no web_search/web_fetch/spawn_agent this turn (by design, not by mistake) — act directly on the plan you were given instead of researching further. " :
+        "";
       const system: ToolLoopMsg = {
         role: "system",
-        content: base + (preset.addendum ? preset.addendum + "\n\n" : "") + "Current project: " + root +
+        content: base + toolsetAddendum + (preset.addendum ? preset.addendum + "\n\n" : "") + "Current project: " + root +
           instructions.text + memoryText,
       };
       const messages: ToolLoopMsg[] = incoming[0]?.role === "system" ? incoming.slice() : [system, ...incoming];
@@ -247,9 +290,15 @@ export async function POST(req: NextRequest) {
         try { saveConvo({ id: cid, title, ts: Date.now(), project: root, messages: msgs as { role: string; content: string }[] }); } catch {}
       };
       try {
+        // A planner-toolset call almost never needs more than a couple of confirmatory
+        // searches (it's usually planning against a well-understood codebase/stack) —
+        // tighter than any mode's own default, and wins regardless of mode since
+        // toolset is an explicit override elsewhere too.
+        const maxResearchCalls = toolset === "planner" ? 5 : preset.maxResearchCalls;
         const finalMessages = await runToolLoop({
           baseUrl, model, messages, tools: exec.defs, exec,
           maxRounds: preset.maxRounds, maxTokens: preset.maxTokens, think, temperature: preset.temperature,
+          minResearchCalls: preset.minResearchCalls, maxResearchCalls,
           onEvent: (e) => send(e),
           onSnapshot: snapshot,
           approve,

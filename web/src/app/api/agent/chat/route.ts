@@ -7,7 +7,16 @@ export const maxDuration = 3600;
 // Images route to Gemma via Ollama — the local model that can actually see (same
 // decision as the /code agent's describe_image tool). Our own serving model is
 // text-only Qwen3; sending it images would just silently ignore them.
-const VISION_MODEL = "gemma4:12b";
+//
+// gemma4:12b's 7.6GB weights leave too little of the 8GB card for its own KV cache,
+// forcing most layers onto CPU (12-15 tok/s even with flash-attn + q8_0 KV — see
+// HANDOFF.md 2026-07-06/07). The smaller MatFormer variants fit on-GPU and run
+// 3-6x faster (measured: e4b 47-62 tok/s) at a real but smaller quality cost.
+// Speed only matters when there's a lot of decoding to do — a single image still
+// gets the better model; a batch large enough to actually feel slow gets the fast one.
+const VISION_MODEL_QUALITY = "gemma4:12b";
+const VISION_MODEL_FAST = "gemma4:e4b";
+const VISION_FAST_THRESHOLD = 5; // more than this many images in one turn -> fast model
 
 function stripDataUrl(s: string): string {
   const m = /^data:[^;]+;base64,(.+)$/.exec(s);
@@ -40,6 +49,7 @@ export async function POST(req: NextRequest) {
   const enc = new TextEncoder();
 
   if (attachments.length) {
+    const visionModel = attachments.length > VISION_FAST_THRESHOLD ? VISION_MODEL_FAST : VISION_MODEL_QUALITY;
     // GPU is single-tenant: park our own llama-server (if resident) before Ollama
     // loads Gemma — HANDOFF bug #1 was exactly this pair of backends colliding.
     const parked = servingModel();
@@ -55,7 +65,7 @@ export async function POST(req: NextRequest) {
     try {
       upstream = await fetch("http://127.0.0.1:11434/api/chat", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: VISION_MODEL, messages: ollamaMessages, stream: true, options: { temperature: s.options.temperature } }),
+        body: JSON.stringify({ model: visionModel, messages: ollamaMessages, stream: true, options: { temperature: s.options.temperature } }),
       });
     } catch (e) {
       if (parked) { try { await ensureServing(parked); } catch {} }
@@ -71,6 +81,9 @@ export async function POST(req: NextRequest) {
     let full = "";
     const stream = new ReadableStream({
       async start(controller) {
+        // Tell the UI which vision model actually answered — "fast" vs "quality" is
+        // otherwise invisible; the user asked to be able to notice which one ran.
+        controller.enqueue(enc.encode(JSON.stringify({ k: "model", v: visionModel }) + "\n"));
         let buf = "";
         try {
           for (;;) {
