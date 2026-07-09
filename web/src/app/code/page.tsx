@@ -867,6 +867,16 @@ export default function CodePage() {
           </div>
         </header>
 
+        {/* Guard rail: gemma-family models were observed live (2026-07-09) failing
+            tool calls silently on both backends — don't let that be discovered the
+            hard way again. Warning only; the user can still proceed. */}
+        {/gemma/i.test(model) && (
+          <div className="pb-1.5 -mt-1 flex items-center gap-1.5 text-[11px] text-[var(--accent-warn)]">
+            <ShieldCheck size={12} />
+            gemma models are unreliable at tool calling here — pick a qwen3/victory model for agent tasks
+          </div>
+        )}
+
         {/* Telemetry: full strip on desktop, tap-to-expand glance on mobile */}
         <div className="pb-2">
           <div className="hidden sm:block"><StatsHud usage={usage} active={busy} onServingChange={setServingModel} /></div>

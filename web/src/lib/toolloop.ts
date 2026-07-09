@@ -14,8 +14,12 @@ export type ToolLoopMsg = {
 };
 
 export type ToolLoopEvent =
-  | { k: "text"; v: string }
-  | { k: "think"; v: string }
+  // p = the model's probability for the token(s) in this delta (0-1). alts = the
+  // top competing tokens, attached only when the choice was UNCERTAIN (p < 0.6) —
+  // this is tier 1 of "see inside the model's head": every run's ledger records
+  // not just what the model said but how sure it was and what it almost said.
+  | { k: "text"; v: string; p?: number; alts?: [string, number][] }
+  | { k: "think"; v: string; p?: number }
   | { k: "tool_request"; v: { id: string; name: string; args: Record<string, unknown> } }
   // Live progress WHILE a tool call's arguments are still decoding. A code agent
   // spends most of its wall-clock inside write_file calls, and tool_request only
@@ -33,7 +37,7 @@ export type ToolLoopEvent =
   | { k: "research_depth_nudge"; v: { count: number; min: number } }
   // Live meter: emitted after each round from llama-server's usage/timings so the
   // UI can show context fill (promptTokens+completionTokens vs ctx) and decode speed.
-  | { k: "usage"; v: { promptTokens: number; completionTokens: number; totalTokens: number; tokPerSec: number | null; ctx: number } }
+  | { k: "usage"; v: { promptTokens: number; completionTokens: number; totalTokens: number; tokPerSec: number | null; ctx: number; conf?: { avg: number; min: number; low: number } | null } }
   // The model's final answer was cut off by the per-round token cap (finish_reason
   // "length") rather than finishing — the "Continue" affordance keys off this.
   | { k: "truncated"; v: { round: number } }
@@ -116,6 +120,7 @@ type ChoiceDelta = {
   reasoning_content?: string;
   tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
 };
+type LogprobEntry = { token?: string; logprob?: number; top_logprobs?: { token: string; logprob: number }[] };
 type CompletionUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 type CompletionTimings = { predicted_per_second?: number; cache_n?: number; prompt_n?: number; predicted_n?: number };
 
@@ -189,6 +194,11 @@ export async function runToolLoop(opts: {
       body.chat_template_kwargs = { enable_thinking: false }; // llama-server (Qwen3)
       if (baseUrl.includes(":11434")) body.think = false;     // Ollama-native (partially respected; harmless elsewhere)
     }
+    // NO logprobs here: llama-server b9835 hard-400s on "logprobs is not supported
+    // with tools + stream" (verified live 2026-07-09) — and this loop always uses
+    // tools + stream. The parse path below stays: if a future build lifts the
+    // restriction, re-adding the body params lights confidence capture back up.
+    // Token confidence IS captured on the /chat path (no tools there — supported).
     if (opts.ctx) {
       const estimatedTokens = estimateRequestTokens(body);
       const reserveTokens = Math.min(maxTokens, Math.max(512, Math.floor(opts.ctx * 0.3))) + 1024;
@@ -213,6 +223,7 @@ export async function runToolLoop(opts: {
     const callAcc: Record<number, { id: string; name: string; args: string }> = {};
     let lastToolProgress = 0;   // throttle clock for tool_progress events
     let lastToolDeltaIdx = -1;  // which call the most recent argument delta belonged to
+    let confSum = 0, confN = 0, confMin = 1, confLow = 0; // per-round certainty stats
     let finishReason: string | null = null;
     let usage: CompletionUsage | null = null;
     let timings: CompletionTimings | null = null;
@@ -230,7 +241,7 @@ export async function runToolLoop(opts: {
         if (data === "[DONE]") continue;
         // llama-server puts usage + timings on the FINAL chunk (top level, not in
         // choices); Ollama's OpenAI shim omits them. Capture when present.
-        let j: { choices?: { delta?: ChoiceDelta; finish_reason?: string }[]; usage?: CompletionUsage; timings?: CompletionTimings };
+        let j: { choices?: { delta?: ChoiceDelta; finish_reason?: string; logprobs?: { content?: LogprobEntry[] } }[]; usage?: CompletionUsage; timings?: CompletionTimings };
         try { j = JSON.parse(data); } catch { continue; }
         if (j.usage) usage = j.usage;
         if (j.timings) timings = j.timings;
@@ -238,8 +249,30 @@ export async function runToolLoop(opts: {
         if (choice?.finish_reason) finishReason = choice.finish_reason;
         const delta = choice?.delta;
         if (!delta) continue;
-        if (delta.content) { content += delta.content; onEvent({ k: "text", v: delta.content }); }
-        if (delta.reasoning_content) { think += delta.reasoning_content; onEvent({ k: "think", v: delta.reasoning_content }); }
+        // Confidence for this delta's token(s). Streamed chunks carry one token
+        // almost always; average defensively if a backend batches several.
+        let p: number | undefined;
+        let alts: [string, number][] | undefined;
+        const lpArr = choice?.logprobs?.content;
+        if (Array.isArray(lpArr) && lpArr.length) {
+          let sum = 0;
+          for (const ent of lpArr) {
+            const pe = Math.exp(ent.logprob ?? 0);
+            sum += pe;
+            confSum += pe; confN++;
+            if (pe < confMin) confMin = pe;
+            if (pe < 0.5) confLow++;
+          }
+          p = Math.round((sum / lpArr.length) * 1000) / 1000;
+          if (p < 0.6 && lpArr[0]?.top_logprobs?.length) {
+            alts = lpArr[0].top_logprobs
+              .filter((t) => t.token !== lpArr[0].token)
+              .slice(0, 3)
+              .map((t) => [t.token, Math.round(Math.exp(t.logprob) * 1000) / 1000]);
+          }
+        }
+        if (delta.content) { content += delta.content; onEvent({ k: "text", v: delta.content, ...(p !== undefined ? { p } : {}), ...(alts ? { alts } : {}) }); }
+        if (delta.reasoning_content) { think += delta.reasoning_content; onEvent({ k: "think", v: delta.reasoning_content, ...(p !== undefined && !delta.content ? { p } : {}) }); }
         if (delta.tool_calls) {
           for (const tc of delta.tool_calls) {
             const idx = tc.index ?? 0;
@@ -274,6 +307,7 @@ export async function runToolLoop(opts: {
         totalTokens: usage.total_tokens ?? promptTokens + completionTokens,
         tokPerSec: timings?.predicted_per_second != null ? Math.round(timings.predicted_per_second * 10) / 10 : null,
         ctx: opts.ctx,
+        conf: confN ? { avg: Math.round((confSum / confN) * 1000) / 1000, min: Math.round(confMin * 1000) / 1000, low: confLow } : null,
       } });
     }
 

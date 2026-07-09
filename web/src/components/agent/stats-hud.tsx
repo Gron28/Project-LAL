@@ -5,9 +5,17 @@
 // /api/sysinfo. Built to sit as a thin bar under the composer/header on desktop and
 // inside a collapsible sheet on mobile.
 import { useEffect, useRef, useState } from "react";
-import { Cpu, Gauge, Thermometer, MemoryStick, Zap, X } from "lucide-react";
+import { Brain, Cpu, Gauge, Thermometer, MemoryStick, Zap, X } from "lucide-react";
 
-export type Usage = { totalTokens: number; ctx: number; tokPerSec: number | null } | null;
+export type Usage = {
+  totalTokens: number; ctx: number; tokPerSec: number | null;
+  // Model certainty for the last round: avg/min token probability and how many
+  // tokens were genuinely uncertain (<50%). From the loop's logprobs capture.
+  conf?: { avg: number; min: number; low: number } | null;
+} | null;
+
+// High certainty is good — inverse of the load meters' color scale.
+const confColor = (avg: number) => avg >= 0.85 ? "#3fb950" : avg >= 0.6 ? "var(--accent-warn)" : "var(--accent-danger)";
 
 type Sys = {
   cpu: number; ramUsedGb: number; ramTotalGb: number; ramPct: number;
@@ -76,6 +84,12 @@ export default function StatsHud({ usage, active, onServingChange }: { usage: Us
       <Chip icon={<Zap size={12} className="text-[var(--accent-ai)]" />}
         value={usage?.tokPerSec != null ? `${usage.tokPerSec} tok/s` : (active ? "…" : "—")}
         title="decode speed of the local model" />
+      <Chip icon={<Brain size={12} />}
+        value={usage?.conf ? `${Math.round(usage.conf.avg * 100)}%` : "—"}
+        color={usage?.conf ? confColor(usage.conf.avg) : undefined}
+        title={usage?.conf
+          ? `model certainty — average token confidence last round (min ${Math.round(usage.conf.min * 100)}%, ${usage.conf.low} uncertain token${usage.conf.low === 1 ? "" : "s"})`
+          : "model certainty (avg token confidence) — appears once a round completes"} />
       <div className="h-4 w-px bg-[var(--border-soft)] hidden sm:block" />
       <Chip icon={<Gauge size={12} />} value={sys?.gpu != null ? `${sys.gpu}%` : "—"} color={sys?.gpu != null ? barColor(sys.gpu) : undefined} title="GPU utilization" />
       <Chip icon={<MemoryStick size={12} />}
@@ -98,6 +112,11 @@ export function StatsGlance({ usage }: { usage: Usage }) {
       <Gauge size={11} />
       <span style={{ color: ctxPct != null ? barColor(ctxPct) : "var(--muted)" }}>{ctxPct != null ? `${ctxPct}% ctx` : "ctx —"}</span>
       {usage?.tokPerSec != null && <span className="text-[var(--accent-ai)]">{usage.tokPerSec} tok/s</span>}
+      {usage?.conf && (
+        <span style={{ color: confColor(usage.conf.avg) }} title={`model certainty — avg token confidence (${usage.conf.low} uncertain tokens)`}>
+          {Math.round(usage.conf.avg * 100)}% sure
+        </span>
+      )}
     </span>
   );
 }
