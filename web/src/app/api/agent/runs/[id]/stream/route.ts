@@ -76,6 +76,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
+      "x-accel-buffering": "no",
+      "content-encoding": "none",
     },
   });
 }

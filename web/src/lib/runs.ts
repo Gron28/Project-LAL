@@ -36,6 +36,12 @@ export type RunMeta = {
 
 export type RunEvent = Record<string, unknown> & { k: string };
 
+// A compact, human-readable replay for the Library. The full NDJSON ledger stays
+// on disk for reconnecting streams; this view bounds text and tool output so
+// inspecting an old run cannot become another context-sized payload.
+export type RunTraceEvent = { seq: number; ts: number; k: string; detail: string };
+export type RunTrace = { reasoning: string; output: string; events: RunTraceEvent[] };
+
 type Line = string; // one serialized NDJSON event line (no trailing newline)
 type LiveRun = {
   meta: RunMeta;
@@ -177,6 +183,16 @@ export function stopRun(id: string): boolean {
   return true;
 }
 
+// Emergency brake for the UI. This aborts every live controller owned by this
+// server process, including code, chat, and deliberation runs. Individual loops
+// observe the same signal before the next model/tool step; pending approvals are
+// also denied by stopRun so nothing remains parked in memory waiting for a click.
+export function stopAllRuns(): string[] {
+  const ids = [...live.keys()];
+  for (const id of ids) stopRun(id);
+  return ids;
+}
+
 export function getRun(id: string): RunMeta | null {
   const lr = live.get(id);
   if (lr) return lr.meta;
@@ -206,6 +222,83 @@ export function listRuns(limit = 50): RunMeta[] {
   return [...out.values()].sort((a, b) =>
     (a.status === "running" ? 0 : 1) - (b.status === "running" ? 0 : 1) || b.updatedAt - a.updatedAt,
   ).slice(0, limit);
+}
+
+function appendTraceText(previous: string, next: string, max = 16000): string {
+  const joined = previous + next;
+  return joined.length <= max ? joined : "[earlier output omitted]\n" + joined.slice(-max);
+}
+
+function traceDetail(value: unknown): string {
+  let text = "";
+  if (typeof value === "string") text = value;
+  else {
+    try { text = JSON.stringify(value) ?? String(value); } catch { text = String(value); }
+  }
+  return text.length <= 1600 ? text : text.slice(0, 1600) + "\n[detail truncated]";
+}
+
+// This is intentionally a read-only summary. It makes completed and interrupted
+// agent work inspectable without exposing a live stream connection or replaying
+// every token-level event into the Library UI.
+export function getRunTrace(id: string): RunTrace | null {
+  if (!getRun(id)) return null;
+  const trace: RunTrace = { reasoning: "", output: "", events: [] };
+  let raw = "";
+  try { raw = fs.readFileSync(logPath(id), "utf8"); } catch { return trace; }
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    let event: Record<string, unknown>;
+    try { event = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+    const k = typeof event.k === "string" ? event.k : "unknown";
+    if (k === "tool_progress") continue; // transient decode progress — superseded by its tool_request
+    if (k === "think") {
+      trace.reasoning = appendTraceText(trace.reasoning, traceDetail(event.v));
+      continue;
+    }
+    if (k === "text") {
+      trace.output = appendTraceText(trace.output, traceDetail(event.v));
+      continue;
+    }
+    if (trace.events.length < 300) {
+      trace.events.push({
+        seq: typeof event.seq === "number" ? event.seq : 0,
+        ts: typeof event.ts === "number" ? event.ts : 0,
+        k,
+        detail: traceDetail(event.v),
+      });
+    }
+  }
+  return trace;
+}
+
+// Terminal run records are Library resources. Removing one deletes only its
+// metadata/event ledger; conversations, workspace files, models, and training
+// artifacts remain independently owned resources.
+export function deleteRun(id: string): { ok: boolean; error?: string } {
+  if (live.has(id)) return { ok: false, error: "run is still active — stop it first" };
+  const meta = getRun(id);
+  if (!meta) return { ok: false, error: "run not found" };
+  let removed = false;
+  try { fs.unlinkSync(metaPath(id)); removed = true; } catch {}
+  try { fs.unlinkSync(logPath(id)); removed = true; } catch {}
+  return removed ? { ok: true } : { ok: false, error: "run not found" };
+}
+
+// Bulk cleanup for the Library's "delete all" — removes every TERMINAL run's
+// meta + ledger in one pass. Live runs are untouched (stop them first); the
+// count of skipped-because-live runs is reported so the UI can say so.
+export function deleteAllRuns(): { deleted: number; skippedLive: number } {
+  let deleted = 0;
+  let files: string[] = [];
+  try { files = fs.readdirSync(RUNS_DIR).filter((f) => f.endsWith(".json")); } catch {}
+  for (const f of files) {
+    const id = f.slice(0, -5);
+    if (live.has(id)) continue;
+    try { fs.unlinkSync(metaPath(id)); deleted++; } catch {}
+    try { fs.unlinkSync(logPath(id)); } catch {}
+  }
+  return { deleted, skippedLive: live.size };
 }
 
 // Replay-then-tail with no gap and no duplicates: subscribe FIRST (buffering live

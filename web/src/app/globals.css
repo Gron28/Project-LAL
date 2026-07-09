@@ -50,7 +50,11 @@ html, body {
   .lab-cols > * { min-height: 60vh; }
 }
 * { box-sizing: border-box; }
-html, body { max-width: 100%; overflow-x: hidden; }
+/* overflow-x: HIDDEN here silently killed every position:sticky descendant that
+   sticks against window scroll (/code's command bar) — a hidden-overflow ancestor
+   becomes the sticky containing scroller. `clip` clips identically WITHOUT
+   creating a scroll container, so sticky keeps working. */
+html, body { max-width: 100%; overflow-x: clip; }
 
 /* custom classes the copied assistant relies on (ported from the inbox app).
    No top nav here, so full-height surfaces use the whole viewport. */

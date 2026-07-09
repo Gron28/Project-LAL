@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { allModels, readSettings, writeSettings, servingModel } from "@/lib/lab";
+import { allModels, readSettings, writeSettings, servingModel, deleteModel, renameModel } from "@/lib/lab";
 
 export const dynamic = "force-dynamic";
 
@@ -10,9 +10,11 @@ export const dynamic = "force-dynamic";
 // + system prompt + serveIdleMinutes; PUT patches any subset.
 export function GET() {
   const s = readSettings();
+  const infos = allModels();
   return NextResponse.json({
-    models: allModels().map((m) => m.name),
-    modelInfos: allModels(),        // name/source/gb — richer than names alone for the new UI
+    models: infos.map((m) => m.name),
+    modelInfos: infos,              // name/source/gb — richer than names alone for the new UI
+    detail: infos,                  // legacy alias used by older client code
     current: s.model,
     serving: servingModel(),
     options: s.options,
@@ -34,4 +36,31 @@ export async function PUT(req: NextRequest) {
   if (b.options && typeof b.options === "object") patch.options = b.options;
   const s = writeSettings(patch);
   return NextResponse.json({ ok: true, model: s.model });
+}
+
+export async function PATCH(req: NextRequest) {
+  const b = await req.json().catch(() => ({}));
+  const from = typeof b.from === "string" ? b.from.trim() : "";
+  const to = typeof b.to === "string" ? b.to.trim() : "";
+  if (!from || !to) return NextResponse.json({ ok: false, error: "from and to required" }, { status: 400 });
+
+  const existing = allModels().find((m) => m.name === from && m.source === "local");
+  if (!existing) return NextResponse.json({ ok: false, error: "local model not found" }, { status: 404 });
+
+  const result = renameModel(from, to);
+  return NextResponse.json(result, { status: result.ok ? 200 : 400 });
+}
+
+export async function DELETE(req: NextRequest) {
+  const u = new URL(req.url);
+  const name = (u.searchParams.get("name") || "").trim();
+  const sourceRaw = u.searchParams.get("source") || "local";
+  const source = sourceRaw === "ollama" ? "ollama" : "local";
+  if (!name) return NextResponse.json({ ok: false, error: "name required" }, { status: 400 });
+
+  const existing = allModels().find((m) => m.name === name && m.source === source);
+  if (!existing) return NextResponse.json({ ok: false, error: "model not found" }, { status: 404 });
+
+  deleteModel(name, source);
+  return NextResponse.json({ ok: true });
 }

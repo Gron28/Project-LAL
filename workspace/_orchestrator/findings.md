@@ -1,0 +1,16 @@
+- Smooth or grid-based snake movement using requestAnimationFrame
+- Directional controls (WASD/arrow keys) with instant response
+- Detect wall collisions, self-collision, and food consumption
+- Extend snake body when food is eaten, with dynamic resizing of the canvas or grid
+- Smooth acceleration/deceleration for dynamic motion
+- Vibrant color schemes for the snake and food
+- Glowing trails or background animations
+- Real-time score counter and level indicator
+- Centered 'Game Over' message with restart button
+- Initial prompt to begin the game (e.g., 'Press SPACE to Start')
+- Responsive touch/keyboard support
+- Levels/Speed: Increase speed over time or introduce level-based difficulty
+- High Scores: Persistent leaderboard via localStorage or IndexedDB
+- Background music or sound effects for food/eating, collisions
+- Modern UI with animated transitions and clean score panel
+- Progressive difficulty (speed increase) and level progression

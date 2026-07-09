@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import { spawn, ChildProcess, execSync } from "node:child_process";
 import { gradeItem, stripThink, type BenchItem } from "./graders";
 export type { BenchItem } from "./graders";
@@ -14,9 +15,11 @@ const LLAMA_SERVER = path.join(LLAMA_DIR, "llama-server");
 const OLLAMA_STORE = "/usr/share/ollama/.ollama/models";
 const DATA = path.join(process.cwd(), ".data");
 const CONVOS_DIR = path.join(DATA, "conversations");
+const EXPERIMENTS_DIR = path.join(DATA, "experiments");
 const SETTINGS_FILE = path.join(DATA, "settings.json");
 export const SERVE_PORT = 8099;
 fs.mkdirSync(CONVOS_DIR, { recursive: true });
+fs.mkdirSync(EXPERIMENTS_DIR, { recursive: true });
 
 export type Options = {
   num_ctx: number; num_predict: number; num_gpu: number | null;
@@ -812,15 +815,47 @@ export function stopTrain() {
   try { train.proc?.kill("SIGKILL"); } catch {}
   try { train.ws?.write(JSON.stringify({ event: "error", msg: "stopped by user" }) + "\n"); train.ws?.end(); } catch {}
   train.proc = null; train.ws = null; train.running = null;
+  updateExperiment(name, { status: "stopped" });
   return { ok: true, stopped: name };
 }
 
-// existing corpora in data/ — .txt for raw training, .jsonl for instruction SFT
-export function listDataFiles(): { name: string; chars: number; kind: "raw" | "sft" }[] {
+export type DataFileInfo = {
+  name: string;
+  chars: number;
+  bytes: number;
+  kind: "raw" | "sft";
+  rows: number | null;
+  sha256: string;
+  updatedAt: number;
+};
+
+function datasetInfo(name: string): DataFileInfo | null {
+  const p = path.join(DATA_DIR, name);
+  try {
+    const stat = fs.statSync(p);
+    const content = fs.readFileSync(p);
+    const isSft = name.endsWith(".jsonl");
+    return {
+      name,
+      chars: content.byteLength,
+      bytes: content.byteLength,
+      kind: isSft ? "sft" : "raw",
+      rows: isSft ? content.toString("utf8").split("\n").filter((line) => line.trim()).length : null,
+      sha256: crypto.createHash("sha256").update(content).digest("hex"),
+      updatedAt: stat.mtimeMs,
+    };
+  } catch { return null; }
+}
+
+// Existing corpora in data/ — .txt for raw training, .jsonl for instruction SFT.
+// The metadata is part of the training contract: experiments refer to a hash, not
+// merely a mutable filename whose contents might change after a run starts.
+export function listDataFiles(): DataFileInfo[] {
   try {
     return fs.readdirSync(DATA_DIR)
       .filter((f) => f.endsWith(".txt") || f.endsWith(".jsonl"))
-      .map((f) => ({ name: f, chars: fs.statSync(path.join(DATA_DIR, f)).size, kind: f.endsWith(".jsonl") ? "sft" as const : "raw" as const }))
+      .map(datasetInfo)
+      .filter((item): item is DataFileInfo => item !== null)
       .sort((a, b) => a.name.localeCompare(b.name));
   } catch { return []; }
 }
@@ -892,9 +927,13 @@ export function listTrainRuns() {
 }
 
 export function deleteTrainRun(name: string): { ok: boolean; error?: string } {
-  if (train.running === name) return { ok: false, error: "run is still active — stop it first" };
-  const logPath = path.join(OUT_DIR, name + ".train.log");
-  try { fs.unlinkSync(logPath); return { ok: true }; } catch { return { ok: false, error: "run not found" }; }
+  const safe = name.replace(/[^a-zA-Z0-9_-]/g, "");
+  if (!safe) return { ok: false, error: "invalid run name" };
+  if (train.running === safe) return { ok: false, error: "run is still active — stop it first" };
+  let removed = false;
+  try { fs.unlinkSync(path.join(OUT_DIR, safe + ".train.log")); removed = true; } catch {}
+  try { fs.unlinkSync(experimentPath(safe)); removed = true; } catch {}
+  return removed ? { ok: true } : { ok: false, error: "run not found" };
 }
 
 const COMPARE_SCRIPT = path.join(ROOT, "scripts", "compare_adapters.py");
@@ -970,6 +1009,68 @@ export async function adapterEvolution(name: string): Promise<{ ok: true; result
   return { ok: true, result: r.results[0] };
 }
 
+export type ExperimentRecord = {
+  name: string;
+  status: "queued" | "running" | "done" | "failed" | "stopped";
+  createdAt: number;
+  updatedAt: number;
+  base: string;
+  mode: "raw" | "sft" | "hqq";
+  steps: number;
+  lr: number;
+  targetLoss: number;
+  patience?: number;
+  valFrac?: number;
+  block?: number;
+  autoBench?: string[];
+  dataset: { name: string; sha256: string; bytes: number; rows: number | null } | null;
+  model?: string | null;
+  error?: string;
+};
+
+const experimentPath = (name: string) => path.join(EXPERIMENTS_DIR, name + ".json");
+
+function saveExperiment(record: ExperimentRecord) {
+  try { fs.writeFileSync(experimentPath(record.name), JSON.stringify(record, null, 2)); } catch {}
+}
+
+function updateExperiment(name: string, patch: Partial<ExperimentRecord>) {
+  try {
+    const current = JSON.parse(fs.readFileSync(experimentPath(name), "utf8")) as ExperimentRecord;
+    saveExperiment({ ...current, ...patch, updatedAt: Date.now() });
+  } catch {}
+}
+
+export function listExperiments(): ExperimentRecord[] {
+  const runs = new Map(listTrainRuns().map((run) => [run.name, run]));
+  const out: ExperimentRecord[] = [];
+  try {
+    for (const file of fs.readdirSync(EXPERIMENTS_DIR)) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const record = JSON.parse(fs.readFileSync(path.join(EXPERIMENTS_DIR, file), "utf8")) as ExperimentRecord;
+        const run = runs.get(record.name);
+        if (run && run.status !== record.status) record.status = run.status as ExperimentRecord["status"];
+        out.push(record);
+        runs.delete(record.name);
+      } catch {}
+    }
+  } catch {}
+  // Training launched from the CLI predates manifests. Keep it visible rather
+  // than presenting the Library as though those runs do not exist.
+  for (const run of runs.values()) {
+    out.push({
+      name: run.name,
+      status: run.status as ExperimentRecord["status"],
+      createdAt: run.ts,
+      updatedAt: run.ts,
+      base: "unknown (legacy run)", mode: "raw", steps: run.lastStep, lr: 0, targetLoss: 0,
+      dataset: null,
+    });
+  }
+  return out.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
 export async function startTrain(o: { name: string; base: string; steps: number; lr: number; text?: string; targetLoss?: number; patience?: number; mode?: "raw" | "sft" | "hqq"; dataFile?: string; valFrac?: number; block?: number; autoBench?: string[]; snapshotEvery?: number; noProbeEmbed?: boolean }) {
   if (train.running) return { error: "already training: " + train.running };
   const name = (o.name || "model").replace(/[^a-zA-Z0-9_-]/g, "") || "model";
@@ -987,6 +1088,23 @@ export async function startTrain(o: { name: string; base: string; steps: number;
     dataPath = path.join(DATA_DIR, name + ".txt");
     fs.writeFileSync(dataPath, o.text || "");
   }
+  const data = datasetInfo(path.basename(dataPath));
+  saveExperiment({
+    name,
+    status: "running",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    base: o.base,
+    mode,
+    steps: o.steps,
+    lr: o.lr,
+    targetLoss: o.targetLoss ?? 0.1,
+    ...(o.patience != null ? { patience: o.patience } : {}),
+    ...(o.valFrac != null ? { valFrac: o.valFrac } : {}),
+    ...(o.block != null ? { block: o.block } : {}),
+    ...(o.autoBench?.length ? { autoBench: o.autoBench } : {}),
+    dataset: data ? { name: data.name, sha256: data.sha256, bytes: data.bytes, rows: data.rows } : null,
+  });
   try { srv.proc?.kill("SIGKILL"); } catch {}            // free the GPU (single-tenant)
   try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
   srv.proc = null; srv.model = null;
@@ -1057,6 +1175,7 @@ export async function startTrain(o: { name: string; base: string; steps: number;
       const finish = () => {
         ws.write(JSON.stringify({ event: "done", ok, model: ok ? name : null }) + "\n");
         ws.end(); train.running = null; train.proc = null; train.ws = null;
+        updateExperiment(name, { status: ok ? "done" : "failed", model: ok ? name : null, ...(ok ? {} : { error: "GGUF conversion failed" }) });
       };
       if (!ok) { finish(); return; }
       // f16 of a 4B is 8GB, of an 8B 16GB — both spill the 8GB card. Quantize to
@@ -1082,6 +1201,7 @@ export async function startTrain(o: { name: string; base: string; steps: number;
     const last = err.split("\n").map((l) => l.trim()).filter(Boolean).slice(-1)[0] || "unknown error";
     ws.write(JSON.stringify({ event: "error", msg: last.slice(0, 300) }) + "\n");
     ws.end(); train.running = null; train.proc = null; train.ws = null;
+    updateExperiment(name, { status: "failed", error: last.slice(0, 300) });
   };
 
   runFinetune(false, (code, err) => {

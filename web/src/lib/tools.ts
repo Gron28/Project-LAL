@@ -53,6 +53,86 @@ export type ToolDef = {
   function: { name: string; description: string; parameters: Record<string, unknown> };
 };
 
+function requiredString(args: Record<string, unknown>, key: string, allowEmpty = false): string | null {
+  const value = args[key];
+  if (typeof value !== "string") return `missing required string argument \"${key}\"`;
+  if (!allowEmpty && !value.trim()) return `required argument \"${key}\" cannot be empty`;
+  return null;
+}
+
+// Small local models drift on property names while the value itself is fine
+// (gemma4:12b observed live 2026-07-09: write_file with `filename`/nothing instead
+// of `path`, five failed rounds in a row). Map well-known aliases onto the schema's
+// canonical names — only when the canonical key is absent — instead of failing the
+// round on a spelling the model will just repeat.
+const PATH_ALIASES = ["filename", "file", "filepath", "file_path", "file_name", "name"];
+const ARG_ALIASES: Record<string, Record<string, string[]>> = {
+  write_file: { path: PATH_ALIASES, content: ["contents", "text", "body", "code", "data"] },
+  edit_file: { path: PATH_ALIASES, search: ["find", "old", "old_string"], replace: ["replacement", "new", "new_string"] },
+  read_file: { path: PATH_ALIASES },
+  read_file_outline: { path: PATH_ALIASES },
+  list_files: { path: ["dir", "directory", "folder"] },
+  grep: { pattern: ["query", "regex", "search"], path: ["dir", "directory", "folder"] },
+  run_shell: { command: ["cmd", "shell_command", "script"] },
+};
+export function normalizeToolArgs(name: string, args: Record<string, unknown>): Record<string, unknown> {
+  const map = ARG_ALIASES[name];
+  if (!map) return args;
+  const out = { ...args };
+  for (const [canonical, aliases] of Object.entries(map)) {
+    if (out[canonical] !== undefined) continue;
+    for (const alias of aliases) {
+      if (typeof out[alias] === "string") { out[canonical] = out[alias]; delete out[alias]; break; }
+    }
+  }
+  return out;
+}
+
+// Appended to an invalid-arguments refusal so the retry has a concrete shape to
+// copy instead of just the name of the missing field — the terse form alone was
+// observed NOT to correct gemma4:12b across five consecutive rounds.
+export function toolCallExample(name: string): string {
+  const examples: Record<string, string> = {
+    write_file: '{"path":"index.html","content":"<the full file contents>"}',
+    edit_file: '{"path":"index.html","search":"<exact text to find>","replace":"<replacement text>"}',
+    read_file: '{"path":"src/main.py"}',
+    read_file_outline: '{"path":"src/main.py"}',
+    list_files: '{"path":"."}',
+    grep: '{"pattern":"TODO","path":"src"}',
+    run_shell: '{"command":"ls -la"}',
+    git: '{"command":"status"}',
+  };
+  return examples[name] ? ` Example of a valid ${name} call: ${examples[name]}` : "";
+}
+
+// Tool schemas steer the model, but small local models still occasionally omit a
+// required property. Validate at the execution boundary as well: approval must
+// never be requested for a call that cannot safely run.
+export function validateToolArguments(name: string, args: Record<string, unknown>): string | null {
+  switch (name) {
+    case "list_files":
+      return args.path === undefined || typeof args.path === "string" ? null : "argument \"path\" must be a string";
+    case "read_file":
+    case "read_file_outline":
+      return requiredString(args, "path");
+    case "write_file":
+      return requiredString(args, "path") || requiredString(args, "content", true);
+    case "edit_file":
+      return requiredString(args, "path") || requiredString(args, "search") || requiredString(args, "replace", true);
+    case "grep":
+      return requiredString(args, "pattern") || (args.path === undefined || typeof args.path === "string" ? null : "argument \"path\" must be a string");
+    case "run_shell":
+      return requiredString(args, "command");
+    case "git":
+      if (requiredString(args, "command")) return requiredString(args, "command");
+      return args.args === undefined || (Array.isArray(args.args) && args.args.every((arg) => typeof arg === "string"))
+        ? null
+        : "argument \"args\" must be an array of strings";
+    default:
+      return null;
+  }
+}
+
 export const TOOL_DEFS: ToolDef[] = [
   { type: "function", function: {
     name: "list_files", description: "List files and directories under a path (relative to the workspace root).",

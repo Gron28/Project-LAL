@@ -2,7 +2,7 @@
 // Mini claude code: agentic coding chat over the workspace, with live tool activity,
 // sub-agent traces, approval gating, and vision via the Gemma backend.
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowRight, Bot, Brain, Check, ChevronDown, ChevronRight, CircleStop, Copy, ExternalLink, FolderGit2, Hammer, Menu, MessageSquarePlus, PanelLeft, Paperclip, Pencil, Send, Settings, ShieldCheck, Sparkles, Trash2, X, Zap } from "lucide-react";
+import { ArrowDown, ArrowRight, Bot, Brain, Check, ChevronDown, ChevronRight, CircleStop, Code2, Copy, Download, ExternalLink, FilePlus2, FileText, FolderGit2, FolderOpen, GitBranch, Globe, Hammer, Image as ImageIcon, Menu, MessageSquarePlus, PanelLeft, Paperclip, Pencil, Play, Search, Send, Settings, ShieldCheck, Sparkles, TerminalSquare, Trash2, X, Zap } from "lucide-react";
 import MarkdownView from "@/components/markdown-view";
 import DirPicker from "@/components/code/dir-picker";
 import FileTree from "@/components/code/file-tree";
@@ -18,7 +18,15 @@ type Ev =
   | { k: "think"; v: string; agent?: string }
   | { k: "round"; agent?: string }
   | { k: "max_rounds"; v: number; agent?: string }
+  | { k: "stall_nudge"; agent?: string }
+  | { k: "forced_verify"; agent?: string }
+  | { k: "research_depth_nudge"; v: { count: number; min: number }; agent?: string }
+  | { k: "think_recovered"; v: { count: number }; agent?: string }
+  | { k: "model_loading"; v: { model: string; ctx: number }; agent?: string }
+  | { k: "model_ready"; v: { model: string; ctx: number; backend?: string }; agent?: string }
+  | { k: "context_limit"; v: { estimatedTokens: number; reserveTokens: number; ctx: number }; agent?: string }
   | { k: "tool_request"; v: { id: string; name: string; args: Record<string, unknown> }; agent?: string }
+  | { k: "tool_progress"; v: { id: string; name: string; chars: number; preview: string }; agent?: string }
   | { k: "tool_result"; v: { id: string; name: string; ok: boolean; output: string }; agent?: string }
   | { k: "approval_needed"; v: { id: string; name: string; args: Record<string, unknown> } }
   | { k: "project"; v: { root: string; instructionFiles: string[] } }
@@ -36,7 +44,7 @@ type Ev =
   | { k: "artifact"; v: { path: string } }
   | { k: "inner"; v: { phase: string; role?: string; event: Ev } };
 
-type ToolCall = { id: string; name: string; args: Record<string, unknown>; agent?: string; ok?: boolean; output?: string; pendingApproval?: boolean };
+type ToolCall = { id: string; name: string; args: Record<string, unknown>; agent?: string; ok?: boolean; output?: string; pendingApproval?: boolean; streaming?: boolean; progressChars?: number; preview?: string };
 type Block =
   | { t: "user"; text: string; hIdx: number }
   | { t: "assistant"; text: string; think: string; agent?: string }
@@ -67,7 +75,11 @@ function reconstructSession(messages: RawMsg[]): { blocks: Block[]; history: His
   const openToolById = new Map<string, ToolCall>();
   for (const m of messages) {
     if (m.role === "user") {
-      blocks.push({ t: "user", text: m.content ?? "", hIdx: history.indexOf(m) });
+      // Loop-injected corrections (stall/verify/research nudges, continue) are
+      // user-ROLE for the model but were never typed by the user — render them as
+      // system status, not as the user's own words.
+      if (m.name === "nudge") blocks.push({ t: "status", text: "auto-nudge: " + (m.content ?? "").slice(0, 140) });
+      else blocks.push({ t: "user", text: m.content ?? "", hIdx: history.indexOf(m) });
     } else if (m.role === "assistant") {
       if (m.content) blocks.push({ t: "assistant", text: m.content, think: "" });
       for (const tc of m.tool_calls ?? []) {
@@ -102,14 +114,49 @@ function applyEvent(next: Block[], e: Ev): void {
   };
   if (e.k === "text") { const a = lastAssistant(); a.text += e.v; }
   else if (e.k === "think") { const a = lastAssistant(); a.think += e.v; }
-  else if (e.k === "tool_request") next.push({ t: "tool", call: { ...e.v, agent } });
+  else if (e.k === "tool_progress") {
+    // A call still decoding its arguments: update the streaming placeholder in
+    // place, or open one. This is what makes an 80-second write_file paint live
+    // instead of appearing only once fully decoded.
+    for (let j = next.length - 1; j >= 0; j--) {
+      const b = next[j];
+      if (b.t === "tool" && b.call.streaming && b.call.agent === agent && (b.call.id === e.v.id || b.call.name === e.v.name)) {
+        next[j] = { t: "tool", call: { ...b.call, id: e.v.id || b.call.id, name: e.v.name, progressChars: e.v.chars, preview: e.v.preview } };
+        return;
+      }
+      if (b.t === "user") break; // never adopt a placeholder from a previous turn
+    }
+    next.push({ t: "tool", call: { id: e.v.id, name: e.v.name, args: {}, agent, streaming: true, progressChars: e.v.chars, preview: e.v.preview } });
+  }
+  else if (e.k === "tool_request") {
+    // Replace this call's streaming placeholder (if any) with the finished call.
+    for (let j = next.length - 1; j >= 0; j--) {
+      const b = next[j];
+      if (b.t === "tool" && b.call.streaming && b.call.agent === agent && (b.call.id === e.v.id || b.call.name === e.v.name)) {
+        next[j] = { t: "tool", call: { ...e.v, agent } };
+        return;
+      }
+      if (b.t === "user") break;
+    }
+    next.push({ t: "tool", call: { ...e.v, agent } });
+  }
   else if (e.k === "tool_result") {
     for (let j = next.length - 1; j >= 0; j--) {
       const b = next[j];
       if (b.t === "tool" && b.call.id === e.v.id) { next[j] = { t: "tool", call: { ...b.call, ok: e.v.ok, output: e.v.output } }; break; }
     }
   } else if (e.k === "error") next.push({ t: "error", text: e.v });
+  else if (e.k === "model_loading") next.push({ t: "status", text: `${agent ? `[${agent}] ` : ""}loading ${e.v.model} (${e.v.ctx.toLocaleString()} context)…` });
+  else if (e.k === "model_ready") next.push({ t: "status", text: `${agent ? `[${agent}] ` : ""}${e.v.model} ready${e.v.backend ? ` via ${e.v.backend}` : ""}` });
   else if (e.k === "max_rounds") next.push({ t: "error", text: (agent ? `[${agent}] ` : "") + `stopped after ${e.v} tool-call rounds without finishing.` });
+  // Loop-injected nudges: shown as system interventions. These also land in the
+  // transcript as user-role messages tagged name:"nudge" (rendered by
+  // reconstructSession the same way) — never as messages the user wrote.
+  else if (e.k === "stall_nudge") next.push({ t: "status", text: (agent ? `[${agent}] ` : "") + "auto-nudge: several read-only rounds — told the model to start writing" });
+  else if (e.k === "forced_verify") next.push({ t: "status", text: (agent ? `[${agent}] ` : "") + "auto-nudge: told the model to re-read its files and verify before finishing" });
+  else if (e.k === "research_depth_nudge") next.push({ t: "status", text: (agent ? `[${agent}] ` : "") + `auto-nudge: research too shallow (${e.v.count} of ~${e.v.min} searches) — told the model to keep going` });
+  else if (e.k === "think_recovered") next.push({ t: "status", text: (agent ? `[${agent}] ` : "") + `recovered ${e.v.count} tool call${e.v.count === 1 ? "" : "s"} the model buried in its reasoning text` });
+  else if (e.k === "context_limit") next.push({ t: "error", text: (agent ? `[${agent}] ` : "") + `context budget exhausted before the next model call (${e.v.estimatedTokens} estimated input + ${e.v.reserveTokens} reserved / ${e.v.ctx} tokens). Continue in a fresh task or reduce the attached context.` });
   else if (e.k === "phase") next.push({ t: "status", text: "── " + e.v.name + " ──" });
   else if (e.k === "roles") next.push({ t: "status", text: "Perspectives: " + e.v.roles.map((r) => `${r.name} (${r.lens})`).join(" · ") });
   else if (e.k === "debate_turn") next.push({ t: "assistant", text: e.v.text, think: "", agent: e.v.role });
@@ -138,24 +185,67 @@ function CopyBtn({ text, size = 12 }: { text: string; size?: number }) {
   );
 }
 
+// One icon + hue per tool family, so a glance at the transcript reads as
+// read / write / execute / web / delegate instead of a wall of identical hammers.
+const TOOL_STYLE: Record<string, { Icon: typeof Hammer; color: string }> = {
+  read_file: { Icon: FileText, color: "#79c0ff" },
+  read_file_outline: { Icon: FileText, color: "#79c0ff" },
+  list_files: { Icon: FolderOpen, color: "#79c0ff" },
+  grep: { Icon: Search, color: "#79c0ff" },
+  write_file: { Icon: FilePlus2, color: "#3fb950" },
+  edit_file: { Icon: Pencil, color: "#3fb950" },
+  run_shell: { Icon: TerminalSquare, color: "#d29922" },
+  run_python: { Icon: Code2, color: "#d29922" },
+  git: { Icon: GitBranch, color: "#f47067" },
+  web_search: { Icon: Globe, color: "#39c5cf" },
+  web_fetch: { Icon: Download, color: "#39c5cf" },
+  describe_image: { Icon: ImageIcon, color: "#d2a8ff" },
+  spawn_agent: { Icon: Bot, color: "#d2a8ff" },
+  memory_read: { Icon: Brain, color: "#d2a8ff" },
+  memory_write: { Icon: Brain, color: "#d2a8ff" },
+};
+
 function ToolBlock({ call, project }: { call: ToolCall; project: string }) {
   const [open, setOpen] = useState(false);
-  const color = call.pendingApproval ? "var(--accent-warn, #d29922)" : call.ok === false ? "var(--accent-danger)" : "var(--accent-ai)";
+  const { Icon, color: toolColor } = TOOL_STYLE[call.name] ?? { Icon: Hammer, color: "var(--accent-ai)" };
+  // State (pending approval / failed) overrides the tool's own hue.
+  const color = call.pendingApproval ? "var(--accent-warn, #d29922)" : call.ok === false ? "var(--accent-danger)" : toolColor;
   const pathArg = typeof call.args.path === "string" ? call.args.path : null;
   const previewable = pathArg && ["write_file", "edit_file", "read_file"].includes(call.name);
+  const isHtml = !!pathArg && /\.html?$/i.test(pathArg);
+  if (call.streaming) {
+    // Arguments still decoding on the GPU — show the live tail so the user watches
+    // the file being written instead of staring at a frozen page.
+    return (
+      <div className="ml-1 my-1 border-l-2 pl-3 animate-pulse" style={{ borderColor: color }}>
+        <span className="flex items-center gap-2 text-xs" style={{ color }}>
+          <Icon size={12} />
+          <span className="font-semibold">{call.agent ? call.agent + " · " : ""}{call.name}</span>
+          <span className="text-[var(--muted)] font-normal tabular-nums">writing… {((call.progressChars ?? 0) / 1024).toFixed(1)} KB</span>
+        </span>
+        {call.preview && (
+          <pre className="mt-1 text-[10px] text-[var(--muted)] bg-[var(--surface-2,#11151c)] rounded p-2 overflow-hidden max-h-20 whitespace-pre-wrap break-all">
+            …{call.preview}
+          </pre>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="ml-1 my-1 border-l-2 pl-3" style={{ borderColor: color }}>
       <span className="flex items-center gap-2">
         <button onClick={() => setOpen(!open)} className="flex items-center gap-2 text-xs min-w-0" style={{ color }}>
           {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          <Hammer size={12} />
+          <Icon size={12} />
           <span className="font-semibold">{call.agent ? call.agent + " · " : ""}{call.name}</span>
           <span className="text-[var(--muted)] font-normal truncate max-w-[380px]">{summarizeArgs(call.args)}</span>
         </button>
         {previewable && call.ok !== false && (
-          <a href={fileHref(project, pathArg)} target="_blank" rel="noreferrer" title={"open " + pathArg}
-            className="flex items-center gap-1 text-[10px] text-[var(--accent-ai)] shrink-0">
-            <ExternalLink size={11} />open
+          // .html gets a RUN affordance — the file route serves it sandboxed and
+          // executable, so this is literally "play the game it just wrote".
+          <a href={fileHref(project, pathArg)} target="_blank" rel="noreferrer" title={(isHtml ? "run " : "open ") + pathArg}
+            className="flex items-center gap-1 text-[10px] shrink-0" style={{ color: isHtml ? "#3fb950" : "var(--accent-ai)" }}>
+            {isHtml ? <><Play size={11} />run</> : <><ExternalLink size={11} />open</>}
           </a>
         )}
       </span>
@@ -179,7 +269,7 @@ export default function CodePage() {
   const [instructionFiles, setInstructionFiles] = useState<string[]>([]);
   const [auto, setAuto] = useState(false);
   const [think, setThink] = useState(true);
-  const [modes, setModes] = useState<{ id: string; label: string }[]>([{ id: "default", label: "default" }]);
+  const [modes, setModes] = useState<{ id: string; label: string; think?: boolean }[]>([{ id: "default", label: "default", think: true }]);
   const [mode, setMode] = useState("default");
   const [minutes, setMinutes] = useState(10); // deliberate mode's time-budget slider
   const [settingsOpen, setSettingsOpen] = useState(false); // same LlmSettings panel /chat uses — temperature/num_ctx/etc, applies here too since serving reads the same saved options
@@ -210,6 +300,41 @@ export default function CodePage() {
   useEffect(() => { try { setAutoContinue(localStorage.getItem("code_autocontinue") === "1"); } catch {} }, []);
   const changeAutoContinue = (v: boolean) => { setAutoContinue(v); try { localStorage.setItem("code_autocontinue", v ? "1" : "0"); } catch {} };
   const toggleTree = (v: boolean) => { setTreeOpen(v); try { localStorage.setItem("code_tree_open", v ? "1" : "0"); } catch {} };
+  // Drag-resizable side panels. treeW is the file/git/run sidebar's width in px;
+  // edW is the editor pane's width (0 = the CSS default min(52vw,760px) until the
+  // user first drags). Both persist. The values flow into layout exclusively via
+  // the --tree-w / --ed-w CSS vars set on the page wrapper below — every offset
+  // (chat padding, composer edges, the panels themselves) derives from those.
+  const [treeW, setTreeW] = useState(256);
+  const [edW, setEdW] = useState(0);
+  useEffect(() => {
+    try {
+      const t = parseInt(localStorage.getItem("code_tree_w") || "", 10);
+      if (t) setTreeW(Math.min(Math.max(t, 180), 520));
+      const e2 = parseInt(localStorage.getItem("code_ed_w") || "", 10);
+      if (e2) setEdW(Math.min(Math.max(e2, 320), Math.round(window.innerWidth * 0.85)));
+    } catch {}
+  }, []);
+  const dragPanel = (which: "tree" | "ed") => (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = which === "tree" ? treeW : (edW || Math.min(window.innerWidth * 0.52, 760));
+    const move = (ev: PointerEvent) => {
+      const d = ev.clientX - startX;
+      if (which === "tree") {
+        const w = Math.min(Math.max(startW + d, 180), 520);
+        setTreeW(w);
+        try { localStorage.setItem("code_tree_w", String(w)); } catch {}
+      } else {
+        const w = Math.min(Math.max(startW - d, 320), Math.round(window.innerWidth * 0.85));
+        setEdW(w);
+        try { localStorage.setItem("code_ed_w", String(w)); } catch {}
+      }
+    };
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
   const workspaceRef = useRef(""); // openConvo can run before the workspace fetch lands in state
   const history = useRef<HistMsg[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -250,6 +375,10 @@ export default function CodePage() {
     } catch { /* ignore */ }
   };
 
+  const setSessionUrl = (id: string) => {
+    if (typeof window !== "undefined") window.history.replaceState(null, "", `/code?conv=${encodeURIComponent(id)}`);
+  };
+
   const openConvo = async (id: string): Promise<RawMsg[] | null> => {
     setSessionsOpen(false);
     try {
@@ -275,6 +404,7 @@ export default function CodePage() {
       history.current = h;
       setBlocks(projWarning ? [...b, { t: "error", text: projWarning }] : b);
       setConvoId(id);
+      setSessionUrl(id);
       setInstructionFiles([]);
       return (j.messages ?? []) as RawMsg[];
     } catch { return null; }
@@ -285,6 +415,7 @@ export default function CodePage() {
     history.current = [];
     setBlocks([]);
     setConvoId("");
+    if (typeof window !== "undefined") window.history.replaceState(null, "", "/code");
     setInstructionFiles([]);
   };
 
@@ -437,7 +568,14 @@ export default function CodePage() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/agent/models").then((r) => r.json()).then((j) => { setModels(j.models || []); setModel(j.current || j.models?.[0] || ""); });
+    fetch("/api/agent/models").then((r) => r.json()).then((j) => {
+      const available = j.models || [];
+      setModels(available);
+      // Gemma is kept for image chat, but the code agent needs a model known to
+      // emit native tool calls. Qwen3 is the local serving path validated for it.
+      const preferred = /^gemma/i.test(j.current || "") && available.includes("qwen3-4b-stock") ? "qwen3-4b-stock" : (j.current || available[0] || "");
+      setModel(preferred);
+    });
     try { setTreeOpen(localStorage.getItem("code_tree_open") === "1"); } catch {}
     // Resume the most recent session, same UX as /chat — without this, opening
     // /code always looked blank even though every session was saved server-side.
@@ -452,7 +590,7 @@ export default function CodePage() {
       // entry pointing at the separate /api/agent/deliberate endpoint (see
       // lib/deliberate.ts), since it's a multi-phase, time-boxed orchestration with
       // its own artifacts, not another single tool-loop preset.
-      if (j.modes?.length) setModes([...j.modes, { id: "deliberate", label: "deliberate (research)" }]);
+      if (j.modes?.length) setModes([...j.modes, { id: "deliberate", label: "deliberate (research)", think: true }]);
       // Deep-link from Library ("open in /code" on a project): jump straight to
       // that folder with a fresh session, same as picking it from the dropdown.
       if (deepLinkProject) setProject(deepLinkProject);
@@ -467,7 +605,6 @@ export default function CodePage() {
         const targetId = deepLinkId || list?.[0]?.id;
         if (!targetId) return;
         const msgs = await openConvo(targetId);
-        if (deepLinkId) window.history.replaceState(null, "", "/code");
         // A fully closed-and-reopened tab is a fresh mount with no memory that a
         // task might still be running — so ask the run manager instead of guessing
         // from the transcript's shape. A live run for this conversation gets
@@ -534,7 +671,7 @@ export default function CodePage() {
     setBusy(true);
     stickRef.current = true;
     setShowJump(false);
-    setBlocks((prev) => [...prev, { t: "user", text: query, hIdx: -1 }]);
+    setBlocks((prev) => [...prev, { t: "user", text: query, hIdx: -1 }, { t: "status", text: `starting ${model}…` }]);
     try {
       const res = await fetch("/api/agent/deliberate", {
         method: "POST", headers: { "content-type": "application/json" },
@@ -542,7 +679,7 @@ export default function CodePage() {
       });
       if (!res.ok) throw new Error(await res.text());
       const j = await res.json();
-      if (j.conversationId) { setConvoId(j.conversationId); convoIdRef.current = j.conversationId; }
+      if (j.conversationId) { setConvoId(j.conversationId); convoIdRef.current = j.conversationId; setSessionUrl(j.conversationId); }
       attachRun(j.runId, null); // busy clears when the run's terminal status arrives
     } catch (err) {
       setBlocks((prev) => [...prev, { t: "error", text: (err as Error).message }]);
@@ -582,7 +719,7 @@ export default function CodePage() {
 
     const hIdx = history.current.length;
     history.current.push({ role: "user", content: withAttachments });
-    setBlocks((prev) => [...prev, { t: "user", text: withAttachments, hIdx }]);
+    setBlocks((prev) => [...prev, { t: "user", text: withAttachments, hIdx }, { t: "status", text: `starting ${model}…` }]);
 
     try {
       // POST returns {runId, conversationId} immediately — the loop runs detached
@@ -594,7 +731,7 @@ export default function CodePage() {
       });
       if (!res.ok) throw new Error(await res.text());
       const j = await res.json();
-      if (j.conversationId) { setConvoId(j.conversationId); convoIdRef.current = j.conversationId; loadConvos(); }
+      if (j.conversationId) { setConvoId(j.conversationId); convoIdRef.current = j.conversationId; setSessionUrl(j.conversationId); loadConvos(); }
       attachRun(j.runId, null); // busy clears when the run's terminal status arrives
     } catch (err) {
       setBlocks((prev) => [...prev, { t: "error", text: (err as Error).message }]);
@@ -612,6 +749,22 @@ export default function CodePage() {
     else { esRef.current?.close(); esRef.current = null; setBusy(false); }
   };
 
+  const stopAllAgents = async () => {
+    if (!confirm("Stop every active agent, chat, and deliberation run? This cancels their current model calls.")) return;
+    try {
+      const r = await fetch("/api/agent/runs/stop-all", { method: "POST" }).then((x) => x.json());
+      setBlocks((prev) => [...prev, { t: "status", text: r.stopping ? `── stopping ${r.stopping} active run${r.stopping === 1 ? "" : "s"} ──` : "── no active agent runs ──" }]);
+    } catch {
+      setBlocks((prev) => [...prev, { t: "error", text: "couldn't send the global stop request" }]);
+    }
+  };
+
+  const changeMode = (next: string) => {
+    setMode(next);
+    const preset = modes.find((item) => item.id === next);
+    if (typeof preset?.think === "boolean") setThink(preset.think);
+  };
+
   // Resume a reply the model cut off at the token limit. It's just another loop
   // turn against the SAME conversation — the saved transcript already ends with the
   // truncated assistant text, so the model continues from there. Works whether the
@@ -622,7 +775,7 @@ export default function CodePage() {
     setBusy(true);
     stickRef.current = true;
     const nudge = "Continue exactly where you left off — your previous reply was cut off by the token limit. Do not repeat what you already wrote; pick up mid-sentence if needed.";
-    history.current.push({ role: "user", content: nudge });
+    history.current.push({ role: "user", content: nudge, name: "nudge" });
     // No visible user bubble for a continue — it reads as one flowing reply.
     try {
       const res = await fetch("/api/agent/loop", {
@@ -639,29 +792,30 @@ export default function CodePage() {
     }
   };
 
-  const inp = "bg-[var(--surface-2)] border border-[var(--border-soft)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text-2)] outline-none focus:border-[var(--border-loud)] max-w-[46vw] sm:max-w-none";
+  const inp = "min-w-0 bg-[var(--surface-2)] border border-[var(--border-soft)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text-2)] outline-none focus:border-[var(--border-loud)]";
   const iconBtn = "flex items-center justify-center h-8 w-8 rounded-lg border border-[var(--border-soft)] text-[var(--text-2)] hover:border-[var(--border)] hover:text-[var(--text)] transition-colors";
   const modeLabel = modes.find((m) => m.id === mode)?.label ?? mode;
   // Panels reflow the chat via PADDING on this outer wrapper only — the chat column
   // must never gain a nested scroll container (the stick/jump logic is built on
   // window scrolling; see the scroll-effect comment above).
   return (
-    <div className={(treeOpen ? "xl:pl-64 " : "") + (openFile ? "lg:pr-[min(52vw,760px)]" : "")}>
+    <div style={{ "--tree-w": treeW + "px", "--ed-w": edW ? edW + "px" : "min(52vw,760px)" } as React.CSSProperties}
+      className={(treeOpen ? "xl:pl-[var(--tree-w)] " : "") + (openFile ? "lg:pr-[var(--ed-w)]" : "")}>
     <div className="max-w-4xl mx-auto px-3 sm:px-4 pb-40 flex flex-col min-h-dvh">
       {/* ── Sticky command bar + telemetry ───────────────────────────────── */}
       <div className="sticky top-0 z-30 -mx-3 sm:-mx-4 px-3 sm:px-4 bg-[var(--bg)]/92 backdrop-blur-md border-b border-[var(--border-soft)]">
         <header className="flex items-center gap-2 h-14">
           {/* Mobile: menu opens the full control sheet */}
-          <button onClick={() => setMenuOpen(true)} className={iconBtn + " sm:hidden"} title="controls"><Menu size={16} /></button>
-          <span className="hidden sm:flex text-[var(--accent-ai)] font-bold tracking-widest text-xs items-center gap-2 shrink-0"><Bot size={17} /> AGENT</span>
+          <button onClick={() => setMenuOpen(true)} className={iconBtn + " lg:hidden"} title="controls"><Menu size={16} /></button>
+          <span className="hidden md:flex text-[var(--accent-ai)] font-bold tracking-widest text-xs items-center gap-2 shrink-0"><Bot size={17} /> AGENT</span>
 
           {/* Desktop inline controls */}
-          <div className="hidden sm:flex items-center gap-1.5 flex-1 min-w-0">
-            <select value={model} onChange={(e) => setModel(e.target.value)} className={inp} title="model">
+          <div className="hidden lg:flex items-center gap-1.5 flex-1 min-w-0">
+            <select value={model} onChange={(e) => setModel(e.target.value)} className={inp + " w-36 max-w-[22%] truncate"} title="model">
               {model && !models.includes(model) && <option value={model}>{model}</option>}
               {models.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
-            <select value={mode} onChange={(e) => setMode(e.target.value)} className={inp} title="workflow mode">
+            <select value={mode} onChange={(e) => changeMode(e.target.value)} className={inp + " w-28 max-w-[18%] truncate"} title="workflow mode">
               {modes.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
             {mode === "deliberate" && (
@@ -671,7 +825,7 @@ export default function CodePage() {
               </span>
             )}
             <select value={project} onChange={(e) => { setProject(e.target.value); setOpenFile(null); newSession(); }}
-              className={inp + " max-w-[180px]"} title="project (switching starts a fresh session)">
+              className={inp + " w-40 max-w-[24%] truncate"} title="project (switching starts a fresh session)">
               <option value="">{workspace ? "workspace" : "workspace"}</option>
               {projects.filter((p) => p !== workspace).map((p) => <option key={p} value={p}>{p.split("/").slice(-2).join("/")}</option>)}
             </select>
@@ -684,6 +838,7 @@ export default function CodePage() {
               className={iconBtn} style={{ borderColor: think ? "var(--accent-ai)" : undefined, color: think ? "var(--accent-ai)" : undefined }}><Brain size={15} /></button>
             <button onClick={() => setAuto(!auto)} title={auto ? "tools auto-approved" : "tools ask first"}
               className={iconBtn} style={{ borderColor: auto ? "var(--accent-warn)" : undefined, color: auto ? "var(--accent-warn)" : undefined }}>{auto ? <Zap size={15} /> : <ShieldCheck size={15} />}</button>
+            <button onClick={stopAllAgents} title="stop every active agent run" className={iconBtn + " text-[var(--accent-danger)] hover:border-[var(--accent-danger)]"}><CircleStop size={15} /></button>
             <button onClick={() => toggleTree(!treeOpen)} title="files · git · run" className={iconBtn}
               style={{ borderColor: treeOpen ? "var(--accent-ai)" : undefined, color: treeOpen ? "var(--accent-ai)" : undefined }}><PanelLeft size={15} /></button>
             <div className="relative">
@@ -767,6 +922,14 @@ export default function CodePage() {
             </div>
           );
         })}
+        {busy && (
+          // Always-on liveness cue: some backends (Ollama's shim on tool-call-only
+          // turns) stream nothing until a call completes — this shows the run is
+          // alive even when no event has painted recently.
+          <div className="flex items-center gap-2 text-[11px] text-[var(--muted)] px-1 animate-pulse">
+            <Bot size={12} className="text-[var(--accent-ai)]" /> working…
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
@@ -800,7 +963,7 @@ export default function CodePage() {
 
       <div className={"fixed bottom-14 md:bottom-0 left-0 right-0 bg-[var(--bg)]/95 backdrop-blur-md border-t border-[var(--border)] px-3 pt-2.5 pb-[calc(env(safe-area-inset-bottom)+0.625rem)]"
         + (navCollapsed ? "" : " md:left-14 lg:left-44")
-        + (openFile ? " lg:right-[min(52vw,760px)]" : "") + (treeOpen ? (navCollapsed ? " xl:left-64" : " xl:left-[27rem]") : "")}>
+        + (openFile ? " lg:right-[var(--ed-w)]" : "") + (treeOpen ? (navCollapsed ? " xl:left-[var(--tree-w)]" : " xl:left-[calc(var(--tree-w)+11rem)]") : "")}>
         <div className="max-w-4xl mx-auto">
           {/* Continue affordance: the last reply hit the token ceiling mid-thought. */}
           {truncated && !busy && (
@@ -844,7 +1007,7 @@ export default function CodePage() {
 
     {/* Mobile control sheet: model / mode / project / toggles */}
     {menuOpen && (
-      <div className="fixed inset-0 z-[55] sm:hidden flex items-end bg-black/50 animate-fade-in" onClick={() => setMenuOpen(false)}>
+      <div className="fixed inset-0 z-[55] lg:hidden flex items-end bg-black/50 animate-fade-in" onClick={() => setMenuOpen(false)}>
         <div onClick={(e) => e.stopPropagation()} className="w-full bg-[var(--surface-1)] border-t border-[var(--border)] rounded-t-2xl p-4 space-y-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
           <div className="flex items-center justify-between"><span className="text-sm font-semibold">Controls</span><button onClick={() => setMenuOpen(false)} className="text-[var(--muted)] p-1"><X size={18} /></button></div>
           <label className="block text-[11px] text-[var(--muted)]">Model
@@ -854,7 +1017,7 @@ export default function CodePage() {
             </select>
           </label>
           <label className="block text-[11px] text-[var(--muted)]">Mode
-            <select value={mode} onChange={(e) => setMode(e.target.value)} className={inp + " w-full mt-1 max-w-none"}>
+            <select value={mode} onChange={(e) => changeMode(e.target.value)} className={inp + " w-full mt-1 max-w-none"}>
               {modes.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
           </label>
@@ -883,8 +1046,10 @@ export default function CodePage() {
       <>
         {/* below xl the sidebar overlays the chat — backdrop click dismisses */}
         <div className="fixed inset-0 z-10 bg-black/40 xl:hidden" onClick={() => toggleTree(false)} />
-        <aside className={"fixed top-0 bottom-14 md:bottom-0 left-0 w-64 z-20 border-r border-[var(--border)] bg-[var(--bg)] flex flex-col"
+        <aside style={{ width: "var(--tree-w)" }} className={"fixed top-0 bottom-14 md:bottom-0 left-0 z-20 border-r border-[var(--border)] bg-[var(--bg)] flex flex-col"
           + (navCollapsed ? "" : " md:left-14 lg:left-44")}>
+          <div onPointerDown={dragPanel("tree")} title="drag to resize"
+            className="absolute top-0 bottom-0 -right-1 w-2 cursor-col-resize touch-none z-10 hover:bg-[var(--accent-ai)]/30" />
           <div className="flex items-center gap-1 px-2 pt-2 pb-1 border-b border-[var(--border-soft)] shrink-0">
             {(["files", "git", "run"] as const).map((t) => (
               <button key={t} onClick={() => setSideTab(t)}
@@ -906,7 +1071,9 @@ export default function CodePage() {
     )}
 
     {openFile && (
-      <aside className="fixed top-0 bottom-14 md:bottom-0 right-0 z-30 w-full lg:w-[min(52vw,760px)] border-l border-[var(--border)] bg-[var(--bg)]">
+      <aside className="fixed top-0 bottom-14 md:bottom-0 right-0 z-30 w-full lg:w-[var(--ed-w)] border-l border-[var(--border)] bg-[var(--bg)]">
+        <div onPointerDown={dragPanel("ed")} title="drag to resize"
+          className="hidden lg:block absolute top-0 bottom-0 -left-1 w-2 cursor-col-resize touch-none z-10 hover:bg-[var(--accent-ai)]/30" />
         <EditorPane project={project} filePath={openFile} refreshTick={fsTick} rawHref={fileHref(project, openFile)}
           onClose={() => setOpenFile(null)} onSaved={() => setFsTick((t) => t + 1)} />
       </aside>

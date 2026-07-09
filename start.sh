@@ -3,10 +3,10 @@
 #
 # Click this (or run it) and it brings the whole thing up on its own:
 #   • installs web deps on first run
-#   • builds the Next.js app when the code has changed (never serves a stale bundle)
-#   • frees the port if a previous instance is still holding it
+#   • preserves the current working build
+#   • builds the current code and activates it only when the build succeeds
 #   • exposes it on your tailnet via `tailscale serve` (so your phone sees the same app)
-#   • starts the server and opens it in your browser
+#   • restarts the managed server and opens it in your browser
 #
 # GPU serving (llama.cpp on :8099) and Ollama (:11434) are started ON DEMAND by the
 # app itself — you don't launch them here. Training likewise runs through the app.
@@ -47,46 +47,6 @@ Categories=Development;Utility;"
   exit 0
 fi
 
-command -v node >/dev/null 2>&1 || { c_err "Node.js is not installed. Install it, then run this again."; exit 1; }
-command -v npm  >/dev/null 2>&1 || { c_err "npm is not installed. Install Node.js, then run this again."; exit 1; }
-[ -d "$WEB" ] || { c_err "web/ not found next to this script — is the repo intact?"; exit 1; }
-cd "$WEB"
-
-# --- deps (first run only) ---------------------------------------------------
-if [ ! -d node_modules ]; then
-  c_ok "Installing dependencies (first run — this takes a minute)…"
-  npm install --no-audit --no-fund || { c_err "npm install failed."; exit 1; }
-fi
-
-# --- build only when the code actually changed -------------------------------
-# Skipping a build after a code change silently serves the OLD bundle (a documented
-# footgun). But rebuilding on every launch is slow, so we stamp the built commit and
-# rebuild only when HEAD moved (e.g. after a `git pull`) or the build is missing.
-stamp="$WEB/.next/.build-commit"
-head_now="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo nogit)"
-need_build=0
-[ -d "$WEB/.next" ] || need_build=1
-[ -f "$stamp" ] && [ "$(cat "$stamp" 2>/dev/null)" = "$head_now" ] || need_build=1
-[ "${FORCE_BUILD:-0}" = "1" ] && need_build=1
-[ "${SKIP_BUILD:-0}" = "1" ] && need_build=0
-
-if [ "$need_build" = "1" ]; then
-  c_ok "Building the app…"
-  if npm run build; then
-    mkdir -p "$WEB/.next"; printf '%s' "$head_now" > "$stamp"
-  else
-    c_err "Build failed — not starting a broken app. Fix the error above and retry."
-    exit 1
-  fi
-else
-  c_ok "Code unchanged since last build — starting the existing build (SKIP)."
-fi
-
-# --- free the port if a previous instance is still up ------------------------
-if command -v fuser >/dev/null 2>&1; then
-  fuser -k "${PORT}/tcp" >/dev/null 2>&1 && { c_warn "Stopped a previous instance on :${PORT}."; sleep 1; } || true
-fi
-
 # --- expose on the tailnet (best-effort; local access works regardless) ------
 if command -v tailscale >/dev/null 2>&1; then
   if tailscale serve --bg --https="$TS_PORT" "http://127.0.0.1:${PORT}" >/dev/null 2>&1; then
@@ -98,16 +58,5 @@ if command -v tailscale >/dev/null 2>&1; then
   fi
 fi
 
-# --- open the browser once the server is actually answering ------------------
-(
-  for _ in $(seq 1 60); do
-    if curl -fs -o /dev/null "http://127.0.0.1:${PORT}/" 2>/dev/null; then
-      command -v xdg-open >/dev/null 2>&1 && xdg-open "http://localhost:${PORT}/code" >/dev/null 2>&1 || true
-      break
-    fi
-    sleep 1
-  done
-) &
-
-c_ok "Starting Local AI Lab → http://localhost:${PORT}   (Ctrl-C here to stop)"
-exec npm run start -- -p "$PORT" -H 0.0.0.0
+c_ok "Safely rebuilding Local AI Lab…"
+OPEN_BROWSER=1 exec "$HOME/.local/bin/rebuild-local-ai-lab"

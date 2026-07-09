@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listRuns } from "@/lib/runs";
+import { deleteAllRuns, listRuns } from "@/lib/runs";
 
 export const dynamic = "force-dynamic";
 
@@ -9,4 +9,10 @@ export const dynamic = "force-dynamic";
 export function GET(req: NextRequest) {
   const limit = Number(req.nextUrl.searchParams.get("limit")) || 50;
   return NextResponse.json(listRuns(limit));
+}
+
+// DELETE /api/agent/runs — wipe every terminal run record (meta + event ledger).
+// Live runs are never touched; conversations/files/models stay independently owned.
+export function DELETE() {
+  return NextResponse.json(deleteAllRuns());
 }

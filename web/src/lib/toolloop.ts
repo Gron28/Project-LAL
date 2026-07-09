@@ -3,7 +3,7 @@
 // native `tool_calls` streaming + finish_reason:"tool_calls" against Qwen3 (Phase 0
 // spike) — no prompted-JSON fallback needed.
 import type { Executor } from "./tools";
-import { TOOL_DEFS, type ToolDef } from "./tools";
+import { TOOL_DEFS, normalizeToolArgs, toolCallExample, validateToolArguments, type ToolDef } from "./tools";
 
 export type ToolLoopMsg = {
   role: "system" | "user" | "assistant" | "tool";
@@ -17,6 +17,12 @@ export type ToolLoopEvent =
   | { k: "text"; v: string }
   | { k: "think"; v: string }
   | { k: "tool_request"; v: { id: string; name: string; args: Record<string, unknown> } }
+  // Live progress WHILE a tool call's arguments are still decoding. A code agent
+  // spends most of its wall-clock inside write_file calls, and tool_request only
+  // fires once the whole call has finished streaming — observed live 2026-07-09:
+  // 80 seconds of dead air (GPU pinned, zero events) while gemma4:12b decoded one
+  // write_file. Throttled to ~1/s; carries a tail preview, not cumulative content.
+  | { k: "tool_progress"; v: { id: string; name: string; chars: number; preview: string } }
   | { k: "tool_result"; v: { id: string; name: string; ok: boolean; output: string } }
   | { k: "round" }
   | { k: "max_rounds"; v: number }
@@ -30,7 +36,10 @@ export type ToolLoopEvent =
   | { k: "usage"; v: { promptTokens: number; completionTokens: number; totalTokens: number; tokPerSec: number | null; ctx: number } }
   // The model's final answer was cut off by the per-round token cap (finish_reason
   // "length") rather than finishing — the "Continue" affordance keys off this.
-  | { k: "truncated"; v: { round: number } };
+  | { k: "truncated"; v: { round: number } }
+  // Refuse a request before it reaches the inference backend when its estimated
+  // input plus reserved output/tool-result space would overflow the context.
+  | { k: "context_limit"; v: { estimatedTokens: number; reserveTokens: number; ctx: number } };
 
 // Motivated by a real failure (2026-07-07 snake-roguelike eval): victory9-8b wrote
 // itself a detailed plan, implemented almost none of it, then reported full
@@ -38,7 +47,7 @@ export type ToolLoopEvent =
 // ever re-checking its output against what it claimed. This fires exactly once per
 // session, only if the session actually wrote/edited a file, so a trivial no-write
 // Q&A turn never pays the extra round.
-const FORCED_VERIFY_NUDGE = "Before you finish: re-read every file you wrote or edited this session (use read_file) and check it line-by-line against the task's stated requirements. Don't rely on your memory of what you intended to write — confirm the actual code does what you're about to claim it does. If anything required is missing, incomplete, or incorrect, fix it now with edit_file/write_file. Only give your final summary once you've actually verified this against the real file contents.";
+const FORCED_VERIFY_NUDGE = "Before you finish: re-read every file you wrote or edited this session (use read_file) and check it line-by-line against the task's stated requirements. Don't rely on your memory of what you intended to write — confirm the actual code does what you're about to claim it does. If anything required is missing, incomplete, or incorrect, fix it now with edit_file/write_file. If everything checks out, do NOT restate your earlier summary — reply with one short confirmation line only.";
 
 // Companion to FORCED_VERIFY_NUDGE, at the opposite end of the same session: a real
 // run (2026-07-07, same eval) looped list_files/read_file for 8-16 rounds straight
@@ -93,6 +102,13 @@ function recoverBuriedToolCalls(think: string): { name: string; arguments: strin
   return out;
 }
 
+function estimateRequestTokens(body: Record<string, unknown>): number {
+  // This is deliberately conservative and local. llama.cpp's exact count endpoint
+  // is not present in every shipped build; character volume is still enough to
+  // prevent the catastrophic case where a request begins with no room to finish.
+  try { return Math.ceil(JSON.stringify(body).length / 3.5); } catch { return 0; }
+}
+
 export type ApproveFn = (req: { id: string; name: string; args: Record<string, unknown> }) => Promise<boolean>;
 
 type ChoiceDelta = {
@@ -100,6 +116,8 @@ type ChoiceDelta = {
   reasoning_content?: string;
   tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
 };
+type CompletionUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+type CompletionTimings = { predicted_per_second?: number; cache_n?: number; prompt_n?: number; predicted_n?: number };
 
 export async function runToolLoop(opts: {
   baseUrl: string;
@@ -134,8 +152,13 @@ export async function runToolLoop(opts: {
   const tools = opts.tools ?? TOOL_DEFS;
   const maxRounds = opts.maxRounds ?? 15;
   let maxTokens = opts.maxTokens ?? 1024;
-  let truncationBumped = false; // one-time budget raise after a truncated tool call (see below)
   const messages = opts.messages.slice();
+  // Silence detector: if the whole run produces neither visible text nor one
+  // successful tool call, ending "done" would be a lie the user experiences as
+  // "the agent did nothing and said nothing" (observed live 2026-07-09, gemma4:12b
+  // deep-research: three empty turns, three nudges, empty final reply, no output).
+  let anyContentEver = false;
+  let anySuccessfulTool = false;
   let wroteFiles = false;
   let forcedVerifyDone = false;
   let consecutiveReadOnlyRounds = 0;
@@ -155,13 +178,24 @@ export async function runToolLoop(opts: {
   for (let round = 0; round < maxRounds; round++) {
     throwIfAborted();
     onEvent({ k: "round" });
-    const body: Record<string, unknown> = { model, messages, tools, stream: true, temperature: opts.temperature ?? 0, max_tokens: maxTokens };
+    // stream_options is what makes llama-server put usage on the final chunk of a
+    // STREAMED response (OpenAI semantics) — without it the UI's context/tok-s meter
+    // never receives a single usage event (observed live 2026-07-09).
+    const body: Record<string, unknown> = { model, messages, tools, stream: true, stream_options: { include_usage: true }, temperature: opts.temperature ?? 0, max_tokens: maxTokens };
     if (opts.topP !== undefined) body.top_p = opts.topP;
     if (opts.topK !== undefined) body.top_k = opts.topK;
     if (opts.repeatPenalty !== undefined) body.repeat_penalty = opts.repeatPenalty;
     if (opts.think === false) {
       body.chat_template_kwargs = { enable_thinking: false }; // llama-server (Qwen3)
       if (baseUrl.includes(":11434")) body.think = false;     // Ollama-native (partially respected; harmless elsewhere)
+    }
+    if (opts.ctx) {
+      const estimatedTokens = estimateRequestTokens(body);
+      const reserveTokens = Math.min(maxTokens, Math.max(512, Math.floor(opts.ctx * 0.3))) + 1024;
+      if (estimatedTokens + reserveTokens >= opts.ctx) {
+        onEvent({ k: "context_limit", v: { estimatedTokens, reserveTokens, ctx: opts.ctx } });
+        throw new Error(`context budget exhausted before round ${round + 1} (estimated ${estimatedTokens} input + ${reserveTokens} reserved > ${opts.ctx} context tokens)`);
+      }
     }
     const res = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: "POST",
@@ -177,9 +211,11 @@ export async function runToolLoop(opts: {
     let content = "";
     let think = "";
     const callAcc: Record<number, { id: string; name: string; args: string }> = {};
+    let lastToolProgress = 0;   // throttle clock for tool_progress events
+    let lastToolDeltaIdx = -1;  // which call the most recent argument delta belonged to
     let finishReason: string | null = null;
-    let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
-    let timings: { predicted_per_second?: number } | null = null;
+    let usage: CompletionUsage | null = null;
+    let timings: CompletionTimings | null = null;
 
     for (;;) {
       const { done, value } = await reader.read();
@@ -194,7 +230,7 @@ export async function runToolLoop(opts: {
         if (data === "[DONE]") continue;
         // llama-server puts usage + timings on the FINAL chunk (top level, not in
         // choices); Ollama's OpenAI shim omits them. Capture when present.
-        let j: { choices?: { delta?: ChoiceDelta; finish_reason?: string }[]; usage?: typeof usage; timings?: typeof timings };
+        let j: { choices?: { delta?: ChoiceDelta; finish_reason?: string }[]; usage?: CompletionUsage; timings?: CompletionTimings };
         try { j = JSON.parse(data); } catch { continue; }
         if (j.usage) usage = j.usage;
         if (j.timings) timings = j.timings;
@@ -210,7 +246,16 @@ export async function runToolLoop(opts: {
             if (!callAcc[idx]) callAcc[idx] = { id: tc.id || "", name: "", args: "" };
             if (tc.id) callAcc[idx].id = tc.id;
             if (tc.function?.name) callAcc[idx].name += tc.function.name;
-            if (tc.function?.arguments) callAcc[idx].args += tc.function.arguments;
+            if (tc.function?.arguments) {
+              callAcc[idx].args += tc.function.arguments;
+              lastToolDeltaIdx = idx;
+            }
+          }
+          const now = Date.now();
+          const acc = lastToolDeltaIdx >= 0 ? callAcc[lastToolDeltaIdx] : undefined;
+          if (acc?.name && now - lastToolProgress > 1000) {
+            lastToolProgress = now;
+            onEvent({ k: "tool_progress", v: { id: acc.id, name: acc.name, chars: acc.args.length, preview: acc.args.slice(-200) } });
           }
         }
       }
@@ -220,8 +265,10 @@ export async function runToolLoop(opts: {
     // model just consumed; completion is what it produced — together they're the
     // best signal of "how full is the window right now" the UI has.
     if (usage && opts.ctx) {
-      const promptTokens = usage.prompt_tokens ?? 0;
-      const completionTokens = usage.completion_tokens ?? 0;
+      const promptTokens = timings?.cache_n != null || timings?.prompt_n != null
+        ? (timings.cache_n ?? 0) + (timings.prompt_n ?? 0)
+        : (usage.prompt_tokens ?? 0);
+      const completionTokens = timings?.predicted_n ?? usage.completion_tokens ?? 0;
       onEvent({ k: "usage", v: {
         promptTokens, completionTokens,
         totalTokens: usage.total_tokens ?? promptTokens + completionTokens,
@@ -230,6 +277,7 @@ export async function runToolLoop(opts: {
       } });
     }
 
+    if (content.trim()) anyContentEver = true;
     let calls = Object.values(callAcc);
     if (!calls.length) {
       const recovered = recoverBuriedToolCalls(think);
@@ -242,14 +290,17 @@ export async function runToolLoop(opts: {
       if (opts.minResearchCalls && researchCallCount < opts.minResearchCalls && researchNudgeCount < RESEARCH_DEPTH_NUDGE_CAP) {
         researchNudgeCount++;
         messages.push({ role: "assistant", content });
-        messages.push({ role: "user", content: researchDepthNudge(researchCallCount, opts.minResearchCalls) });
+        // name:"nudge" marks every loop-injected user-role message so the UI can
+        // render it as a system intervention — unmarked, these were rendered back
+        // as messages the USER supposedly wrote (observed live 2026-07-09).
+        messages.push({ role: "user", content: researchDepthNudge(researchCallCount, opts.minResearchCalls), name: "nudge" });
         onEvent({ k: "research_depth_nudge", v: { count: researchCallCount, min: opts.minResearchCalls } });
         continue;
       }
       if (wroteFiles && !forcedVerifyDone) {
         forcedVerifyDone = true;
         messages.push({ role: "assistant", content });
-        messages.push({ role: "user", content: FORCED_VERIFY_NUDGE });
+        messages.push({ role: "user", content: FORCED_VERIFY_NUDGE, name: "nudge" });
         onEvent({ k: "forced_verify" });
         continue;
       }
@@ -258,6 +309,13 @@ export async function runToolLoop(opts: {
       // not finished. Surface it so the UI can offer Continue (and auto-continue
       // can resume) instead of silently presenting half an answer as complete.
       if (finishReason === "length") onEvent({ k: "truncated", v: { round } });
+      if (!anyContentEver && !anySuccessfulTool) {
+        throw new Error(
+          "the model produced no output this entire run — no reply text and no successful tool call. " +
+          "It likely doesn't handle tool calling on this backend (gemma via the Ollama shim is a known case); " +
+          "try a qwen3/victory model, or a non-agent chat for this question.",
+        );
+      }
       messages.push({ role: "assistant", content });
       return messages;
     }
@@ -272,7 +330,11 @@ export async function runToolLoop(opts: {
       throwIfAborted();
       let args: Record<string, unknown> = {};
       let parseError = false;
-      try { args = JSON.parse(c.args || "{}"); } catch { parseError = true; }
+      try {
+        const parsed: unknown = JSON.parse(c.args || "{}");
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") parseError = true;
+        else args = normalizeToolArgs(c.name, parsed as Record<string, unknown>);
+      } catch { parseError = true; }
       onEvent({ k: "tool_request", v: { id: c.id, name: c.name, args } });
 
       const isResearchCall = c.name === "web_search" || c.name === "web_fetch";
@@ -286,13 +348,18 @@ export async function runToolLoop(opts: {
         // was truncated, so it can't retry correctly. Refuse to run and say why.
         // First occurrence also raises the per-round budget once, so the retry
         // has real headroom instead of hitting the identical wall.
-        if (!truncationBumped) {
-          truncationBumped = true;
+        // Keep doubling the budget until the ceiling — a single one-time bump was
+        // observed to leave big single-file tasks (a full game in one write_file)
+        // re-truncating, with the model rewriting DIFFERENT code from scratch on
+        // every retry until the context died.
+        if (maxTokens < 16384) {
           maxTokens = Math.min(maxTokens * 2, 16384);
-          output = `error: tool call arguments were truncated or malformed (hit the response token limit) — the tool was NOT run. The token budget has been raised to ${maxTokens} for your retry: repeat the SAME call completely, or split large content across multiple write_file/edit_file calls.`;
+          output = `error: tool call arguments were truncated or malformed (hit the response token limit) — the tool was NOT run. The token budget has been raised to ${maxTokens} for your retry: repeat the SAME call completely (same file, same code — do not start a new design), or split large content across multiple write_file/edit_file calls.`;
         } else {
-          output = "error: tool call arguments were truncated or malformed — the tool was NOT run. Split the content across multiple smaller write_file/edit_file calls.";
+          output = "error: tool call arguments were truncated or malformed — the tool was NOT run. Split the content across multiple smaller write_file/edit_file calls, continuing the SAME file with edit_file.";
         }
+      } else if (validateToolArguments(c.name, args)) {
+        output = "error: invalid tool arguments — " + validateToolArguments(c.name, args) + ". The tool was NOT run; retry with the required fields." + toolCallExample(c.name);
       } else if (isResearchCall && opts.maxResearchCalls && researchCallCount >= opts.maxResearchCalls) {
         output = researchCeilingRefusal(researchCallCount, opts.maxResearchCalls);
       } else {
@@ -307,6 +374,7 @@ export async function runToolLoop(opts: {
         }
       }
       const ok = !output.startsWith("error:") && output !== "denied by user";
+      if (ok) anySuccessfulTool = true;
       if (ok && (c.name === "write_file" || c.name === "edit_file")) wroteFiles = true;
       if (ok && (c.name === "web_search" || c.name === "web_fetch")) researchCallCount++;
       onEvent({ k: "tool_result", v: { id: c.id, name: c.name, ok, output } });
@@ -319,7 +387,7 @@ export async function runToolLoop(opts: {
     if (canWrite && !stallNudgeDone && consecutiveReadOnlyRounds >= STALL_ROUND_THRESHOLD) {
       stallNudgeDone = true;
       consecutiveReadOnlyRounds = 0;
-      messages.push({ role: "user", content: STALL_NUDGE });
+      messages.push({ role: "user", content: STALL_NUDGE, name: "nudge" });
       onEvent({ k: "stall_nudge" });
     }
   }

@@ -1,15 +1,21 @@
 "use client";
 import { useEffect, useState } from "react";
-import { ExternalLink, FolderOpen, MessageSquare, Pencil, Terminal, Trash2, X } from "lucide-react";
+import { ExternalLink, FlaskConical, FolderOpen, History, ListTree, MessageSquare, Pencil, Terminal, Trash2, X } from "lucide-react";
 import FileTree from "@/components/code/file-tree";
 import EditorPane from "@/components/code/editor-pane";
 import DirPicker from "@/components/code/dir-picker";
 
 type M = { name: string; source: "local" | "ollama"; gb: number };
 type Doc = { id: string; name: string; folder: string; chars: number; ts: number };
-type DataFile = { name: string; chars: number; kind: "raw" | "sft" };
+type DataFile = { name: string; chars: number; kind: "raw" | "sft"; rows?: number | null; sha256?: string };
 type ConvoRow = { id: string; title: string; updatedAt: number; kind: "chat" | "code"; project?: string };
 type ProjectRow = { path: string; exists: boolean };
+type RunRow = { id: string; kind: "chat" | "code" | "deliberate"; conversationId: string; project?: string; model: string; mode?: string; status: string; truncated?: boolean; startedAt: number; updatedAt: number };
+type RunTrace = { reasoning: string; output: string; events: { seq: number; ts: number; k: string; detail: string }[] };
+type ExperimentRow = {
+  name: string; status: string; updatedAt: number; base: string; mode: string; steps: number; lr: number;
+  dataset: { name: string; sha256: string; bytes: number; rows: number | null } | null; model?: string | null;
+};
 
 const DATASETS = "__datasets";
 
@@ -22,7 +28,10 @@ function Models() {
   const [current, setCurrent] = useState("");
   const [renamingName, setRenamingName] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState("");
-  const load = () => fetch("/api/agent/models").then((r) => r.json()).then((j) => { setDetail(j.detail || []); setCurrent(j.current || ""); });
+  const load = () => fetch("/api/agent/models").then((r) => r.json()).then((j) => {
+    setDetail(j.modelInfos || j.detail || []);
+    setCurrent(j.current || "");
+  });
   useEffect(() => { load(); }, []);
   const setCur = async (n: string) => { await fetch("/api/agent/models", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: n }) }); load(); };
   const del = async (n: string, source: "local" | "ollama") => { if (!confirm("Delete " + n + "?")) return; await fetch("/api/agent/models?name=" + encodeURIComponent(n) + "&source=" + source, { method: "DELETE" }); load(); };
@@ -174,7 +183,7 @@ function Documents() {
             <div key={f.name} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
               <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-widest shrink-0 ${f.kind === "sft" ? "bg-[var(--accent-ai)]/20 text-[var(--accent-ai)]" : "bg-[var(--surface-3)] text-[var(--muted)]"}`}>{f.kind}</span>
               <span className="flex-1 truncate text-sm">{f.name}</span>
-              <span className="text-[10px] text-[var(--muted)] hidden sm:inline">{f.chars >= 1000 ? (f.chars / 1000).toFixed(0) + "k" : f.chars} chars</span>
+              <span className="text-[10px] text-[var(--muted)] hidden sm:inline">{f.rows != null ? f.rows + " rows · " : ""}{f.chars >= 1000 ? (f.chars / 1000).toFixed(0) + "k" : f.chars} chars</span>
               <button className={btn} onClick={() => delDataset(f.name)}>✕</button>
             </div>
           )) : <div className="p-6 text-center text-[var(--muted)] text-xs">No training datasets yet — upload a .txt or .jsonl file above.</div>
@@ -267,6 +276,114 @@ function Chats() {
   );
 }
 
+function Runs() {
+  const [runs, setRuns] = useState<RunRow[]>([]);
+  const [status, setStatus] = useState("");
+  const [selected, setSelected] = useState<RunRow | null>(null);
+  const [trace, setTrace] = useState<RunTrace | null>(null);
+  const load = () => fetch("/api/agent/runs?limit=100").then((r) => r.json()).then(setRuns).catch(() => setStatus("Couldn't load run history."));
+  useEffect(() => { load(); }, []);
+  const remove = async (run: RunRow) => {
+    if (!confirm(`Delete the ${run.kind} run record? Its conversation and workspace files will remain.`)) return;
+    const r = await fetch(`/api/agent/runs/${encodeURIComponent(run.id)}`, { method: "DELETE" }).then((x) => x.json()).catch(() => ({ error: "request failed" }));
+    setStatus(r.ok ? "Run record deleted." : r.error || "Couldn't delete run.");
+    if (r.ok) {
+      if (selected?.id === run.id) { setSelected(null); setTrace(null); }
+      load();
+    }
+  };
+  const inspect = async (run: RunRow) => {
+    setSelected(run); setTrace(null);
+    const j = await fetch(`/api/agent/runs/${encodeURIComponent(run.id)}?trace=1`).then((r) => r.json()).catch(() => ({ error: "request failed" }));
+    if (j.error) setStatus(j.error);
+    else setTrace(j.trace || { reasoning: "", output: "", events: [] });
+  };
+  const href = (run: RunRow) => run.kind === "chat" ? `/chat?conv=${encodeURIComponent(run.conversationId)}` : `/code?conv=${encodeURIComponent(run.conversationId)}`;
+  const removeAll = async () => {
+    if (!confirm(`Delete ALL ${runs.length} run records? Conversations and workspace files remain; live runs are skipped.`)) return;
+    const r = await fetch("/api/agent/runs", { method: "DELETE" }).then((x) => x.json()).catch(() => null);
+    if (!r) { setStatus("Couldn't delete runs."); return; }
+    setStatus(`Deleted ${r.deleted} run record${r.deleted === 1 ? "" : "s"}.` + (r.skippedLive ? ` ${r.skippedLive} still running — stop them first.` : ""));
+    setSelected(null); setTrace(null);
+    load();
+  };
+  return (
+    <div className="flex flex-col gap-3">
+      <div className={card}>
+        <div className={head}>
+          <History size={13} className="text-[var(--accent-ai)]" /> AGENT RUNS
+          <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">{runs.length}</span>
+          {runs.length > 0 && <button onClick={removeAll} title="Delete every run record" className={btn + " normal-case tracking-normal"}>Delete all</button>}
+        </div>
+        {status && <div className="px-4 py-2 text-[10px] text-[var(--muted)] border-b border-[var(--border-soft)]">{status}</div>}
+        {!runs.length && <div className="p-6 text-center text-[var(--muted)] text-xs">No agent or chat runs yet.</div>}
+        {runs.map((run) => (
+          <div key={run.id} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
+            <Terminal size={13} className="text-[var(--accent-ai)] shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 text-sm"><span className="truncate">{run.kind}{run.mode ? " · " + run.mode : ""}</span><span className="text-[10px] uppercase tracking-wide text-[var(--muted)] shrink-0">{run.status}</span></div>
+              <div className="text-[10px] text-[var(--muted)] truncate">{run.model}{run.project ? " · " + run.project : ""}{run.truncated ? " · truncated" : ""}</div>
+            </div>
+            <span className="text-[10px] text-[var(--muted)] hidden sm:inline shrink-0">{relTime(run.updatedAt)}</span>
+            <a href={href(run)} title="Open conversation" className={btn}><ExternalLink size={12} /></a>
+            <button onClick={() => inspect(run)} title="Inspect run trace" className={btn}><ListTree size={12} /></button>
+            <button onClick={() => remove(run)} title="Delete run record" className={btn}><Trash2 size={12} /></button>
+          </div>
+        ))}
+      </div>
+      {selected && (
+        <div className={card + " overflow-hidden"}>
+          <div className={head}>
+            <ListTree size={13} className="text-[var(--accent-ai)]" /> RUN TRACE <span className="normal-case tracking-normal text-[var(--muted)] truncate">{selected.id}</span>
+            <button onClick={() => { setSelected(null); setTrace(null); }} className="ml-auto text-[var(--muted)] hover:text-[var(--text)]" title="Close trace"><X size={14} /></button>
+          </div>
+          {!trace && <div className="p-4 text-xs text-[var(--muted)]">Loading trace...</div>}
+          {trace && <div className="divide-y divide-[var(--border-soft)]">
+            {trace.reasoning && <section className="p-4"><h2 className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Model-emitted reasoning</h2><pre className="whitespace-pre-wrap break-words text-xs leading-5 text-[var(--text-2)] max-h-72 overflow-auto">{trace.reasoning}</pre></section>}
+            {trace.events.length > 0 && <section className="p-4"><h2 className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Process events</h2><div className="flex flex-col gap-2 max-h-72 overflow-auto">{trace.events.map((event) => <div key={event.seq + event.k} className="text-xs"><span className="text-[var(--accent-ai)] font-mono">{event.k}</span>{event.detail && <pre className="mt-1 whitespace-pre-wrap break-words text-[var(--muted)]">{event.detail}</pre>}</div>)}</div></section>}
+            {trace.output && <section className="p-4"><h2 className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Model output</h2><pre className="whitespace-pre-wrap break-words text-xs leading-5 text-[var(--text)] max-h-72 overflow-auto">{trace.output}</pre></section>}
+            {!trace.reasoning && !trace.events.length && !trace.output && <div className="p-4 text-xs text-[var(--muted)]">This run has no retained events.</div>}
+          </div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Experiments() {
+  const [experiments, setExperiments] = useState<ExperimentRow[]>([]);
+  const [status, setStatus] = useState("");
+  const load = () => fetch("/api/train?name=").then((r) => r.json()).then((j) => setExperiments(j.experiments || [])).catch(() => setStatus("Couldn't load experiments."));
+  useEffect(() => { load(); }, []);
+  const remove = async (name: string) => {
+    if (!confirm(`Delete experiment "${name}"? This removes its run log and Library record, but keeps derived models and checkpoints.`)) return;
+    const r = await fetch(`/api/train?name=${encodeURIComponent(name)}`, { method: "DELETE" }).then((x) => x.json()).catch(() => ({ error: "request failed" }));
+    setStatus(r.ok ? "Experiment record deleted." : r.error || "Couldn't delete experiment.");
+    if (r.ok) load();
+  };
+  return (
+    <div className="flex flex-col gap-3">
+      <div className={card}>
+        <div className={head}><FlaskConical size={13} className="text-[var(--accent-ai)]" /> TRAINING EXPERIMENTS <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">{experiments.length}</span></div>
+        {status && <div className="px-4 py-2 text-[10px] text-[var(--muted)] border-b border-[var(--border-soft)]">{status}</div>}
+        {!experiments.length && <div className="p-6 text-center text-[var(--muted)] text-xs">No training experiments yet.</div>}
+        {experiments.map((experiment) => (
+          <div key={experiment.name} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
+            <FlaskConical size={13} className="text-[var(--accent-ai)] shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 text-sm"><span className="truncate">{experiment.name}</span><span className="text-[10px] uppercase tracking-wide text-[var(--muted)] shrink-0">{experiment.status}</span></div>
+              <div className="text-[10px] text-[var(--muted)] truncate">{experiment.base} · {experiment.mode} · {experiment.steps} steps · lr {experiment.lr}{experiment.dataset ? ` · ${experiment.dataset.name}${experiment.dataset.rows != null ? ` (${experiment.dataset.rows} rows)` : ""}` : ""}</div>
+              {experiment.dataset?.sha256 && <div className="text-[10px] text-[var(--muted)] font-mono truncate">data {experiment.dataset.sha256.slice(0, 12)}</div>}
+            </div>
+            <a href={`/train?run=${encodeURIComponent(experiment.name)}`} title="Open in Train" className={btn}><ExternalLink size={12} /></a>
+            <button onClick={() => remove(experiment.name)} title="Delete experiment record" className={btn}><Trash2 size={12} /></button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Projects() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -349,7 +466,7 @@ function Projects() {
 }
 
 export default function Library() {
-  const [tab, setTab] = useState<"models" | "docs" | "chats" | "projects">("models");
+  const [tab, setTab] = useState<"models" | "docs" | "chats" | "runs" | "experiments" | "projects">("models");
   const tabBtn = (id: typeof tab, label: string) => (
     <button onClick={() => setTab(id)} className="px-4 py-2 text-[11px] tracking-widest uppercase rounded-[var(--r-md)] border"
       style={{ color: tab === id ? "#05090c" : "var(--text-2)", background: tab === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)", fontWeight: tab === id ? 700 : 400 }}>{label}</button>
@@ -358,8 +475,8 @@ export default function Library() {
     <div className="font-chat min-h-dvh bg-[var(--bg)] text-[var(--text)] p-4 pb-16">
       <div className="max-w-3xl mx-auto flex flex-col gap-4">
         <h1 className="text-[var(--accent-ai)] tracking-widest font-bold">◉ LIBRARY</h1>
-        <div className="flex gap-2 flex-wrap">{tabBtn("models", "▤ Models")}{tabBtn("docs", "▦ Documents")}{tabBtn("chats", "▥ Chats")}{tabBtn("projects", "▧ Projects")}</div>
-        {tab === "models" ? <Models /> : tab === "docs" ? <Documents /> : tab === "chats" ? <Chats /> : <Projects />}
+        <div className="flex gap-2 flex-wrap">{tabBtn("models", "▤ Models")}{tabBtn("docs", "▦ Documents")}{tabBtn("chats", "▥ Chats")}{tabBtn("runs", "Runs")}{tabBtn("experiments", "Experiments")}{tabBtn("projects", "▧ Projects")}</div>
+        {tab === "models" ? <Models /> : tab === "docs" ? <Documents /> : tab === "chats" ? <Chats /> : tab === "runs" ? <Runs /> : tab === "experiments" ? <Experiments /> : <Projects />}
       </div>
     </div>
   );

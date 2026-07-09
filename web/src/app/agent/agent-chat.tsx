@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brain, Eye, FileCode, Menu, Sparkles, Paperclip, X, Pencil, Trash2, SlidersHorizontal, Copy, Mic, Volume2, VolumeX, AudioLines, Globe, FileText } from "lucide-react";
+import { Brain, CircleStop, Eye, FileCode, Menu, Sparkles, Paperclip, X, Pencil, Trash2, SlidersHorizontal, Copy, Mic, Volume2, VolumeX, AudioLines, Globe, FileText, TerminalSquare } from "lucide-react";
 import LlmSettings from "./llm-settings";
 import { enqueueSpeech, stopSpeech, setSpeechListener } from "./voice";
 import MarkdownView from "@/components/markdown-view";
+import { StatsGlance, type Usage } from "@/components/agent/stats-hud";
 
-type Msg = { role: "user" | "assistant"; content: string; thinking?: string; images?: string[]; visionModel?: string };
+type Msg = { role: "user" | "assistant"; content: string; thinking?: string; status?: string; images?: string[]; visionModel?: string; truncated?: boolean };
 type Convo = { id: string; title: string; model: string; updatedAt: string };
 
 const SUGGESTIONS = [
@@ -312,6 +313,7 @@ export default function AgentChat() {
   const [listOpen, setListOpen] = useState(false);
 
   const [think, setThink] = useState(true);
+  const [usage, setUsage] = useState<Usage>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [webMode, setWebMode] = useState(false);
   const [docsMode, setDocsMode] = useState(false);
@@ -422,6 +424,14 @@ export default function AgentChat() {
     stopSpeech();
   };
 
+  const stopAllAgents = async () => {
+    if (!confirm("Stop every active agent, chat, and deliberation run? This cancels their current model calls.")) return;
+    try {
+      const r = await fetch("/api/agent/runs/stop-all", { method: "POST" }).then((x) => x.json());
+      if (r.stopping) stopSpeech();
+    } catch { /* the current generation remains available through its normal Stop control */ }
+  };
+
   const addFiles = async (files: FileList | null) => {
     if (!files) return;
     // Cap raised from 4: the vision backend now routes to a faster (smaller) model
@@ -472,12 +482,14 @@ export default function AgentChat() {
     let content = "";
     let thinking = "";
     let visionModel = "";
+    let status = "Connecting to the local agent…";
+    let truncated = false;
     let spokenLen = 0;
     const paint = () => {
-      const c = content, t = thinking, vm = visionModel;
+      const c = content, t = thinking, vm = visionModel, wasTruncated = truncated;
       setMessages((p) => {
         const copy = [...p];
-        copy[idx] = { role: "assistant", content: c, thinking: t, ...(vm ? { visionModel: vm } : {}) };
+        copy[idx] = { role: "assistant", content: c, thinking: t, ...(status ? { status } : {}), ...(vm ? { visionModel: vm } : {}), ...(wasTruncated ? { truncated: true } : {}) };
         return copy;
       });
     };
@@ -500,15 +512,22 @@ export default function AgentChat() {
       if (turnRef.current !== myTurn) { es.close(); if (esChatRef.current === es) esChatRef.current = null; resolve(); return; }
       let e: { k: string; v?: unknown; error?: string };
       try { e = JSON.parse(ev.data); } catch { return; }
-      if (e.k === "think") { thinking += String(e.v ?? ""); paint(); }
+      if (e.k === "run") {
+        if ((e.v as { truncated?: boolean } | undefined)?.truncated) { truncated = true; paint(); }
+      } else if (e.k === "model_loading") { status = `Loading ${(e.v as { model?: string })?.model || "local model"}…`; paint(); }
+      else if (e.k === "model_ready") { status = `${(e.v as { model?: string })?.model || "Local model"} is ready`; paint(); }
+      else if (e.k === "think") { thinking += String(e.v ?? ""); paint(); }
       else if (e.k === "text") {
         content += String(e.v ?? "");
+        status = "";
         paint();
         if (willSpeak) {
           let r;
           while ((r = nextSpeakChunk(content, spokenLen))) { enqueueSpeech(r.chunk); spokenLen = r.newLen; }
         }
       } else if (e.k === "model") { visionModel = String(e.v ?? ""); paint(); }
+      else if (e.k === "usage") setUsage(e.v as Usage);
+      else if (e.k === "truncated") { truncated = true; paint(); }
       else if (e.k === "transcript") {
         const heard = String(e.v ?? "");
         if (heard) setMessages((p) => { const c = [...p]; if (c[idx - 1]?.role === "user") c[idx - 1] = { ...c[idx - 1], content: heard }; return c; });
@@ -616,6 +635,17 @@ export default function AgentChat() {
     setTimeout(() => taRef.current?.focus(), 0);
   };
 
+  const handoffToCode = async () => {
+    if (!convoId || streaming) return;
+    const r = await fetch("/api/agent/handoff", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: convoId }),
+    }).then((x) => x.json()).catch(() => ({ error: "request failed" }));
+    if (!r.conversationId) { setCopied("handofferr"); setTimeout(() => setCopied(""), 3000); return; }
+    window.location.assign(`/code?conv=${encodeURIComponent(r.conversationId)}`);
+  };
+
   const deleteConvo = async (id: string) => {
     await fetch(`/api/agent/conversations/${id}`, { method: "DELETE" }).catch(() => {});
     setConvos((c) => c.filter((x) => x.id !== id));
@@ -658,7 +688,7 @@ export default function AgentChat() {
       const idx = next.length;
       const myTurn = ++turnRef.current; // identity of this turn; a reattach invalidates it
       reconcileIdxRef.current = idx;
-      setMessages([...next, { role: "assistant", content: "", thinking: "" }]);
+      setMessages([...next, { role: "assistant", content: "", thinking: "", status: `Starting ${model}…` }]);
       atBottomRef.current = true; // a fresh send pins to the bottom
 
       try {
@@ -669,7 +699,7 @@ export default function AgentChat() {
         const res = await fetch("/api/agent/chat", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ messages: next.map(({ role, content }) => ({ role, content })), conversationId: convoId || undefined, think: audioB64 ? false : think, attachments: imgs, currentArtifact: currentArtifact || undefined, audio: audioB64 || undefined }),
+        body: JSON.stringify({ messages: next.map(({ role, content }) => ({ role, content })), conversationId: convoId || undefined, model, think: audioB64 ? false : think, attachments: imgs, currentArtifact: currentArtifact || undefined, audio: audioB64 || undefined }),
         });
         if (!res.ok) {
           const err = await res.text().catch(() => "error");
@@ -700,7 +730,7 @@ export default function AgentChat() {
         setTimeout(() => taRef.current?.focus(), 0);
       }
     },
-    [messages, streaming, convoId, think, attached, speakOn, attachChatRun],
+    [messages, streaming, convoId, model, think, attached, speakOn, attachChatRun],
   );
 
   const patchConvo = (op: "delete" | "truncate", index: number) =>
@@ -735,6 +765,7 @@ export default function AgentChat() {
     setRevealedIdx(null);
     setStreaming(true);
     const base = messages[i]?.content ?? "";
+    setMessages((p) => { const c = [...p]; if (c[i]) c[i] = { ...c[i], truncated: false }; return c; });
     try {
       const res = await fetch("/api/agent/chat", {
         method: "POST",
@@ -743,6 +774,7 @@ export default function AgentChat() {
           messages: messages.slice(0, i + 1).map(({ role, content }) => ({ role, content })),
           conversationId: convoId || undefined,
           continueIndex: i,
+          model,
           think,
         }),
       });
@@ -760,6 +792,8 @@ export default function AgentChat() {
           if (e.k === "text") {
             cont += String(e.v ?? "");
             setMessages((p) => { const c = [...p]; if (c[i]) c[i] = { ...c[i], content: base + cont }; return c; });
+          } else if (e.k === "truncated") {
+            setMessages((p) => { const c = [...p]; if (c[i]) c[i] = { ...c[i], truncated: true }; return c; });
           } else if (e.k === "status" && ["done", "error", "stopped", "interrupted"].includes(String(e.v))) {
             es.close();
             if (esChatRef.current === es) esChatRef.current = null;
@@ -875,6 +909,7 @@ export default function AgentChat() {
           <Menu size={18} />
         </button>
         <div className="ml-auto flex items-center gap-2">
+          <div className="hidden sm:block"><StatsGlance usage={usage} /></div>
           <button
             onClick={() => toggleModes(!webMode, docsMode)}
             title={webMode ? "Web grounding ON — replies use live search" : "Ground replies in live web search"}
@@ -916,6 +951,23 @@ export default function AgentChat() {
             <SlidersHorizontal size={15} />
           </button>
           <button
+            onClick={handoffToCode}
+            disabled={!convoId || streaming}
+            title="Continue this chat in Code"
+            aria-label="Continue this chat in Code"
+            className="text-[var(--muted)] hover:text-[var(--accent-ai)] p-1.5 border border-[var(--border)] rounded-[var(--r-sm)] disabled:opacity-40"
+          >
+            <TerminalSquare size={15} />
+          </button>
+          <button
+            onClick={stopAllAgents}
+            title="Stop every active agent run"
+            aria-label="Stop every active agent run"
+            className="text-[var(--accent-danger)] hover:border-[var(--accent-danger)] p-1.5 border border-[var(--border)] rounded-[var(--r-sm)]"
+          >
+            <CircleStop size={15} />
+          </button>
+          <button
             onClick={newChat}
             disabled={streaming}
             className="text-xs text-[var(--muted)] hover:text-white px-2 py-1 disabled:opacity-40"
@@ -932,6 +984,7 @@ export default function AgentChat() {
             : copied === "micdenied" ? "Microphone permission denied — allow it in the browser"
             : copied === "nomic" ? "Can't access the microphone on this device/browser"
             : copied === "audioerr" ? "Couldn't process the recording"
+            : copied === "handofferr" ? "Couldn't create the coding handoff"
             : copied === "chat" ? "Chat copied" : "Copied"}
         </div>
       )}
@@ -1038,6 +1091,7 @@ export default function AgentChat() {
               }
               return (
                 <div key={i} className="group flex flex-col gap-1.5 animate-msg-in">
+                  {m.status && <div className="text-xs text-[var(--accent-ai)] inline-flex items-center gap-1.5"><Brain size={13} />{m.status}</div>}
                   {m.thinking && (
                     <details open={isLast && streaming && !m.content} className="text-xs group">
                       <summary className="cursor-pointer select-none text-[var(--accent-ai)]/80 hover:text-[var(--accent-ai)] list-none flex items-center gap-1.5 transition-colors">
@@ -1069,7 +1123,7 @@ export default function AgentChat() {
                       <span className="inline-block w-1.5 h-4 bg-[var(--accent-ai)] ml-0.5 align-middle animate-pulse" />
                     )}
                   </div>
-                  {!streaming && (m.content.match(/```/g)?.length ?? 0) % 2 === 1 && (
+                  {!streaming && m.truncated && (
                     <button
                       onClick={() => continueMessage(i)}
                       className="self-start text-xs inline-flex items-center gap-1 border border-[var(--accent-ai)]/40 rounded-[var(--r-sm)] px-2.5 py-1 text-[var(--accent-ai)] hover:bg-[var(--accent-ai)]/10"

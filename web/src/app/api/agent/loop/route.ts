@@ -10,10 +10,9 @@ import { startRun, requestApproval, resolveApproval } from "@/lib/runs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
 
-// Workflow modes: each preset trades round/token budget, thinking, and sampling
-// for a task shape. `default` is byte-identical to this file's pre-mode behavior
-// (empty addendum, same maxRounds/maxTokens/ctx/think) so existing sessions and
-// callers that never pass `mode` see no change.
+// Workflow modes define policy defaults and ceilings for a task shape. Persisted
+// LLM settings still control the actual context, output, and sampling values used
+// by a run; a mode must not silently make the settings panel lie.
 type ModePreset = {
   label: string;
   maxRounds: number;
@@ -148,7 +147,7 @@ function coreMemoryText(root: string): string {
 
 export function GET() {
   fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true });
-  const modes = Object.entries(MODES).map(([id, m]) => ({ id, label: m.label }));
+  const modes = Object.entries(MODES).map(([id, m]) => ({ id, label: m.label, think: m.think }));
   return NextResponse.json({ workspace: DEFAULT_WORKSPACE, projects: listProjects(), modes });
 }
 
@@ -181,6 +180,13 @@ export async function POST(req: NextRequest) {
   // mode's own default applies — this is what makes quick-edit's think:false and
   // orchestrator's think:true actually take effect for callers that don't set it.
   const think = typeof b.think === "boolean" ? b.think : preset.think;
+  const configuredCtx = Number.isFinite(s.options.num_ctx) ? s.options.num_ctx : preset.ctx;
+  // Modes establish a proven minimum. A user-raised context is honored, and a
+  // smaller setting never silently undercuts a mode's system/tools footprint.
+  const ctx = Math.max(2048, preset.ctx, configuredCtx);
+  // -1 means "use the mode default". A positive saved setting is honored but
+  // bounded to avoid a single response reserving an unworkable context window.
+  const maxTokens = s.options.num_predict > 0 ? Math.min(Math.floor(s.options.num_predict), 16384) : preset.maxTokens;
 
   const proj = resolveProject(b.project);
   if ("error" in proj) return new Response(proj.error, { status: 400 });
@@ -190,6 +196,12 @@ export async function POST(req: NextRequest) {
   const memoryText = coreMemoryText(root);
   const cid = (b.conversationId as string) || "code-" + newId();
   const toolset = typeof b.toolset === "string" ? b.toolset : undefined;
+  const title = String(incoming.find((m) => m.role === "user")?.content || "code session").slice(0, 60);
+
+  // Persist immediately, before a cold model load or the first tool call. A page
+  // reload must be able to recover a newly created session even while the model is
+  // still loading and has not produced a single event yet.
+  try { saveConvo({ id: cid, title, ts: Date.now(), project: root, messages: incoming as { role: string; content: string }[] }); } catch {}
 
   const meta = startRun(
     { kind: "code", conversationId: cid, project: root, model, mode: modeId },
@@ -201,6 +213,7 @@ export async function POST(req: NextRequest) {
       // events. A client that reopens mid-run rebuilds its view as
       // reconstruct(saved[..base]) + replay(events).
       emit({ k: "turn", v: { base: incoming.length } });
+      emit({ k: "model_loading", v: { model, ctx } });
 
       // Model serving happens INSIDE the run (it can take up to a minute for a big
       // model — the POST reply must not wait on it). A serve failure becomes a run
@@ -223,7 +236,7 @@ export async function POST(req: NextRequest) {
         baseUrl = "http://127.0.0.1:11434";
       } else {
         try {
-          await ensureServing(model, preset.ctx);
+          await ensureServing(model, ctx);
           baseUrl = `http://127.0.0.1:${SERVE_PORT}`;
         } catch (e) {
           if (mi?.source === "ollama") {
@@ -234,6 +247,7 @@ export async function POST(req: NextRequest) {
           }
         }
       }
+      emit({ k: "model_ready", v: { model, ctx, backend: baseUrl.includes(":11434") ? "ollama" : "llama.cpp" } });
 
       const approve = async (call: { id: string; name: string; args: Record<string, unknown> }) => {
         if (autoApprove) return true;
@@ -271,7 +285,6 @@ export async function POST(req: NextRequest) {
           instructions.text + memoryText,
       };
       const messages: ToolLoopMsg[] = incoming[0]?.role === "system" ? incoming.slice() : [system, ...incoming];
-      const title = String(incoming.find((m) => m.role === "user")?.content || "code session").slice(0, 60);
       const snapshot = (msgs: ToolLoopMsg[]) => {
         try { saveConvo({ id: cid, title, ts: Date.now(), project: root, messages: msgs as { role: string; content: string }[] }); } catch {}
       };
@@ -282,9 +295,10 @@ export async function POST(req: NextRequest) {
       const maxResearchCalls = toolset === "planner" ? 5 : preset.maxResearchCalls;
       const finalMessages = await runToolLoop({
         baseUrl, model, messages, tools: exec.defs, exec,
-        maxRounds: preset.maxRounds, maxTokens: preset.maxTokens, think, temperature: preset.temperature,
+        maxRounds: preset.maxRounds, maxTokens, think,
+        temperature: s.options.temperature, topP: s.options.top_p, topK: s.options.top_k, repeatPenalty: s.options.repeat_penalty,
         minResearchCalls: preset.minResearchCalls, maxResearchCalls,
-        ctx: preset.ctx,
+        ctx,
         onEvent: (e) => emit(e),
         onSnapshot: snapshot,
         approve,

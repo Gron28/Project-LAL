@@ -7,7 +7,7 @@
 // direction.
 import { useEffect, useRef, useState } from "react";
 import type { EditorView } from "@codemirror/view";
-import { ExternalLink, Save, X } from "lucide-react";
+import { ExternalLink, Play, Save, X } from "lucide-react";
 
 async function languageFor(name: string) {
   const ext = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
@@ -179,6 +179,12 @@ export default function EditorPane({ project, filePath, refreshTick, rawHref, on
             style={{ borderColor: dirty ? "var(--accent-ai)" : "var(--border)", color: dirty ? "var(--accent-ai)" : "var(--muted)" }}>
             <Save size={12} /> save
           </button>
+          {/\.html?$/i.test(filePath) && (
+            <a href={rawHref} target="_blank" rel="noreferrer" title="run this page"
+              className="flex items-center gap-1 text-[11px] border rounded px-2 py-1" style={{ borderColor: "#3fb950", color: "#3fb950" }}>
+              <Play size={12} /> run
+            </a>
+          )}
           <a href={rawHref} target="_blank" rel="noreferrer" title="open raw" className="text-[var(--muted)] hover:text-[var(--text-2)]">
             <ExternalLink size={13} />
           </a>
