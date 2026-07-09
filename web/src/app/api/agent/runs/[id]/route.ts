@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deleteRun, getRun, getRunTrace } from "@/lib/runs";
+import { diagnoseRun } from "@/lib/autopsy";
 
 export const dynamic = "force-dynamic";
 
@@ -8,7 +9,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const run = getRun(id);
   if (!run) return NextResponse.json({ error: "not found" }, { status: 404 });
   if (new URL(req.url).searchParams.get("trace") === "1") {
-    return NextResponse.json({ run, trace: getRunTrace(id) });
+    // trace + diagnosis travel together: the Library's inspector shows WHAT
+    // happened (trace) and WHY it counts as clean/flawed/failed (diagnosis).
+    return NextResponse.json({ run, trace: getRunTrace(id), diagnosis: diagnoseRun(id) });
   }
   return NextResponse.json(run);
 }

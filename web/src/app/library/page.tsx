@@ -12,6 +12,13 @@ type ConvoRow = { id: string; title: string; updatedAt: number; kind: "chat" | "
 type ProjectRow = { path: string; exists: boolean };
 type RunRow = { id: string; kind: "chat" | "code" | "deliberate"; conversationId: string; project?: string; model: string; mode?: string; status: string; truncated?: boolean; startedAt: number; updatedAt: number };
 type RunTrace = { reasoning: string; output: string; events: { seq: number; ts: number; k: string; detail: string }[] };
+type Diagnosis = {
+  verdict: "clean" | "flawed" | "failed";
+  findings: { code: string; count: number; detail: string }[];
+  stats: { durationSec: number; rounds: number; toolCalls: number; toolFailures: number; textChars: number; thinkChars: number; nudges: number; maxGapSec: number; tokPerSec: number | null; avgConf: number | null; minConf: number | null };
+};
+type ModelReportRow = { model: string; runs: number; clean: number; flawed: number; failed: number; toolCalls: number; toolFailures: number; avgTokPerSec: number | null; avgConf: number | null; topFailures: { code: string; count: number }[] };
+const verdictColor = (v: string) => v === "clean" ? "#3fb950" : v === "flawed" ? "var(--accent-warn,#d29922)" : "var(--accent-danger)";
 type ExperimentRow = {
   name: string; status: string; updatedAt: number; base: string; mode: string; steps: number; lr: number;
   dataset: { name: string; sha256: string; bytes: number; rows: number | null } | null; model?: string | null;
@@ -281,7 +288,12 @@ function Runs() {
   const [status, setStatus] = useState("");
   const [selected, setSelected] = useState<RunRow | null>(null);
   const [trace, setTrace] = useState<RunTrace | null>(null);
-  const load = () => fetch("/api/agent/runs?limit=100").then((r) => r.json()).then(setRuns).catch(() => setStatus("Couldn't load run history."));
+  const [diag, setDiag] = useState<Diagnosis | null>(null);
+  const [report, setReport] = useState<ModelReportRow[]>([]);
+  const load = () => {
+    fetch("/api/agent/runs?limit=100").then((r) => r.json()).then(setRuns).catch(() => setStatus("Couldn't load run history."));
+    fetch("/api/agent/runs/report").then((r) => r.json()).then(setReport).catch(() => {});
+  };
   useEffect(() => { load(); }, []);
   const remove = async (run: RunRow) => {
     if (!confirm(`Delete the ${run.kind} run record? Its conversation and workspace files will remain.`)) return;
@@ -293,10 +305,10 @@ function Runs() {
     }
   };
   const inspect = async (run: RunRow) => {
-    setSelected(run); setTrace(null);
+    setSelected(run); setTrace(null); setDiag(null);
     const j = await fetch(`/api/agent/runs/${encodeURIComponent(run.id)}?trace=1`).then((r) => r.json()).catch(() => ({ error: "request failed" }));
     if (j.error) setStatus(j.error);
-    else setTrace(j.trace || { reasoning: "", output: "", events: [] });
+    else { setTrace(j.trace || { reasoning: "", output: "", events: [] }); setDiag(j.diagnosis || null); }
   };
   const href = (run: RunRow) => run.kind === "chat" ? `/chat?conv=${encodeURIComponent(run.conversationId)}` : `/code?conv=${encodeURIComponent(run.conversationId)}`;
   const removeAll = async () => {
@@ -309,6 +321,41 @@ function Runs() {
   };
   return (
     <div className="flex flex-col gap-3">
+      {report.length > 0 && (
+        <div className={card + " overflow-x-auto"}>
+          <div className={head}><FlaskConical size={13} className="text-[var(--accent-ai)]" /> MODEL REPORT CARD <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">from every stored run — measure what works</span></div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
+                <th className="text-left px-4 py-2 font-normal">model</th>
+                <th className="text-right px-2 py-2 font-normal">runs</th>
+                <th className="text-right px-2 py-2 font-normal" title="no findings">clean</th>
+                <th className="text-right px-2 py-2 font-normal" title="finished but with defects">flawed</th>
+                <th className="text-right px-2 py-2 font-normal" title="no output / error / stuck loop">failed</th>
+                <th className="text-right px-2 py-2 font-normal" title="failed tool calls / total">tool fails</th>
+                <th className="text-right px-2 py-2 font-normal">tok/s</th>
+                <th className="text-right px-2 py-2 font-normal" title="avg token confidence where captured">conf</th>
+                <th className="text-left px-4 py-2 font-normal">top failure modes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.map((m) => (
+                <tr key={m.model} className="border-t border-[var(--border-soft)]">
+                  <td className="px-4 py-2 font-mono truncate max-w-[160px]">{m.model}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{m.runs}</td>
+                  <td className="px-2 py-2 text-right tabular-nums" style={{ color: "#3fb950" }}>{m.clean}</td>
+                  <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--accent-warn,#d29922)" }}>{m.flawed}</td>
+                  <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--accent-danger)" }}>{m.failed}</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-[var(--muted)]">{m.toolFailures}/{m.toolCalls}</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-[var(--muted)]">{m.avgTokPerSec ?? "—"}</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-[var(--muted)]">{m.avgConf != null ? Math.round(m.avgConf * 100) + "%" : "—"}</td>
+                  <td className="px-4 py-2 text-[var(--muted)] truncate max-w-[220px]">{m.topFailures.map((f) => `${f.code}×${f.count}`).join(" · ") || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <div className={card}>
         <div className={head}>
           <History size={13} className="text-[var(--accent-ai)]" /> AGENT RUNS
@@ -335,10 +382,33 @@ function Runs() {
         <div className={card + " overflow-hidden"}>
           <div className={head}>
             <ListTree size={13} className="text-[var(--accent-ai)]" /> RUN TRACE <span className="normal-case tracking-normal text-[var(--muted)] truncate">{selected.id}</span>
-            <button onClick={() => { setSelected(null); setTrace(null); }} className="ml-auto text-[var(--muted)] hover:text-[var(--text)]" title="Close trace"><X size={14} /></button>
+            {diag && <span className="text-[10px] px-2 py-0.5 rounded-full border normal-case tracking-normal" style={{ color: verdictColor(diag.verdict), borderColor: verdictColor(diag.verdict) }}>{diag.verdict}</span>}
+            <button onClick={() => { setSelected(null); setTrace(null); setDiag(null); }} className="ml-auto text-[var(--muted)] hover:text-[var(--text)]" title="Close trace"><X size={14} /></button>
           </div>
           {!trace && <div className="p-4 text-xs text-[var(--muted)]">Loading trace...</div>}
           {trace && <div className="divide-y divide-[var(--border-soft)]">
+            {diag && (
+              <section className="p-4">
+                <h2 className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Diagnosis</h2>
+                <div className="text-[11px] text-[var(--muted)] mb-2 flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
+                  <span>{diag.stats.durationSec}s</span>
+                  <span>{diag.stats.rounds} rounds</span>
+                  <span>{diag.stats.toolFailures}/{diag.stats.toolCalls} tool calls failed</span>
+                  {diag.stats.nudges > 0 && <span>{diag.stats.nudges} nudges</span>}
+                  {diag.stats.maxGapSec > 10 && <span>{diag.stats.maxGapSec}s longest silence</span>}
+                  {diag.stats.tokPerSec != null && <span>{diag.stats.tokPerSec} tok/s</span>}
+                  {diag.stats.avgConf != null && <span>certainty {Math.round(diag.stats.avgConf * 100)}% (min {Math.round((diag.stats.minConf ?? 0) * 100)}%)</span>}
+                </div>
+                {diag.findings.length === 0
+                  ? <div className="text-xs" style={{ color: "#3fb950" }}>No defects found.</div>
+                  : diag.findings.map((f) => (
+                      <div key={f.code} className="text-xs mb-1">
+                        <span className="font-mono" style={{ color: verdictColor(diag.verdict) }}>{f.code}{f.count > 1 ? ` ×${f.count}` : ""}</span>
+                        <span className="text-[var(--muted)]"> — {f.detail}</span>
+                      </div>
+                    ))}
+              </section>
+            )}
             {trace.reasoning && <section className="p-4"><h2 className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Model-emitted reasoning</h2><pre className="whitespace-pre-wrap break-words text-xs leading-5 text-[var(--text-2)] max-h-72 overflow-auto">{trace.reasoning}</pre></section>}
             {trace.events.length > 0 && <section className="p-4"><h2 className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Process events</h2><div className="flex flex-col gap-2 max-h-72 overflow-auto">{trace.events.map((event) => <div key={event.seq + event.k} className="text-xs"><span className="text-[var(--accent-ai)] font-mono">{event.k}</span>{event.detail && <pre className="mt-1 whitespace-pre-wrap break-words text-[var(--muted)]">{event.detail}</pre>}</div>)}</div></section>}
             {trace.output && <section className="p-4"><h2 className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Model output</h2><pre className="whitespace-pre-wrap break-words text-xs leading-5 text-[var(--text)] max-h-72 overflow-auto">{trace.output}</pre></section>}
