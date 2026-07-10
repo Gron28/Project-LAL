@@ -19,12 +19,14 @@ type Ev =
   | { k: "round"; agent?: string }
   | { k: "max_rounds"; v: number; agent?: string }
   | { k: "stall_nudge"; agent?: string }
+  | { k: "act_nudge"; agent?: string }
   | { k: "forced_verify"; agent?: string }
   | { k: "research_depth_nudge"; v: { count: number; min: number }; agent?: string }
   | { k: "think_recovered"; v: { count: number }; agent?: string }
   | { k: "model_loading"; v: { model: string; ctx: number }; agent?: string }
   | { k: "model_ready"; v: { model: string; ctx: number; backend?: string }; agent?: string }
   | { k: "context_limit"; v: { estimatedTokens: number; reserveTokens: number; ctx: number }; agent?: string }
+  | { k: "context_compacted"; v: { trimmed: number }; agent?: string }
   | { k: "tool_request"; v: { id: string; name: string; args: Record<string, unknown> }; agent?: string }
   | { k: "tool_progress"; v: { id: string; name: string; chars: number; preview: string }; agent?: string }
   | { k: "tool_result"; v: { id: string; name: string; ok: boolean; output: string }; agent?: string }
@@ -153,10 +155,12 @@ function applyEvent(next: Block[], e: Ev): void {
   // transcript as user-role messages tagged name:"nudge" (rendered by
   // reconstructSession the same way) — never as messages the user wrote.
   else if (e.k === "stall_nudge") next.push({ t: "status", text: (agent ? `[${agent}] ` : "") + "auto-nudge: several read-only rounds — told the model to start writing" });
+  else if (e.k === "act_nudge") next.push({ t: "status", text: (agent ? `[${agent}] ` : "") + "auto-nudge: reply promised action without doing it — told the model to execute now" });
   else if (e.k === "forced_verify") next.push({ t: "status", text: (agent ? `[${agent}] ` : "") + "auto-nudge: told the model to re-read its files and verify before finishing" });
   else if (e.k === "research_depth_nudge") next.push({ t: "status", text: (agent ? `[${agent}] ` : "") + `auto-nudge: research too shallow (${e.v.count} of ~${e.v.min} searches) — told the model to keep going` });
   else if (e.k === "think_recovered") next.push({ t: "status", text: (agent ? `[${agent}] ` : "") + `recovered ${e.v.count} tool call${e.v.count === 1 ? "" : "s"} the model buried in its reasoning text` });
   else if (e.k === "context_limit") next.push({ t: "error", text: (agent ? `[${agent}] ` : "") + `context budget exhausted before the next model call (${e.v.estimatedTokens} estimated input + ${e.v.reserveTokens} reserved / ${e.v.ctx} tokens). Continue in a fresh task or reduce the attached context.` });
+  else if (e.k === "context_compacted") next.push({ t: "status", text: (agent ? `[${agent}] ` : "") + `trimmed ${e.v.trimmed} older tool output${e.v.trimmed === 1 ? "" : "s"} to stay within context` });
   else if (e.k === "phase") next.push({ t: "status", text: "── " + e.v.name + " ──" });
   else if (e.k === "roles") next.push({ t: "status", text: "Perspectives: " + e.v.roles.map((r) => `${r.name} (${r.lens})`).join(" · ") });
   else if (e.k === "debate_turn") next.push({ t: "assistant", text: e.v.text, think: "", agent: e.v.role });

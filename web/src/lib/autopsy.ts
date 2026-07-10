@@ -99,6 +99,7 @@ export function diagnoseRun(id: string): RunDiagnosis | null {
         break;
       }
       case "stall_nudge": stats.nudges++; add("stalled_reading", "read-only rounds until nudged to write"); break;
+      case "act_nudge": stats.nudges++; add("announced_not_acted", "ended a turn promising future work without doing it"); break;
       case "research_depth_nudge": stats.nudges++; add("shallow_research", "answered before the mode's research floor"); break;
       case "forced_verify": stats.nudges++; break; // routine guard, not a defect by itself
       case "think_recovered": add("buried_tool_calls", "emitted tool calls as reasoning text instead of structured calls", Number((v as { count?: number })?.count ?? 1)); break;

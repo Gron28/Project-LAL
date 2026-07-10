@@ -30,6 +30,7 @@ export type ToolLoopEvent =
   | { k: "tool_result"; v: { id: string; name: string; ok: boolean; output: string } }
   | { k: "round" }
   | { k: "max_rounds"; v: number }
+  | { k: "act_nudge" }
   | { k: "model_swap"; v: { from: string | null; to: string } }
   | { k: "think_recovered"; v: { count: number } }
   | { k: "forced_verify" }
@@ -43,7 +44,27 @@ export type ToolLoopEvent =
   | { k: "truncated"; v: { round: number } }
   // Refuse a request before it reaches the inference backend when its estimated
   // input plus reserved output/tool-result space would overflow the context.
-  | { k: "context_limit"; v: { estimatedTokens: number; reserveTokens: number; ctx: number } };
+  | { k: "context_limit"; v: { estimatedTokens: number; reserveTokens: number; ctx: number } }
+  // Older tool outputs were trimmed in place to fit the context window instead of
+  // failing the run (deep-research died at round 12/64 from accumulated search
+  // results, 2026-07-09). The most recent rounds are always kept intact.
+  | { k: "context_compacted"; v: { trimmed: number } };
+
+// Trim the bodies of old tool results, oldest first, keeping the newest
+// `keepTail` messages untouched — the model keeps its recent working set and a
+// stub of everything else. Mutates in place (the loop's transcript array), so the
+// saved conversation carries the compacted form forward too.
+function compactOldToolResults(messages: ToolLoopMsg[], keepTail = 10): number {
+  let trimmed = 0;
+  for (let i = 0; i < Math.max(0, messages.length - keepTail); i++) {
+    const m = messages[i];
+    if (m.role === "tool" && typeof m.content === "string" && m.content.length > 500) {
+      m.content = m.content.slice(0, 400) + "\n…[older tool output trimmed to save context — re-run the tool if this is needed again]";
+      trimmed++;
+    }
+  }
+  return trimmed;
+}
 
 // Motivated by a real failure (2026-07-07 snake-roguelike eval): victory9-8b wrote
 // itself a detailed plan, implemented almost none of it, then reported full
@@ -61,6 +82,15 @@ const FORCED_VERIFY_NUDGE = "Before you finish: re-read every file you wrote or 
 // session should never see this).
 const STALL_ROUND_THRESHOLD = 3;
 const STALL_NUDGE = "You've spent several rounds only reading or listing files without writing or editing anything. You already have enough context — make your first write_file or edit_file call this turn instead of reading further.";
+
+// Third failure in the same family, observed live 2026-07-09 (victory6-8b,
+// orchestrator mode): the model ANNOUNCES its next actions ("I'll start by
+// creating the necessary file structure.") and then ends its turn — the loop
+// accepted that promise as a final answer and the run finished "done" having
+// built nothing. Fires once, only when the session could write but never did
+// and the reply's ending reads as a promise of future work.
+const PROMISES_ACTION_RE = /\b(i(?:'|’)ll|i will|let(?:'|’)s|we(?:'|’)ll|we will|proceed to|start by|next,? (?:i|we)\b|i(?:'|’)m going to)\b/i;
+const ACT_NUDGE = "Your reply announced what you were GOING to do, then stopped without doing any of it. Do not narrate future actions — execute them NOW with tool calls (write_file, edit_file, run_shell…). Keep working until the task itself is complete, then report what you actually did.";
 
 // Deep-research mode's actual complaint (2026-07-07): the model answers after 1-2
 // web_search calls, the same shallow depth as a normal chat turn, when the point of
@@ -168,6 +198,7 @@ export async function runToolLoop(opts: {
   let forcedVerifyDone = false;
   let consecutiveReadOnlyRounds = 0;
   let stallNudgeDone = false;
+  let actNudgeDone = false;
   const canWrite = tools.some((t) => t.function.name === "write_file" || t.function.name === "edit_file");
   let researchCallCount = 0;
   let researchNudgeCount = 0;
@@ -200,8 +231,17 @@ export async function runToolLoop(opts: {
     // restriction, re-adding the body params lights confidence capture back up.
     // Token confidence IS captured on the /chat path (no tools there — supported).
     if (opts.ctx) {
-      const estimatedTokens = estimateRequestTokens(body);
+      let estimatedTokens = estimateRequestTokens(body);
       const reserveTokens = Math.min(maxTokens, Math.max(512, Math.floor(opts.ctx * 0.3))) + 1024;
+      if (estimatedTokens + reserveTokens >= opts.ctx) {
+        // Try shrinking before failing: old tool outputs are the bulk of a long
+        // transcript and the least valuable part of it.
+        const trimmed = compactOldToolResults(messages);
+        if (trimmed) {
+          onEvent({ k: "context_compacted", v: { trimmed } });
+          estimatedTokens = estimateRequestTokens(body); // body.messages is the same array
+        }
+      }
       if (estimatedTokens + reserveTokens >= opts.ctx) {
         onEvent({ k: "context_limit", v: { estimatedTokens, reserveTokens, ctx: opts.ctx } });
         throw new Error(`context budget exhausted before round ${round + 1} (estimated ${estimatedTokens} input + ${reserveTokens} reserved > ${opts.ctx} context tokens)`);
@@ -338,6 +378,13 @@ export async function runToolLoop(opts: {
         onEvent({ k: "forced_verify" });
         continue;
       }
+      if (canWrite && !wroteFiles && !actNudgeDone && PROMISES_ACTION_RE.test(content.slice(-400))) {
+        actNudgeDone = true;
+        messages.push({ role: "assistant", content });
+        messages.push({ role: "user", content: ACT_NUDGE, name: "nudge" });
+        onEvent({ k: "act_nudge" });
+        continue;
+      }
       // The model produced a final answer with no tool calls — but if the round
       // hit the token cap (finish_reason "length") the answer is CUT MID-THOUGHT,
       // not finished. Surface it so the UI can offer Continue (and auto-continue
@@ -418,7 +465,10 @@ export async function runToolLoop(opts: {
 
     const mutated = calls.some((c) => c.name === "write_file" || c.name === "edit_file" || c.name === "run_shell");
     consecutiveReadOnlyRounds = mutated ? 0 : consecutiveReadOnlyRounds + 1;
-    if (canWrite && !stallNudgeDone && consecutiveReadOnlyRounds >= STALL_ROUND_THRESHOLD) {
+    // Never in research modes (minResearchCalls set): there, many read-only
+    // rounds IS the assignment — this nudge told a deep-research run to stop
+    // researching and write files (observed 2026-07-09).
+    if (canWrite && !opts.minResearchCalls && !stallNudgeDone && consecutiveReadOnlyRounds >= STALL_ROUND_THRESHOLD) {
       stallNudgeDone = true;
       consecutiveReadOnlyRounds = 0;
       messages.push({ role: "user", content: STALL_NUDGE, name: "nudge" });
