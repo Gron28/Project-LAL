@@ -632,11 +632,15 @@ export default function CodePage() {
     // "near bottom" on the next scroll event. wheel/touchmove only ever fire for a
     // real user gesture, so they unstick immediately and unconditionally; only the
     // passive scroll check re-sticks (once the user's back at the bottom themselves).
-    const unstick = () => { stickRef.current = false; setShowJump(true); };
+    const atBottom = () => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 160;
+    // wheel/touchmove can fire from a trivial gesture (a stray trackpad brush, overscroll
+    // bounce) even when the page is too short to scroll at all — only show the pill if
+    // there's actually somewhere below to jump to.
+    const unstick = () => { stickRef.current = false; setShowJump(!atBottom()); };
     const onScroll = () => {
-      const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 160;
-      stickRef.current = atBottom;
-      setShowJump(!atBottom);
+      const bottom = atBottom();
+      stickRef.current = bottom;
+      setShowJump(!bottom);
       if (revealedIdx !== null) setRevealedIdx(null); // scrolling dismisses a long-press reveal
     };
     window.addEventListener("wheel", unstick, { passive: true });
@@ -807,9 +811,9 @@ export default function CodePage() {
   return (
     <div style={{ "--tree-w": treeW + "px", "--ed-w": edW ? edW + "px" : "min(52vw,760px)" } as React.CSSProperties}
       className={(treeOpen ? "xl:pl-[var(--tree-w)] " : "") + (openFile ? "lg:pr-[var(--ed-w)]" : "")}>
-    <div className="max-w-4xl mx-auto px-3 pb-40 flex flex-col min-h-dvh">
+    <div className="max-w-6xl mx-auto px-3 pb-40 flex flex-col min-h-dvh">
       {/* ── Sticky command bar + telemetry ───────────────────────────────── */}
-      <div className="sticky top-0 z-30 -mx-3 sm:-mx-4 px-3 sm:px-4 bg-[var(--bg)]/92 backdrop-blur-md border-b border-[var(--border-soft)]">
+      <div className="sticky top-0 z-30 -mx-3 px-3 bg-[var(--bg)]/92 backdrop-blur-md border-b border-[var(--border-soft)]">
         <header className="flex items-center gap-2 h-14">
           {/* Mobile: menu opens the full control sheet */}
           <button onClick={() => setMenuOpen(true)} className={iconBtn + " lg:hidden"} title="controls"><Menu size={16} /></button>
@@ -950,13 +954,20 @@ export default function CodePage() {
       </div>
 
       {showJump && (
-        // The editor pane is a full-screen takeover below lg (openFile w-full) — this
-        // floating pill would otherwise render above it (z-40 > editor's z-30)
+        // Centered on the actual content column, not the raw viewport — left-1/2 alone
+        // ignores the nav rail / tree sidebar / editor pane offsets the composer bar
+        // below already accounts for, so it drifted off-center whenever any of those
+        // were open. The editor pane is a full-screen takeover below lg (openFile
+        // w-full) — this pill would otherwise render above it (z-40 > editor's z-30)
         // regardless of DOM order, visually leaking into an unrelated full-screen view.
-        <button onClick={jumpToBottom} title="jump to latest"
-          className={(openFile ? "hidden lg:flex " : "flex ") + "fixed bottom-32 left-1/2 -translate-x-1/2 z-40 items-center gap-1.5 text-xs bg-[var(--surface-1)] border border-[var(--border)] rounded-full shadow-lg px-3 py-1.5 text-[var(--text-2)]"}>
-          <ArrowDown size={13} /> jump to latest
-        </button>
+        <div className={(openFile ? "hidden lg:flex " : "flex ") + "fixed bottom-32 left-0 right-0 z-40 justify-center pointer-events-none"
+          + (navCollapsed ? "" : " md:left-12 lg:left-36")
+          + (openFile ? " lg:right-[var(--ed-w)]" : "") + (treeOpen ? (navCollapsed ? " xl:left-[var(--tree-w)]" : " xl:left-[calc(var(--tree-w)+9rem)]") : "")}>
+          <button onClick={jumpToBottom} title="jump to latest"
+            className="pointer-events-auto flex items-center gap-1.5 text-xs bg-[var(--surface-1)] border border-[var(--border)] rounded-full shadow-lg px-3 py-1.5 text-[var(--text-2)]">
+            <ArrowDown size={13} /> jump to latest
+          </button>
+        </div>
       )}
 
       {approval && (
@@ -980,7 +991,7 @@ export default function CodePage() {
       <div className={"fixed bottom-14 md:bottom-0 left-0 right-0 bg-[var(--bg)]/95 backdrop-blur-md border-t border-[var(--border)] px-3 pt-2.5 pb-[calc(env(safe-area-inset-bottom)+0.625rem)]"
         + (navCollapsed ? "" : " md:left-12 lg:left-36")
         + (openFile ? " lg:right-[var(--ed-w)]" : "") + (treeOpen ? (navCollapsed ? " xl:left-[var(--tree-w)]" : " xl:left-[calc(var(--tree-w)+9rem)]") : "")}>
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           {/* Continue affordance: the last reply hit the token ceiling mid-thought. */}
           {truncated && !busy && (
             <button onClick={continueRun}
