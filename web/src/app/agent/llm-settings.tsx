@@ -59,6 +59,8 @@ export default function LlmSettings({
   const [system, setSystem] = useState("");
 
   useEffect(() => {
+    // Sync from localStorage when the panel opens — not derivable at render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (open) setVoiceState(getVoice());
   }, [open]);
 

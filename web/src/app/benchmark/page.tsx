@@ -242,7 +242,7 @@ export default function Benchmark() {
               </Panel>
             ) : (
               <>
-                <div className="grid xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,.55fr)] gap-4 items-start">
+                <div className="grid min-w-0 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,.55fr)] gap-4 items-start">
                   <Panel>
                     <SectionTitle eyebrow="Capability profile" title={suite === "gsm8k" ? "Model accuracy across 60 reasoning problems" : "Exact performance by dimension"} note={`${selectedSuite?.count || leader?.total || 0} questions in ${suite}`} />
                     <CapabilityProfile runs={suiteRuns} cats={cats} />

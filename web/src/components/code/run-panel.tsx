@@ -35,7 +35,7 @@ export default function RunPanel({ project }: { project: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [showFrame, setShowFrame] = useState(false);
-  const [, setTick] = useState(0); // re-render for the uptime clock
+  const [now, setNow] = useState(() => Date.now()); // drives the uptime clock
   const logRef = useRef<HTMLPreElement>(null);
 
   const poll = async () => {
@@ -49,9 +49,11 @@ export default function RunPanel({ project }: { project: string }) {
   };
 
   useEffect(() => {
+    // Fetch-on-mount + poll — the setState happens inside poll()'s async continuation.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     poll();
     const iv = setInterval(poll, 2000);
-    const clock = setInterval(() => setTick((t) => t + 1), 1000);
+    const clock = setInterval(() => setNow(Date.now()), 1000);
     return () => { clearInterval(iv); clearInterval(clock); };
   }, []);
 
@@ -123,7 +125,7 @@ export default function RunPanel({ project }: { project: string }) {
           <div className="text-[10px] text-[var(--muted)] flex items-center gap-2">
             <span>pid {status.pid}</span>
             <span>·</span>
-            <span>{status.startedAt ? fmtUptime(Date.now() - status.startedAt) : ""}</span>
+            <span>{status.startedAt ? fmtUptime(now - status.startedAt) : ""}</span>
             <button onClick={stop} disabled={busy} className="ml-auto flex items-center gap-1 text-[var(--accent-danger)] border border-[var(--accent-danger)]/50 rounded px-2 py-0.5">
               <Square size={10} /> stop
             </button>

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 type Sys = {
   cpu: number; ramUsedGb: number; ramTotalGb: number; ramPct: number;
@@ -11,7 +11,7 @@ const card = "bg-[var(--surface-1)] border border-[var(--border)] rounded-[var(-
 
 function colour(p: number) { return p >= 90 ? "var(--accent-danger)" : p >= 70 ? "var(--accent-warn)" : "var(--accent-ai)"; }
 
-function Bar({ label, pct, detail }: { label: string; pct: number | null; detail: string }) {
+function Bar({ label, pct, detail }: { label: string; pct: number | null; detail: ReactNode }) {
   const p = pct ?? 0;
   return (
     <div>
@@ -43,9 +43,9 @@ export default function Monitor() {
         <h1 className="text-[var(--accent-ai)] tracking-widest font-bold">◉ SYSTEM MONITOR</h1>
         <div className={card + " p-5 flex flex-col gap-5"}>
           {s ? <>
-            <Bar label="CPU" pct={s.cpu} detail={`· ${temp(s.cpuTemp) as unknown as string}`} />
+            <Bar label="CPU" pct={s.cpu} detail={<>· {temp(s.cpuTemp)}</>} />
             <Bar label="RAM" pct={s.ramPct} detail={`${s.ramUsedGb} / ${s.ramTotalGb} GB`} />
-            <Bar label="GPU" pct={s.gpu} detail={`· ${temp(s.gpuTemp) as unknown as string}`} />
+            <Bar label="GPU" pct={s.gpu} detail={<>· {temp(s.gpuTemp)}</>} />
             <Bar label="VRAM" pct={s.vramPct} detail={s.vramTotalGb ? `${s.vramUsedGb} / ${s.vramTotalGb} GB` : ""} />
           </> : <div className="text-[var(--muted)] text-xs text-center py-6">reading sensors…</div>}
         </div>
@@ -54,10 +54,10 @@ export default function Monitor() {
             <div className="flex justify-between"><span className="text-[var(--muted)]">CPU temp</span><span>{temp(s.cpuTemp)}</span></div>
             <div className="flex justify-between"><span className="text-[var(--muted)]">GPU temp</span><span>{temp(s.gpuTemp)}</span></div>
             <div className="flex justify-between"><span className="text-[var(--muted)]">NVMe temp</span><span>{temp(s.nvmeTemp)}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--muted)]">Ollama (inbox) loaded</span><span style={{ color: s.ollamaLoaded ? "var(--accent-warn)" : "var(--text-2)" }}>{s.ollamaLoaded || "nothing"}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--muted)]">Other Ollama model loaded</span><span style={{ color: s.ollamaLoaded ? "var(--accent-warn)" : "var(--text-2)" }}>{s.ollamaLoaded || "nothing"}</span></div>
           </div>
         )}
-        <p className="text-[10px] text-[var(--muted)] leading-relaxed">Live, updates every 2s. Amber ≥70%, red ≥90%. If RAM/VRAM spikes and you didn&apos;t start anything here, it&apos;s usually the inbox&apos;s Ollama loading a big model (shown above) — it unloads when idle.</p>
+        <p className="text-[10px] text-[var(--muted)] leading-relaxed">Live, updates every 2s. Amber ≥70%, red ≥90%. If RAM/VRAM spikes and you didn&apos;t start anything here, it&apos;s usually another app&apos;s Ollama loading a big model (shown above) — it unloads when idle.</p>
       </div>
     </div>
   );

@@ -16,7 +16,7 @@ Run again after adding NEW examples below; it re-parses the seed + appends all b
 """
 import json, os
 
-ROOT = "/home/gron/Desktop/local-ai-lab"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SEED = "/home/gron/.claude/uploads/9c2ee9ee-2343-44de-bfb2-47799f855923/3c535966-PHI.json"
 OUT = os.path.join(ROOT, "data/sovereign_sft.jsonl")
 

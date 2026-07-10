@@ -28,8 +28,9 @@ export default function FileTree({ project, refreshTick, onOpenFile, selected }:
     return j.entries as Entry[];
   };
 
-  // project change: reset and load root
+  // project change: reset and load root (the reload is an async fetch below)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDirs(new Map());
     setExpanded(new Set(["."]));
     setError("");

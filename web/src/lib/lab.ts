@@ -18,6 +18,24 @@ const CONVOS_DIR = path.join(DATA, "conversations");
 const EXPERIMENTS_DIR = path.join(DATA, "experiments");
 const SETTINGS_FILE = path.join(DATA, "settings.json");
 export const SERVE_PORT = 8099;
+
+// Training env vars — defaults target this project's dev box (AMD RDNA2 on Linux via
+// ROCm/HIP). HSA_* vars are ROCm-specific and are simply ignored by CUDA/CPU torch, so
+// this is safe to leave as-is on other setups; override any of it per-environment (e.g.
+// a different AMD generation, or unset entirely on NVIDIA/CPU) without touching the code:
+//   GPU_TRAIN_ENV='{"HSA_OVERRIDE_GFX_VERSION":"11.0.0"}' — JSON, merged over the default.
+function gpuTrainEnv(): NodeJS.ProcessEnv {
+  const base: NodeJS.ProcessEnv = {
+    ...process.env,
+    HSA_OVERRIDE_GFX_VERSION: process.env.HSA_OVERRIDE_GFX_VERSION ?? "10.3.0",
+    HSA_ENABLE_SDMA: process.env.HSA_ENABLE_SDMA ?? "0",
+    PYTORCH_HIP_ALLOC_CONF: process.env.PYTORCH_HIP_ALLOC_CONF ?? "expandable_segments:True",
+  };
+  if (process.env.GPU_TRAIN_ENV) {
+    try { Object.assign(base, JSON.parse(process.env.GPU_TRAIN_ENV)); } catch {}
+  }
+  return base;
+}
 fs.mkdirSync(CONVOS_DIR, { recursive: true });
 fs.mkdirSync(EXPERIMENTS_DIR, { recursive: true });
 
@@ -262,7 +280,7 @@ export async function ensureServing(model: string, minCtx = 0): Promise<void> {
 
   const configuredNgl = o.num_gpu == null ? 99 : o.num_gpu;
   // graceful degradation like Ollama: try full GPU, then partial offloads, then CPU —
-  // so a big model still serves (just slower) when the inbox is holding VRAM.
+  // so a big model still serves (just slower) when something else is holding VRAM.
   const ladder = (configuredNgl > 0 ? [configuredNgl, 24, 12, 0] : [0])
     .filter((v, i, a) => a.indexOf(v) === i);
   for (const ngl of ladder) {
@@ -1061,7 +1079,7 @@ export async function runLensScript(model: string, messages: { role: string; con
     await unloadOllamaAll();
 
     const args = ["--model", modelPath, "--messages", JSON.stringify(messages), ...(opts.topK ? ["--top_k", String(opts.topK)] : [])];
-    const env: NodeJS.ProcessEnv = { ...process.env, HSA_OVERRIDE_GFX_VERSION: "10.3.0", HSA_ENABLE_SDMA: "0", PYTORCH_HIP_ALLOC_CONF: "expandable_segments:True" };
+    const env: NodeJS.ProcessEnv = gpuTrainEnv();
 
     return await new Promise((resolve) => {
       const proc = spawn(VENV_PY, [LENS_SCRIPT, ...args], { cwd: ROOT, env });
@@ -1219,7 +1237,7 @@ export async function startTrain(o: { name: string; base: string; steps: number;
     // crash, the classic fragmentation signature PyTorch's own error message names this
     // exact fix for) — lets the allocator grow/shrink segments instead of being stuck
     // with fixed-size blocks it can't reuse across different tensor shapes.
-    const env: NodeJS.ProcessEnv = { ...process.env, HSA_OVERRIDE_GFX_VERSION: "10.3.0", HSA_ENABLE_SDMA: "0", PYTORCH_HIP_ALLOC_CONF: "expandable_segments:True" };
+    const env: NodeJS.ProcessEnv = gpuTrainEnv();
     if (cpu) { env.HIP_VISIBLE_DEVICES = ""; env.CUDA_VISIBLE_DEVICES = ""; }
     let errTail = "";
     const ft = spawn(VENV_PY, args, { cwd: ROOT, env });

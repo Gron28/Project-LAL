@@ -6,7 +6,7 @@ Output: data/fractals_sft.jsonl as {instruction, output} (+ thought_process for 
 """
 import json, re, random, os
 
-ROOT = "/home/gron/Desktop/local-ai-lab"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 out = []
 
 # 1) Q&A pairs: lines like "Q: ... A: ..."

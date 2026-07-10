@@ -8,6 +8,9 @@ llama/
 out/
 # skill-registry tool cache
 .atl/
+# scratch: the coding agent's own working directory (runtime output, not source)
+/workspace/
+/.data/
 data/*.bin
 *.gguf
 *.safetensors

@@ -28,37 +28,14 @@ Core endpoints:
 
 Model probing checks backend compatibility, structured output, tool calling, context configuration, throughput, and memory metadata. Training examples retain stable IDs, hashes, source/license/generator/parents/role/checks/time and exact dataset membership. Training approval and active-role promotion are separate decisions.
 
-## Getting Started
+## Running this app
 
-First, run the development server:
+This app is meant to be launched from the repo root, not started here directly — see
+the root [`README.md`](../README.md) and `../start.sh`, which builds, frees the port,
+exposes the app on your tailnet, and starts it on **:8770**.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+For iterating on the frontend alone, `npm run dev` works as usual and serves on
+**:3000** by default — just note the production path (`start.sh`) always uses 8770.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-The UI uses local system fonts, so development and production builds do not depend on a font CDN.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The UI uses local system fonts, so development and production builds do not depend on
+a font CDN.

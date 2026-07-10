@@ -67,6 +67,8 @@ export default function EditorPane({ project, filePath, refreshTick, rawHref, on
   // mount / file change: load content + build the editor
   useEffect(() => {
     let dead = false;
+    // Immediate loading UI ahead of the async read below — intentional, not derivable at render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatus("loading");
     setNotice(null);
     setDirty(false);
@@ -137,7 +139,9 @@ export default function EditorPane({ project, filePath, refreshTick, rawHref, on
       onSaved();
     } finally { setSaving(false); }
   };
-  saveRef.current = () => { void save(false); };
+  useEffect(() => {
+    saveRef.current = () => { void save(false); };
+  });
 
   const reloadFromDisk = async () => {
     try {

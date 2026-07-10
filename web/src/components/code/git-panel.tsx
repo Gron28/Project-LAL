@@ -50,8 +50,10 @@ export default function GitPanel({ project, refreshTick, onCommitted }: {
     } catch { setStatus(null); }
   };
 
-  useEffect(() => { load(); setDiffFor(null); setDiff(null); setOutput(""); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [project]);
-  useEffect(() => { if (refreshTick) load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [refreshTick]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
+  useEffect(() => { load(); setDiffFor(null); setDiff(null); setOutput(""); }, [project]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
+  useEffect(() => { if (refreshTick) load(); }, [refreshTick]);
 
   const showDiff = async (p: string) => {
     if (diffFor === p) { setDiffFor(null); setDiff(null); return; }

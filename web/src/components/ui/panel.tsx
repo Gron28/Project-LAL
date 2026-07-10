@@ -16,7 +16,7 @@ export function Panel({
   const bg = tone === "raised" ? "bg-[var(--surface-2)]" : "bg-[var(--surface-1)]";
   return (
     <div
-      className={cn(bg, "border border-[var(--border)] rounded-[var(--r-lg)]", pad, className)}
+      className={cn(bg, "border border-[var(--border)] rounded-[var(--r-lg)] min-w-0", pad, className)}
       {...rest}
     >
       {children}

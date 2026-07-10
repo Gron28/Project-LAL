@@ -186,17 +186,17 @@ export function LossChart({ rows }: { rows: LossRow[] }) {
       }
     });
     // raw loss (faint)
-    x.strokeStyle = "rgba(52,255,166,0.28)"; x.lineWidth = 1; x.beginPath(); st.forEach((s, i) => { const px = X(s.step!), py = Y(s.loss!); i ? x.lineTo(px, py) : x.moveTo(px, py); }); x.stroke();
+    x.strokeStyle = "rgba(52,255,166,0.28)"; x.lineWidth = 1; x.beginPath(); st.forEach((s, i) => { const px = X(s.step!), py = Y(s.loss!); if (i) x.lineTo(px, py); else x.moveTo(px, py); }); x.stroke();
     // EMA smoothed loss (bold) — the trend through the noise
     let ema = st[0].loss!; const a = 0.3;
     const emaArr: number[] = [];
     x.strokeStyle = "#34ffa6"; x.lineWidth = 2; x.beginPath();
-    st.forEach((s, i) => { ema = a * s.loss! + (1 - a) * ema; emaArr.push(ema); const px = X(s.step!), py = Y(ema); i ? x.lineTo(px, py) : x.moveTo(px, py); }); x.stroke();
+    st.forEach((s, i) => { ema = a * s.loss! + (1 - a) * ema; emaArr.push(ema); const px = X(s.step!), py = Y(ema); if (i) x.lineTo(px, py); else x.moveTo(px, py); }); x.stroke();
     hit.current = { X, xmin, xmax, pts: st.map((s, i) => ({ step: s.step!, loss: s.loss!, ema: emaArr[i], source: s.source, repeat_n: s.repeat_n })) };
     // held-out val loss (amber line + dots) — divergence from train = overfitting
     if (vl.length) {
       x.strokeStyle = "#ffb454"; x.lineWidth = 1.5; x.beginPath();
-      vl.forEach((v, i) => { const px = X(v.step!), py = Y(v.val_loss!); i ? x.lineTo(px, py) : x.moveTo(px, py); }); x.stroke();
+      vl.forEach((v, i) => { const px = X(v.step!), py = Y(v.val_loss!); if (i) x.lineTo(px, py); else x.moveTo(px, py); }); x.stroke();
       x.fillStyle = "#ffb454";
       vl.forEach((v) => { x.beginPath(); x.arc(X(v.step!), Y(v.val_loss!), 2.5, 0, 7); x.fill(); });
     }
@@ -204,7 +204,7 @@ export function LossChart({ rows }: { rows: LossRow[] }) {
     // exactly the victory4 signature (EMA hits new lows from memorizing repeats
     // while val quietly gets worse). Flag it so it's visible live, not postmortem.
     const tys = st.map((s) => s.loss!); let running = Infinity;
-    st.forEach((s, i) => {
+    st.forEach((s) => {
       const isNewBest = s.loss! < running - 1e-4; if (isNewBest) running = s.loss!;
       if (isNewBest && (s.repeat_n ?? 1) > 1) {
         const px = X(s.step!), py = Y(s.loss!);
@@ -270,7 +270,7 @@ export function MetricHistoryChart({ rows, field, color, fmt, threshold }: {
       x.beginPath(); x.moveTo(L, Y(threshold)); x.lineTo(R, Y(threshold)); x.stroke(); x.setLineDash([]);
     }
     x.strokeStyle = color; x.lineWidth = 1.5; x.beginPath();
-    st.forEach((s, i) => { const px = X(s.step!), py = Y(s[field] as number); i ? x.lineTo(px, py) : x.moveTo(px, py); });
+    st.forEach((s, i) => { const px = X(s.step!), py = Y(s[field] as number); if (i) x.lineTo(px, py); else x.moveTo(px, py); });
     x.stroke();
     // filled area under the curve, faint
     x.lineTo(X(xs[xs.length - 1]), B); x.lineTo(X(xs[0]), B); x.closePath();
@@ -329,7 +329,7 @@ export function SourceLossChart({ rows }: { rows: LossRow[] }) {
       pts.forEach((p, j) => {
         ema = a * p.loss + (1 - a) * ema;
         const px = X(p.step), py = Y(ema);
-        j ? x.lineTo(px, py) : x.moveTo(px, py);
+        if (j) x.lineTo(px, py); else x.moveTo(px, py);
         hitPts.push({ sx: px, sy: py, step: p.step, source: src, ema, color });
       });
       x.stroke(); x.globalAlpha = 1;
@@ -695,7 +695,7 @@ export function ConceptGalaxy3D({ snapshots, categories, labels, upToIndex }: {
       x.strokeStyle = color; x.globalAlpha = 0.35; x.lineWidth = 1; x.beginPath();
       for (let s = 0; s <= idx; s++) {
         const pt = project(snapshots[s].points[p]);
-        s ? x.lineTo(pt.sx, pt.sy) : x.moveTo(pt.sx, pt.sy);
+        if (s) x.lineTo(pt.sx, pt.sy); else x.moveTo(pt.sx, pt.sy);
       }
       x.stroke(); x.globalAlpha = 1;
       // current position

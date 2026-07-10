@@ -49,7 +49,10 @@ export default function DirPicker({ open, recents, onPick, onClose }: {
   };
 
   useEffect(() => {
+    // Reset form state + reload the listing when the modal opens — the reload is an
+    // async fetch (nav), not derivable at render.
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setManual(""); setTab("browse"); setCloneUrl(""); setCloneName(""); setCloneNameTouched(false); setCloneMsg("");
       setNewName(""); setCreateMsg("");
       nav(listing?.path);
