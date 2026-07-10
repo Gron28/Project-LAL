@@ -1,0 +1,10 @@
+{
+  "name": "hive-eval-durable-dag",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "lint": "node --check src/durable-dag.js"
+  }
+}

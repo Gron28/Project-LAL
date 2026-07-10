@@ -18,7 +18,7 @@ function DiffView({ diff, truncated }: { diff: string; truncated?: boolean }) {
     <pre className="text-[10px] font-mono bg-[var(--surface-2,#11151c)] rounded p-2 overflow-auto max-h-72 whitespace-pre">
       {diff.split("\n").map((l, i) => (
         <div key={i} style={{
-          color: l.startsWith("+") ? "var(--accent-ai)" : l.startsWith("-") ? "var(--accent-danger)" : l.startsWith("@@") ? "var(--text-2)" : "var(--muted)",
+          color: l.startsWith("+") ? "var(--accent-success)" : l.startsWith("-") ? "var(--accent-danger)" : l.startsWith("@@") ? "var(--text-2)" : "var(--muted)",
         }}>{l || " "}</div>
       ))}
       {truncated && <div className="text-[var(--muted)]">[diff truncated]</div>}

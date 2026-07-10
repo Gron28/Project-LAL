@@ -7,6 +7,7 @@ export type Cats = Record<string, { ok: number; total: number }>;
 export type Res = {
   model: string; suite: string; score: number; total: number; cats: Cats;
   tokSec: number | null; sizeGb?: number | null; latencyMs?: number | null; ttftMs?: number | null;
+  ts?: number; pinned?: boolean; stale?: boolean; pinnedRev?: number | null;
   // omitted by the dashboard's SSE snapshot (kept slim) — RadarChart/MetricPanel/ScatterPlot never read it.
   results?: { cat: string; q: string; ok: boolean; got: string; detail?: string; shot?: string }[];
 };

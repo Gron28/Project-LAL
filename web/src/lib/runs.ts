@@ -18,7 +18,7 @@ const RUNS_DIR = path.join(process.cwd(), ".data", "runs");
 fs.mkdirSync(RUNS_DIR, { recursive: true });
 
 export type RunStatus = "running" | "done" | "error" | "stopped" | "interrupted";
-export type RunKind = "code" | "chat" | "deliberate";
+export type RunKind = "code" | "chat" | "deliberate" | "hive";
 export type RunMeta = {
   id: string;
   kind: RunKind;

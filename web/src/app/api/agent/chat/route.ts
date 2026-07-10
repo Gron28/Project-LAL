@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { allModels, ensureServing, readSettings, getConvo, saveConvo, newId, webSearch, retrieveDocs, servingModel, stopServing, SERVE_PORT } from "@/lib/lab";
+import { allModels, ensureServing, readSettings, getConvo, saveConvo, newId, webSearch, retrieveDocs, servingModel, stopServing, SERVE_PORT, type Convo } from "@/lib/lab";
 import { startRun, type EmitFn } from "@/lib/runs";
 
 export const dynamic = "force-dynamic";
@@ -73,8 +73,9 @@ export async function POST(req: NextRequest) {
   if (extra.length) system = (s.system ? s.system + "\n\n" : "") + extra.join("\n\n");
 
   const cid = b.conversationId || newId();
-  const convo = getConvo(cid) || { id: cid, title: "", ts: Date.now(), messages: [] };
+  const convo: Convo = getConvo(cid) || { id: cid, title: "", ts: Date.now(), messages: [] };
   convo.messages = incoming.slice();
+  convo.think = think;
   saveConvo(convo);
 
   const saveReply = (full: string) => {
@@ -91,6 +92,7 @@ export async function POST(req: NextRequest) {
 
   if (attachments.length) {
     const visionModel = attachments.length > VISION_FAST_THRESHOLD ? VISION_MODEL_FAST : VISION_MODEL_QUALITY;
+    convo.model = visionModel;
     const meta = startRun({ kind: "chat", conversationId: cid, model: visionModel }, async (emit, signal) => {
       emit({ k: "model_loading", v: { model: visionModel, ctx: s.options.num_ctx } });
       // GPU is single-tenant: park our own llama-server (if resident) before Ollama
@@ -132,6 +134,7 @@ export async function POST(req: NextRequest) {
 
   const requestedModel = typeof b.model === "string" && allModels().some((m) => m.name === b.model) ? b.model : s.model;
   if (!requestedModel) return new Response("no model available — train or install one", { status: 409 });
+  convo.model = requestedModel;
 
   const meta = startRun({ kind: "chat", conversationId: cid, model: requestedModel }, async (emit, signal) => {
     // Serving happens INSIDE the run — a cold model load can take a minute, and the

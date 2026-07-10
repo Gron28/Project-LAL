@@ -203,7 +203,7 @@ export async function POST(req: NextRequest) {
   // Persist immediately, before a cold model load or the first tool call. A page
   // reload must be able to recover a newly created session even while the model is
   // still loading and has not produced a single event yet.
-  try { saveConvo({ id: cid, title, ts: Date.now(), project: root, messages: incoming as { role: string; content: string }[] }); } catch {}
+  try { saveConvo({ id: cid, title, ts: Date.now(), project: root, messages: incoming as { role: string; content: string }[], model, mode: modeId, think, autoApprove }); } catch {}
 
   const meta = startRun(
     { kind: "code", conversationId: cid, project: root, model, mode: modeId },
@@ -288,7 +288,7 @@ export async function POST(req: NextRequest) {
       };
       const messages: ToolLoopMsg[] = incoming[0]?.role === "system" ? incoming.slice() : [system, ...incoming];
       const snapshot = (msgs: ToolLoopMsg[]) => {
-        try { saveConvo({ id: cid, title, ts: Date.now(), project: root, messages: msgs as { role: string; content: string }[] }); } catch {}
+        try { saveConvo({ id: cid, title, ts: Date.now(), project: root, messages: msgs as { role: string; content: string }[], model, mode: modeId, think, autoApprove }); } catch {}
       };
       // A planner-toolset call almost never needs more than a couple of confirmatory
       // searches (it's usually planning against a well-understood codebase/stack) —

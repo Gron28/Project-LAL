@@ -410,6 +410,12 @@ export default function CodePage() {
       setConvoId(id);
       setSessionUrl(id);
       setInstructionFiles([]);
+      // Restore the settings this session actually used, rather than leaving
+      // whatever's currently globally selected.
+      if (typeof j.model === "string" && j.model) setModel(j.model);
+      if (typeof j.mode === "string" && j.mode) setMode(j.mode);
+      if (typeof j.think === "boolean") setThink(j.think);
+      if (typeof j.autoApprove === "boolean") setAuto(j.autoApprove);
       return (j.messages ?? []) as RawMsg[];
     } catch { return null; }
   };
@@ -581,10 +587,8 @@ export default function CodePage() {
       setModel(preferred);
     });
     try { setTreeOpen(localStorage.getItem("code_tree_open") === "1"); } catch {}
-    // Resume the most recent session, same UX as /chat — without this, opening
-    // /code always looked blank even though every session was saved server-side.
-    // The workspace fetch must land first: openConvo needs it to map a saved
-    // default-workspace path back to the select's "" option.
+    // A new /code session starts genuinely blank — it does NOT resume the most
+    // recent session. Open an old one from the dropdown, or via a deep link.
     const qs = new URLSearchParams(window.location.search);
     const deepLinkProject = qs.get("project");
     fetch("/api/agent/loop").then((r) => r.json()).then((j) => {
@@ -599,14 +603,12 @@ export default function CodePage() {
       // that folder with a fresh session, same as picking it from the dropdown.
       if (deepLinkProject) setProject(deepLinkProject);
     }).catch(() => {})
-      .then(() => { loadConvos(); return fetch("/api/agent/conversations?kind=code"); })
-      .then((r) => (r.ok ? r.json() : []))
-      .then(async (list: Convo[]) => {
+      .then(() => { loadConvos(); })
+      .then(async () => {
         if (deepLinkProject) { window.history.replaceState(null, "", "/code"); return; }
         // Deep-link from Library ("open in /code" on a chat): ?conv=<id> opens that
-        // specific session instead of whichever is most recent.
-        const deepLinkId = qs.get("conv");
-        const targetId = deepLinkId || list?.[0]?.id;
+        // specific session. Without one, the session starts blank.
+        const targetId = qs.get("conv");
         if (!targetId) return;
         const msgs = await openConvo(targetId);
         // A fully closed-and-reopened tab is a fresh mount with no memory that a
@@ -805,7 +807,7 @@ export default function CodePage() {
   return (
     <div style={{ "--tree-w": treeW + "px", "--ed-w": edW ? edW + "px" : "min(52vw,760px)" } as React.CSSProperties}
       className={(treeOpen ? "xl:pl-[var(--tree-w)] " : "") + (openFile ? "lg:pr-[var(--ed-w)]" : "")}>
-    <div className="max-w-4xl mx-auto px-3 sm:px-4 pb-40 flex flex-col min-h-dvh">
+    <div className="max-w-4xl mx-auto px-3 pb-40 flex flex-col min-h-dvh">
       {/* ── Sticky command bar + telemetry ───────────────────────────────── */}
       <div className="sticky top-0 z-30 -mx-3 sm:-mx-4 px-3 sm:px-4 bg-[var(--bg)]/92 backdrop-blur-md border-b border-[var(--border-soft)]">
         <header className="flex items-center gap-2 h-14">
@@ -976,8 +978,8 @@ export default function CodePage() {
       )}
 
       <div className={"fixed bottom-14 md:bottom-0 left-0 right-0 bg-[var(--bg)]/95 backdrop-blur-md border-t border-[var(--border)] px-3 pt-2.5 pb-[calc(env(safe-area-inset-bottom)+0.625rem)]"
-        + (navCollapsed ? "" : " md:left-14 lg:left-44")
-        + (openFile ? " lg:right-[var(--ed-w)]" : "") + (treeOpen ? (navCollapsed ? " xl:left-[var(--tree-w)]" : " xl:left-[calc(var(--tree-w)+11rem)]") : "")}>
+        + (navCollapsed ? "" : " md:left-12 lg:left-36")
+        + (openFile ? " lg:right-[var(--ed-w)]" : "") + (treeOpen ? (navCollapsed ? " xl:left-[var(--tree-w)]" : " xl:left-[calc(var(--tree-w)+9rem)]") : "")}>
         <div className="max-w-4xl mx-auto">
           {/* Continue affordance: the last reply hit the token ceiling mid-thought. */}
           {truncated && !busy && (
@@ -1061,7 +1063,7 @@ export default function CodePage() {
         {/* below xl the sidebar overlays the chat — backdrop click dismisses */}
         <div className="fixed inset-0 z-10 bg-black/40 xl:hidden" onClick={() => toggleTree(false)} />
         <aside style={{ width: "var(--tree-w)" }} className={"fixed top-0 bottom-14 md:bottom-0 left-0 z-20 border-r border-[var(--border)] bg-[var(--bg)] flex flex-col"
-          + (navCollapsed ? "" : " md:left-14 lg:left-44")}>
+          + (navCollapsed ? "" : " md:left-12 lg:left-36")}>
           <div onPointerDown={dragPanel("tree")} title="drag to resize"
             className="absolute top-0 bottom-0 -right-1 w-2 cursor-col-resize touch-none z-10 hover:bg-[var(--accent-ai)]/30" />
           <div className="flex items-center gap-1 px-2 pt-2 pb-1 border-b border-[var(--border-soft)] shrink-0">

@@ -223,6 +223,8 @@ async function unloadOllamaAll(): Promise<void> {
 export async function ensureServing(model: string, minCtx = 0): Promise<void> {
   touchServing();
   if (srv.model === model && srv.proc && srv.proc.exitCode === null && (await health())) return;
+  // The lens tool needs the whole card to itself, same as training (see runLensScript).
+  if (lensState.running) throw new Error("GPU is busy: a lens run is in progress. Try again after it finishes.");
   // A trainer may be running OUTSIDE this app (CLI runs write the same out/ logs but
   // never set train.running). Serving on top of it OOMs the box — refuse instead.
   if (!train.running) {
@@ -271,14 +273,17 @@ export async function ensureServing(model: string, minCtx = 0): Promise<void> {
 }
 
 // ---- conversation storage ----
-export type Convo = { id: string; title: string; ts: number; project?: string; messages: { role: string; content: string }[] };
+// model/mode/think/autoApprove are the settings that were actually in effect for
+// this session — saved with it so reopening an old conversation restores exactly
+// what it used, instead of inheriting whatever's currently globally selected.
+export type Convo = { id: string; title: string; ts: number; project?: string; messages: { role: string; content: string }[]; model?: string; mode?: string; think?: boolean; autoApprove?: boolean };
 export function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 // Conversations from /chat and /code share this store but have INCOMPATIBLE message
 // shapes (/code's include tool role + tool_calls + null content) — a plain chat
 // renderer crashes on a code-* conversation. "code-" id prefix is the only signal
 // (no schema field), so callers must filter by kind and never cross the streams.
 export function listConvos(kind?: "chat" | "code") {
-  const out: { id: string; title: string; updatedAt: number; kind: "chat" | "code"; project?: string }[] = [];
+  const out: { id: string; title: string; updatedAt: number; kind: "chat" | "code"; project?: string; model?: string; mode?: string }[] = [];
   try {
     for (const f of fs.readdirSync(CONVOS_DIR))
       if (f.endsWith(".json")) {
@@ -287,7 +292,7 @@ export function listConvos(kind?: "chat" | "code") {
           const isCode = String(c.id).startsWith("code-");
           if (kind === "chat" && isCode) continue;
           if (kind === "code" && !isCode) continue;
-          out.push({ id: c.id, title: c.title || "chat", updatedAt: c.ts || 0, kind: isCode ? "code" : "chat", ...(c.project ? { project: c.project } : {}) });
+          out.push({ id: c.id, title: c.title || "chat", updatedAt: c.ts || 0, kind: isCode ? "code" : "chat", ...(c.project ? { project: c.project } : {}), ...(c.model ? { model: c.model } : {}), ...(c.mode ? { mode: c.mode } : {}) });
         } catch {}
       }
   } catch {}
@@ -482,7 +487,7 @@ export type Battery = { suites: string[]; champion: string; challenger?: string 
 const BATTERY_FILE = path.join(DATA, "battery.json");
 // coding/planning/agentic/instruct are the new targeted suites; gsm8k + capability
 // are existing suites kept as regression controls (per the plan).
-const DEFAULT_BATTERY: Battery = { suites: ["coding", "planning", "agentic", "instruct", "gsm8k", "capability", "webgen"], champion: "gemma4:12b" };
+const DEFAULT_BATTERY: Battery = { suites: ["gsm8k", "coding", "planning", "agentic", "instruct", "capability", "webgen"], champion: "gemma4:12b" };
 export function getBattery(): Battery {
   try { return { ...DEFAULT_BATTERY, ...JSON.parse(fs.readFileSync(BATTERY_FILE, "utf8")) }; } catch { return DEFAULT_BATTERY; }
 }
@@ -1009,6 +1014,86 @@ export async function adapterEvolution(name: string): Promise<{ ok: true; result
   return { ok: true, result: r.results[0] };
 }
 
+// ---- offline logit-lens (scripts/lens.py) ----
+// Genuinely NOT a "live during chat" feature — see lens.py's docstring. This needs
+// the whole 8GB card to itself (same HQQ loader training uses to fit an 8B), so it
+// is single-tenant with BOTH serving and training: refuses if a trainer is running,
+// parks whatever's currently serving before it runs, and restores it afterward.
+const LENS_SCRIPT = path.join(ROOT, "scripts", "lens.py");
+type LensState = { running: boolean };
+const lgg = globalThis as unknown as { __lab_lens?: LensState };
+if (!lgg.__lab_lens) lgg.__lab_lens = { running: false };
+const lensState = lgg.__lab_lens;
+export function lensRunning() { return lensState.running; }
+
+export type LensCell = { token: string; prob: number };
+export type LensResult = { inputTokens: string[]; numLayers: number; grid: LensCell[][][] };
+
+// A model can be lensed only if a full HF-format checkpoint was retained post-training
+// (stream_merge_and_save writes one to out/<name> before GGUF conversion — see
+// finetune_hqq.py) — GGUF-only models (older runs, manually pruned) can't be loaded by
+// transformers at all.
+export function listLensableModels(): string[] {
+  const out: string[] = [];
+  try {
+    for (const f of fs.readdirSync(OUT_DIR)) {
+      if (fs.existsSync(path.join(OUT_DIR, f, "config.json"))) out.push(f);
+    }
+  } catch {}
+  return out.sort();
+}
+
+export async function runLensScript(model: string, messages: { role: string; content: string }[], opts: { topK?: number } = {}):
+  Promise<{ ok: true; result: LensResult } | { ok: false; error: string }> {
+  if (lensState.running) return { ok: false, error: "a lens run is already in progress" };
+  if (train.running) return { ok: false, error: "GPU is busy: a training run is in progress" };
+  let trainerPids = "";
+  try { trainerPids = execSync("pgrep -f 'python[0-9.]* .*finetune'", { stdio: "pipe" }).toString().trim(); } catch {}
+  if (trainerPids) return { ok: false, error: "GPU is busy: a training process is running (started outside the app)" };
+
+  const isLocal = listLensableModels().includes(model);
+  const modelPath = isLocal ? path.join(OUT_DIR, model) : model;
+
+  lensState.running = true;
+  const parked = servingModel();
+  try {
+    if (parked) stopServing();
+    await unloadOllamaAll();
+
+    const args = ["--model", modelPath, "--messages", JSON.stringify(messages), ...(opts.topK ? ["--top_k", String(opts.topK)] : [])];
+    const env: NodeJS.ProcessEnv = { ...process.env, HSA_OVERRIDE_GFX_VERSION: "10.3.0", HSA_ENABLE_SDMA: "0", PYTORCH_HIP_ALLOC_CONF: "expandable_segments:True" };
+
+    return await new Promise((resolve) => {
+      const proc = spawn(VENV_PY, [LENS_SCRIPT, ...args], { cwd: ROOT, env });
+      let stdout = "", stderr = "", timedOut = false;
+      // A cold HQQ load of an 8B (shard streaming + quantizing) plus a single forward
+      // pass over up to 512 tokens across every layer — generous relative to the
+      // handful of minutes finetune_hqq.py's own load path takes.
+      const timer = setTimeout(() => { timedOut = true; proc.kill("SIGKILL"); }, 480_000);
+      proc.stdout.on("data", (d) => { stdout += d; });
+      proc.stderr.on("data", (d) => { stderr += d; });
+      proc.on("close", () => {
+        clearTimeout(timer);
+        if (timedOut) { resolve({ ok: false, error: "timed out after 8min" }); return; }
+        const lines = stdout.trim().split("\n").filter((l) => l.trim().startsWith("{"));
+        let result: LensResult | null = null, error: string | null = null;
+        for (const l of lines) {
+          try {
+            const e = JSON.parse(l);
+            if (e.event === "done") result = e.result;
+            if (e.event === "error") error = e.msg;
+          } catch {}
+        }
+        if (result) resolve({ ok: true, result });
+        else resolve({ ok: false, error: error || stderr.slice(-500) || "lens run produced no result" });
+      });
+    });
+  } finally {
+    lensState.running = false;
+    if (parked) { try { await ensureServing(parked); } catch { /* next request surfaces it */ } }
+  }
+}
+
 export type ExperimentRecord = {
   name: string;
   status: "queued" | "running" | "done" | "failed" | "stopped";
@@ -1073,6 +1158,7 @@ export function listExperiments(): ExperimentRecord[] {
 
 export async function startTrain(o: { name: string; base: string; steps: number; lr: number; text?: string; targetLoss?: number; patience?: number; mode?: "raw" | "sft" | "hqq"; dataFile?: string; valFrac?: number; block?: number; autoBench?: string[]; snapshotEvery?: number; noProbeEmbed?: boolean }) {
   if (train.running) return { error: "already training: " + train.running };
+  if (lensState.running) return { error: "GPU is busy: a lens run is in progress. Try again after it finishes." };
   const name = (o.name || "model").replace(/[^a-zA-Z0-9_-]/g, "") || "model";
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(OUT_DIR, { recursive: true });

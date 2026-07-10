@@ -4,6 +4,8 @@ import { ExternalLink, FlaskConical, FolderOpen, History, ListTree, MessageSquar
 import FileTree from "@/components/code/file-tree";
 import EditorPane from "@/components/code/editor-pane";
 import DirPicker from "@/components/code/dir-picker";
+import { Panel } from "@/components/ui/panel";
+import { ICON_SIZE } from "@/components/ui/icon";
 
 type M = { name: string; source: "local" | "ollama"; gb: number };
 type Doc = { id: string; name: string; folder: string; chars: number; ts: number };
@@ -18,7 +20,7 @@ type Diagnosis = {
   stats: { durationSec: number; rounds: number; toolCalls: number; toolFailures: number; textChars: number; thinkChars: number; nudges: number; maxGapSec: number; tokPerSec: number | null; avgConf: number | null; minConf: number | null };
 };
 type ModelReportRow = { model: string; runs: number; clean: number; flawed: number; failed: number; toolCalls: number; toolFailures: number; avgTokPerSec: number | null; avgConf: number | null; topFailures: { code: string; count: number }[] };
-const verdictColor = (v: string) => v === "clean" ? "#3fb950" : v === "flawed" ? "var(--accent-warn,#d29922)" : "var(--accent-danger)";
+const verdictColor = (v: string) => v === "clean" ? "var(--accent-success)" : v === "flawed" ? "var(--accent-warn,#d29922)" : "var(--accent-danger)";
 type ExperimentRow = {
   name: string; status: string; updatedAt: number; base: string; mode: string; steps: number; lr: number;
   dataset: { name: string; sha256: string; bytes: number; rows: number | null } | null; model?: string | null;
@@ -26,7 +28,6 @@ type ExperimentRow = {
 
 const DATASETS = "__datasets";
 
-const card = "bg-[var(--surface-1)] border border-[var(--border)] rounded-[var(--r-lg)]";
 const head = "px-4 py-3 border-b border-[var(--border-soft)] text-[11px] tracking-widest uppercase text-[var(--text-2)] flex items-center gap-2";
 const btn = "text-[11px] tracking-wide border border-[var(--border)] text-[var(--text-2)] rounded-[var(--r-md)] px-2.5 py-1 hover:border-[var(--border-loud)] hover:text-[var(--text)]";
 
@@ -79,14 +80,14 @@ function Models() {
   const trained = detail.filter((m) => m.source === "local"), installed = detail.filter((m) => m.source === "ollama");
   return (
     <div className="flex flex-col gap-4">
-      <div className={card}>
+      <Panel padding="none">
         <div className={head}><span className="text-[var(--accent-ai)]">◆</span> YOUR TRAINED MODELS</div>
         {trained.length ? trained.map((m) => <Row key={m.name} m={m} />) : <div className="p-6 text-center text-[var(--muted)] text-xs">No trained models yet — make one in Train.</div>}
-      </div>
-      <div className={card}>
+      </Panel>
+      <Panel padding="none">
         <div className={head}><span className="text-[var(--accent-ai)]">◆</span> INSTALLED <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">reused, no re-download</span></div>
         {installed.map((m) => <Row key={m.name} m={m} />)}
-      </div>
+      </Panel>
     </div>
   );
 }
@@ -168,7 +169,7 @@ function Documents() {
         <button onClick={newFolder} className={btn}>+ Folder</button>
       </div>
 
-      <div className={card}>
+      <Panel padding="none">
         <div className={head}>
           <span className="text-[var(--accent-ai)]">◆</span>
           {isDatasets ? "TRAINING DATA" : sel === "__all" ? "ALL DOCUMENTS" : sel === "" ? "UNCATEGORIZED" : sel.toUpperCase()}
@@ -207,7 +208,7 @@ function Documents() {
             </div>
           )) : <div className="p-6 text-center text-[var(--muted)] text-xs">No documents here — upload above. Then chat with the document (globe-doc) toggle on.</div>
         )}
-      </div>
+      </Panel>
     </div>
   );
 }
@@ -254,12 +255,12 @@ function Chats() {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex gap-2 flex-wrap">{chip("all", "All")}{chip("chat", "Chat")}{chip("code", "Code")}</div>
-      <div className={card}>
+      <Panel padding="none">
         <div className={head}><span className="text-[var(--accent-ai)]">◆</span> CONVERSATIONS <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">{shown.length}</span></div>
         {shown.length === 0 && <div className="p-6 text-center text-[var(--muted)] text-xs">No conversations yet.</div>}
         {shown.map((c) => (
           <div key={c.id} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
-            {c.kind === "code" ? <Terminal size={13} className="text-[var(--accent-ai)] shrink-0" /> : <MessageSquare size={13} className="text-[var(--muted)] shrink-0" />}
+            {c.kind === "code" ? <Terminal size={ICON_SIZE.sm} className="text-[var(--accent-ai)] shrink-0" /> : <MessageSquare size={ICON_SIZE.sm} className="text-[var(--muted)] shrink-0" />}
             {renamingId === c.id ? (
               <input autoFocus className="flex-1 text-sm bg-[var(--surface-2)] border border-[var(--border-loud)] rounded px-2 py-0.5 outline-none"
                 value={renameVal} onChange={(e) => setRenameVal(e.target.value)}
@@ -273,12 +274,12 @@ function Chats() {
               </a>
             )}
             <span className="text-[10px] text-[var(--muted)] hidden sm:inline shrink-0">{relTime(c.updatedAt)}</span>
-            <a href={(c.kind === "code" ? "/code" : "/chat") + "?conv=" + encodeURIComponent(c.id)} title="Open" className={btn}><ExternalLink size={12} /></a>
-            <button className={btn} title="Rename" onClick={() => startRename(c)}><Pencil size={12} /></button>
-            <button className={btn} title="Delete" onClick={() => del(c.id)}><Trash2 size={12} /></button>
+            <a href={(c.kind === "code" ? "/code" : "/chat") + "?conv=" + encodeURIComponent(c.id)} title="Open" className={btn}><ExternalLink size={ICON_SIZE.sm} /></a>
+            <button className={btn} title="Rename" onClick={() => startRename(c)}><Pencil size={ICON_SIZE.sm} /></button>
+            <button className={btn} title="Delete" onClick={() => del(c.id)}><Trash2 size={ICON_SIZE.sm} /></button>
           </div>
         ))}
-      </div>
+      </Panel>
     </div>
   );
 }
@@ -322,8 +323,8 @@ function Runs() {
   return (
     <div className="flex flex-col gap-3">
       {report.length > 0 && (
-        <div className={card + " overflow-x-auto"}>
-          <div className={head}><FlaskConical size={13} className="text-[var(--accent-ai)]" /> MODEL REPORT CARD <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">from every stored run — measure what works</span></div>
+        <Panel padding="none" className="overflow-x-auto">
+          <div className={head}><FlaskConical size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> MODEL REPORT CARD <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">from every stored run — measure what works</span></div>
           <table className="w-full text-xs">
             <thead>
               <tr className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
@@ -343,7 +344,7 @@ function Runs() {
                 <tr key={m.model} className="border-t border-[var(--border-soft)]">
                   <td className="px-4 py-2 font-mono truncate max-w-[160px]">{m.model}</td>
                   <td className="px-2 py-2 text-right tabular-nums">{m.runs}</td>
-                  <td className="px-2 py-2 text-right tabular-nums" style={{ color: "#3fb950" }}>{m.clean}</td>
+                  <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--accent-success)" }}>{m.clean}</td>
                   <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--accent-warn,#d29922)" }}>{m.flawed}</td>
                   <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--accent-danger)" }}>{m.failed}</td>
                   <td className="px-2 py-2 text-right tabular-nums text-[var(--muted)]">{m.toolFailures}/{m.toolCalls}</td>
@@ -354,11 +355,11 @@ function Runs() {
               ))}
             </tbody>
           </table>
-        </div>
+        </Panel>
       )}
-      <div className={card}>
+      <Panel padding="none">
         <div className={head}>
-          <History size={13} className="text-[var(--accent-ai)]" /> AGENT RUNS
+          <History size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> AGENT RUNS
           <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">{runs.length}</span>
           {runs.length > 0 && <button onClick={removeAll} title="Delete every run record" className={btn + " normal-case tracking-normal"}>Delete all</button>}
         </div>
@@ -366,7 +367,7 @@ function Runs() {
         {!runs.length && <div className="p-6 text-center text-[var(--muted)] text-xs">No agent or chat runs yet.</div>}
         {runs.map((run) => (
           <div key={run.id} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
-            <Terminal size={13} className="text-[var(--accent-ai)] shrink-0" />
+            <Terminal size={ICON_SIZE.sm} className="text-[var(--accent-ai)] shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 text-sm"><span className="truncate">{run.kind}{run.mode ? " · " + run.mode : ""}</span><span className="text-[10px] uppercase tracking-wide text-[var(--muted)] shrink-0">{run.status}</span></div>
               <div className="text-[10px] text-[var(--muted)] truncate">{run.model}{run.project ? " · " + run.project : ""}{run.truncated ? " · truncated" : ""}</div>
@@ -374,16 +375,16 @@ function Runs() {
             <span className="text-[10px] text-[var(--muted)] hidden sm:inline shrink-0">{relTime(run.updatedAt)}</span>
             <a href={href(run)} title="Open conversation" className={btn}><ExternalLink size={12} /></a>
             <button onClick={() => inspect(run)} title="Inspect run trace" className={btn}><ListTree size={12} /></button>
-            <button onClick={() => remove(run)} title="Delete run record" className={btn}><Trash2 size={12} /></button>
+            <button onClick={() => remove(run)} title="Delete run record" className={btn}><Trash2 size={ICON_SIZE.sm} /></button>
           </div>
         ))}
-      </div>
+      </Panel>
       {selected && (
-        <div className={card + " overflow-hidden"}>
+        <Panel padding="none" className="overflow-hidden">
           <div className={head}>
-            <ListTree size={13} className="text-[var(--accent-ai)]" /> RUN TRACE <span className="normal-case tracking-normal text-[var(--muted)] truncate">{selected.id}</span>
+            <ListTree size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> RUN TRACE <span className="normal-case tracking-normal text-[var(--muted)] truncate">{selected.id}</span>
             {diag && <span className="text-[10px] px-2 py-0.5 rounded-full border normal-case tracking-normal" style={{ color: verdictColor(diag.verdict), borderColor: verdictColor(diag.verdict) }}>{diag.verdict}</span>}
-            <button onClick={() => { setSelected(null); setTrace(null); setDiag(null); }} className="ml-auto text-[var(--muted)] hover:text-[var(--text)]" title="Close trace"><X size={14} /></button>
+            <button onClick={() => { setSelected(null); setTrace(null); setDiag(null); }} className="ml-auto text-[var(--muted)] hover:text-[var(--text)]" title="Close trace"><X size={ICON_SIZE.sm} /></button>
           </div>
           {!trace && <div className="p-4 text-xs text-[var(--muted)]">Loading trace...</div>}
           {trace && <div className="divide-y divide-[var(--border-soft)]">
@@ -400,7 +401,7 @@ function Runs() {
                   {diag.stats.avgConf != null && <span>certainty {Math.round(diag.stats.avgConf * 100)}% (min {Math.round((diag.stats.minConf ?? 0) * 100)}%)</span>}
                 </div>
                 {diag.findings.length === 0
-                  ? <div className="text-xs" style={{ color: "#3fb950" }}>No defects found.</div>
+                  ? <div className="text-xs" style={{ color: "var(--accent-success)" }}>No defects found.</div>
                   : diag.findings.map((f) => (
                       <div key={f.code} className="text-xs mb-1">
                         <span className="font-mono" style={{ color: verdictColor(diag.verdict) }}>{f.code}{f.count > 1 ? ` ×${f.count}` : ""}</span>
@@ -414,7 +415,7 @@ function Runs() {
             {trace.output && <section className="p-4"><h2 className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Model output</h2><pre className="whitespace-pre-wrap break-words text-xs leading-5 text-[var(--text)] max-h-72 overflow-auto">{trace.output}</pre></section>}
             {!trace.reasoning && !trace.events.length && !trace.output && <div className="p-4 text-xs text-[var(--muted)]">This run has no retained events.</div>}
           </div>}
-        </div>
+        </Panel>
       )}
     </div>
   );
@@ -433,23 +434,23 @@ function Experiments() {
   };
   return (
     <div className="flex flex-col gap-3">
-      <div className={card}>
-        <div className={head}><FlaskConical size={13} className="text-[var(--accent-ai)]" /> TRAINING EXPERIMENTS <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">{experiments.length}</span></div>
+      <Panel padding="none">
+        <div className={head}><FlaskConical size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> TRAINING EXPERIMENTS <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">{experiments.length}</span></div>
         {status && <div className="px-4 py-2 text-[10px] text-[var(--muted)] border-b border-[var(--border-soft)]">{status}</div>}
         {!experiments.length && <div className="p-6 text-center text-[var(--muted)] text-xs">No training experiments yet.</div>}
         {experiments.map((experiment) => (
           <div key={experiment.name} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
-            <FlaskConical size={13} className="text-[var(--accent-ai)] shrink-0" />
+            <FlaskConical size={ICON_SIZE.sm} className="text-[var(--accent-ai)] shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 text-sm"><span className="truncate">{experiment.name}</span><span className="text-[10px] uppercase tracking-wide text-[var(--muted)] shrink-0">{experiment.status}</span></div>
               <div className="text-[10px] text-[var(--muted)] truncate">{experiment.base} · {experiment.mode} · {experiment.steps} steps · lr {experiment.lr}{experiment.dataset ? ` · ${experiment.dataset.name}${experiment.dataset.rows != null ? ` (${experiment.dataset.rows} rows)` : ""}` : ""}</div>
               {experiment.dataset?.sha256 && <div className="text-[10px] text-[var(--muted)] font-mono truncate">data {experiment.dataset.sha256.slice(0, 12)}</div>}
             </div>
-            <a href={`/train?run=${encodeURIComponent(experiment.name)}`} title="Open in Train" className={btn}><ExternalLink size={12} /></a>
-            <button onClick={() => remove(experiment.name)} title="Delete experiment record" className={btn}><Trash2 size={12} /></button>
+            <a href={`/train?run=${encodeURIComponent(experiment.name)}`} title="Open in Train" className={btn}><ExternalLink size={ICON_SIZE.sm} /></a>
+            <button onClick={() => remove(experiment.name)} title="Delete experiment record" className={btn}><Trash2 size={ICON_SIZE.sm} /></button>
           </div>
         ))}
-      </div>
+      </Panel>
     </div>
   );
 }
@@ -484,7 +485,7 @@ function Projects() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className={card}>
+      <Panel padding="none">
         <div className={head}>
           <span className="text-[var(--accent-ai)]">◆</span> PROJECT FOLDERS <span className="text-[var(--muted)] normal-case tracking-normal">{projects.length}</span>
           <button onClick={() => setPickerOpen(true)} className="ml-auto text-[10px] tracking-widest uppercase text-[var(--accent-ai)] border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)]">
@@ -494,24 +495,24 @@ function Projects() {
         {projects.length === 0 && <div className="p-6 text-center text-[var(--muted)] text-xs">No projects yet — create or import one above.</div>}
         {projects.map((p) => (
           <div key={p.path} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
-            <FolderOpen size={13} className="text-[var(--muted)] shrink-0" />
+            <FolderOpen size={ICON_SIZE.sm} className="text-[var(--muted)] shrink-0" />
             <button onClick={() => { setSelected(p.path); setOpenFile(null); }}
               className="flex-1 min-w-0 truncate text-sm text-left hover:text-[var(--accent-ai)]"
               style={{ color: selected === p.path ? "var(--accent-ai)" : "var(--text)" }}>
               {p.path}
             </button>
             {!p.exists && <span className="text-[10px] text-[var(--accent-danger)] shrink-0">missing</span>}
-            <a href={"/code?project=" + encodeURIComponent(p.path)} title="Open in /code" className={btn}><ExternalLink size={12} /></a>
-            <button className={btn} title="Forget (doesn't delete files)" onClick={() => forget(p.path)}><Trash2 size={12} /></button>
+            <a href={"/code?project=" + encodeURIComponent(p.path)} title="Open in /code" className={btn}><ExternalLink size={ICON_SIZE.sm} /></a>
+            <button className={btn} title="Forget (doesn't delete files)" onClick={() => forget(p.path)}><Trash2 size={ICON_SIZE.sm} /></button>
           </div>
         ))}
-      </div>
+      </Panel>
 
       {selected && (
-        <div className={card + " overflow-hidden"}>
+        <Panel padding="none" className="overflow-hidden">
           <div className={head}>
             <span className="text-[var(--accent-ai)]">◆</span> <span className="truncate">{selected}</span>
-            <button onClick={() => { setSelected(null); setOpenFile(null); }} className="ml-auto text-[var(--muted)] hover:text-[var(--text)]"><X size={14} /></button>
+            <button onClick={() => { setSelected(null); setOpenFile(null); }} className="ml-auto text-[var(--muted)] hover:text-[var(--text)]"><X size={ICON_SIZE.sm} /></button>
           </div>
           <div className="flex flex-col md:flex-row" style={{ height: 420 }}>
             <div className="w-full md:w-64 shrink-0 overflow-auto border-b md:border-b-0 md:border-r border-[var(--border-soft)]">
@@ -527,7 +528,7 @@ function Projects() {
               )}
             </div>
           </div>
-        </div>
+        </Panel>
       )}
 
       <DirPicker open={pickerOpen} recents={projects.map((p) => p.path)} onClose={() => setPickerOpen(false)} onPick={onPick} />
@@ -542,9 +543,8 @@ export default function Library() {
       style={{ color: tab === id ? "#05090c" : "var(--text-2)", background: tab === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)", fontWeight: tab === id ? 700 : 400 }}>{label}</button>
   );
   return (
-    <div className="font-chat min-h-dvh bg-[var(--bg)] text-[var(--text)] p-4 pb-16">
-      <div className="max-w-3xl mx-auto flex flex-col gap-4">
-        <h1 className="text-[var(--accent-ai)] tracking-widest font-bold">◉ LIBRARY</h1>
+    <div className="min-h-dvh bg-[var(--bg)] text-[var(--text)] px-3 py-4 pb-16">
+      <div className="max-w-7xl mx-auto flex flex-col gap-4">
         <div className="flex gap-2 flex-wrap">{tabBtn("models", "▤ Models")}{tabBtn("docs", "▦ Documents")}{tabBtn("chats", "▥ Chats")}{tabBtn("runs", "Runs")}{tabBtn("experiments", "Experiments")}{tabBtn("projects", "▧ Projects")}</div>
         {tab === "models" ? <Models /> : tab === "docs" ? <Documents /> : tab === "chats" ? <Chats /> : tab === "runs" ? <Runs /> : tab === "experiments" ? <Experiments /> : <Projects />}
       </div>

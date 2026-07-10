@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Grid, nextSlot, type GridLayout } from "@/components/grid";
 import { WIDGETS, widgetMinSize, renderWidgetBody, type WidgetCtx, type Filters } from "@/components/widgets";
 import { useDashboard } from "@/lib/use-dashboard";
+import { Button } from "@/components/ui/button";
 
 const DEFAULT_LAYOUT: GridLayout = {
   cols: 12,
@@ -51,38 +52,31 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="font-chat min-h-dvh bg-[var(--bg)] text-[var(--text)] px-[12px] pt-4 pb-16">
-      <div className="w-full flex flex-col gap-4">
-        <div className="flex items-center gap-3">
-          <h1 className="text-[var(--accent-ai)] tracking-widest font-bold">◉ DASHBOARD</h1>
-          <div className="ml-2 flex items-center gap-1.5">
-            <span className="text-[9px] tracking-widest uppercase text-[var(--muted)]">suite</span>
-            <select value={filters.suite || ""} onChange={(e) => setFilters((f) => ({ ...f, suite: e.target.value || undefined }))}
-              className="bg-[var(--surface-2)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)]">
-              <option value="">(per-widget)</option>
-              {(snap?.battery.suites || []).map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            {editing && (
-              <>
-                <select value={addType} onChange={(e) => setAddType(e.target.value)}
-                  className="bg-[var(--surface-2)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)]">
-                  {Object.entries(WIDGETS).map(([k, w]) => <option key={k} value={k}>{w.title}</option>)}
-                </select>
-                <button onClick={addWidget} className="text-[11px] tracking-widest uppercase border border-[var(--border)] rounded px-3 py-1 hover:border-[var(--border-loud)]">+ add</button>
-              </>
-            )}
-            <button onClick={() => setEditing((v) => !v)}
-              className="text-[11px] tracking-widest uppercase rounded px-3 py-1"
-              style={{ background: editing ? "var(--accent-ai)" : "transparent", color: editing ? "#05090c" : "var(--text-2)", border: "1px solid var(--border)" }}>
-              {editing ? "done" : "edit layout"}
-            </button>
-          </div>
-        </div>
-
+    <div className="min-h-dvh bg-[var(--bg)] text-[var(--text)] px-3 pt-3 pb-16">
+      <div className="w-full">
         <Grid layout={layout} editable={editing} onChange={persist} minSize={widgetMinSize}
           renderWidget={(w) => renderWidgetBody(w, ctx)} />
+
+        <div className="fixed right-3 bottom-16 md:bottom-3 z-40 max-w-[calc(100vw-1.5rem)] flex items-center gap-1.5 p-1.5 rounded-[var(--r-lg)] bg-[color-mix(in_srgb,var(--surface-1)_94%,transparent)] border border-[var(--border)] shadow-2xl overflow-x-auto">
+          <select value={filters.suite || ""} onChange={(e) => setFilters((f) => ({ ...f, suite: e.target.value || undefined }))}
+            title="Global benchmark suite filter"
+            className="h-7 bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-2 text-[10px] text-[var(--text)]">
+            <option value="">Suite: per-widget</option>
+            {(snap?.battery.suites || []).map((s) => <option key={s} value={s}>Suite: {s}</option>)}
+          </select>
+          {editing && (
+            <>
+              <select value={addType} onChange={(e) => setAddType(e.target.value)}
+                className="h-7 bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-2 text-[10px] text-[var(--text)]">
+                {Object.entries(WIDGETS).map(([k, w]) => <option key={k} value={k}>{w.title}</option>)}
+              </select>
+              <Button size="sm" onClick={addWidget} className="h-7 text-[10px] uppercase border border-[var(--border)] hover:border-[var(--border-loud)]">+ add</Button>
+            </>
+          )}
+          <Button size="sm" active={editing} onClick={() => setEditing((v) => !v)} className="h-7 text-[10px] uppercase border border-[var(--border)] whitespace-nowrap">
+            {editing ? "done" : "edit layout"}
+          </Button>
+        </div>
       </div>
     </div>
   );

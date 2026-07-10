@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
       });
       try {
         saveConvo({
-          id: cid, title: "Deliberate: " + query.slice(0, 60), ts: Date.now(), project: root,
+          id: cid, title: "Deliberate: " + query.slice(0, 60), ts: Date.now(), project: root, model, mode: "deliberate", think: true,
           messages: [
             { role: "user", content: query },
             { role: "assistant", content: `Deliberation complete. Artifacts: ${dir}` },

@@ -6,6 +6,7 @@ import LlmSettings from "./llm-settings";
 import { enqueueSpeech, stopSpeech, setSpeechListener } from "./voice";
 import MarkdownView from "@/components/markdown-view";
 import { StatsGlance, type Usage } from "@/components/agent/stats-hud";
+import { SignalTrace } from "@/components/ui/signal-trace";
 
 type Msg = { role: "user" | "assistant"; content: string; thinking?: string; status?: string; images?: string[]; visionModel?: string; truncated?: boolean };
 type Convo = { id: string; title: string; model: string; updatedAt: string };
@@ -466,6 +467,10 @@ export default function AgentChat() {
       const j = await r.json();
       setMessages((j.messages ?? []).map(msgFromServer));
       setConvoId(id);
+      // Restore the settings this session actually used, rather than leaving
+      // whatever's currently globally selected.
+      if (typeof j.model === "string" && j.model) setModel(j.model);
+      if (typeof j.think === "boolean") setThink(j.think);
       return (j.messages ?? []) as ServerMsg[];
     } catch { return null; }
   }, []);
@@ -577,9 +582,10 @@ export default function AgentChat() {
     };
   }, [attachChatRun]);
 
-  // On mount: models + conversation list, resume the most recent chat, and — a
-  // fully closed-and-reopened tab has no memory a generation might still be going —
-  // reattach to a live run for that conversation if the run manager has one.
+  // On mount: models + conversation list (for the dropdown), but a new session
+  // starts genuinely blank — it does NOT resume the most recent chat. Open an old
+  // one from the dropdown, or via a deep link, which still reattaches a live run
+  // if a fully closed-and-reopened tab left one generating.
   useEffect(() => {
     fetch("/api/agent/models")
       .then((r) => (r.ok ? r.json() : null))
@@ -602,21 +608,12 @@ export default function AgentChat() {
       } catch { /* server unreachable — visibility resync will retry */ }
     };
     // Deep-link from Library ("open in /chat"): ?conv=<id> opens that specific
-    // conversation instead of whichever is most recent.
+    // conversation. Without one, the session starts blank.
     const deepLinkId = new URLSearchParams(window.location.search).get("conv");
     if (deepLinkId) {
       openConvo(deepLinkId).then((msgs) => reattachIfLive(deepLinkId, msgs));
       window.history.replaceState(null, "", "/chat");
-      return;
     }
-    fetch("/api/agent/conversations?kind=chat")
-      .then((r) => (r.ok ? r.json() : []))
-      .then(async (list: Convo[]) => {
-        if (!list?.[0]) return;
-        const msgs = await openConvo(list[0].id);
-        await reattachIfLive(list[0].id, msgs);
-      })
-      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadConvos, openConvo]);
 
@@ -897,9 +894,9 @@ export default function AgentChat() {
   const suggestSwitch = crashed && !lightModel && !suggestDismissed && !streaming;
 
   return (
-    <div className="font-chat relative flex flex-col h-app-below-nav bg-[var(--bg)] md:pl-64">
+    <div className="relative flex flex-col h-app-below-nav bg-[var(--bg)] md:pl-64">
       {/* Header */}
-      <div className="shrink-0 flex items-center gap-2 px-3 sm:px-6 h-12 border-b border-[var(--border-soft)]">
+      <div className="shrink-0 flex items-center gap-2 px-3 h-12 border-b border-[var(--border-soft)]">
         <button
           onClick={() => { setListOpen((v) => !v); loadConvos(); }}
           className="md:hidden text-[var(--muted)] hover:text-white px-1.5 py-1 -ml-1 inline-flex items-center"
@@ -1029,7 +1026,7 @@ export default function AgentChat() {
 
       {/* Messages */}
       <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto w-full px-4 sm:px-6 py-6 space-y-6">
+        <div className="max-w-4xl mx-auto w-full px-3 py-6 space-y-6">
           {empty ? (
             <div className="pt-[12vh] flex flex-col items-center text-center animate-fade-in">
               <span className="w-10 h-10 rounded-full bg-[var(--accent-ai)]/15 text-[var(--accent-ai)] flex items-center justify-center mb-4"><Sparkles size={18} /></span>
@@ -1120,7 +1117,7 @@ export default function AgentChat() {
                   <div {...longPress(i)} className="text-[15px] text-zinc-100 break-words leading-relaxed">
                     <AssistantContent text={m.content} priorHtml={priorArtifactAt(messages, i)} />
                     {isLast && streaming && (
-                      <span className="inline-block w-1.5 h-4 bg-[var(--accent-ai)] ml-0.5 align-middle animate-pulse" />
+                      <SignalTrace size="sm" className="ml-1 align-middle" />
                     )}
                   </div>
                   {!streaming && m.truncated && (
@@ -1217,8 +1214,8 @@ export default function AgentChat() {
       )}
 
       {/* Composer */}
-      <div className="shrink-0 border-t border-[var(--border-soft)] bg-[var(--bg)] px-4 sm:px-6 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <div className="max-w-2xl mx-auto">
+      <div className="shrink-0 border-t border-[var(--border-soft)] bg-[var(--bg)] px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="max-w-4xl mx-auto">
           {suggestSwitch && (
             <div className="mb-2 flex items-center gap-2 text-xs border border-[var(--accent-warn)]/40 bg-[var(--accent-warn)]/10 rounded-[var(--r-md)] px-3 py-2">
               <span className="flex-1 text-[var(--text-2)]"><span className="font-medium">{model}</span> looks like it crashed the GPU — try lowering GPU layers in settings, or switch to a smaller model.</span>
@@ -1301,7 +1298,7 @@ export default function AgentChat() {
             )}
           </div>
         </div>
-        <p className="max-w-2xl mx-auto text-[10px] text-[var(--muted)] mt-1.5 px-1">
+        <p className="max-w-4xl mx-auto text-[10px] text-[var(--muted)] mt-1.5 px-1">
           Enter to send · Shift+Enter for new line.
         </p>
       </div>

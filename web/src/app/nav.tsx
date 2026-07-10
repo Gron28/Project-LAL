@@ -2,7 +2,21 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Cpu, LayoutDashboard, MessageSquare, TerminalSquare, GraduationCap, Library, Gauge, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Cpu, LayoutDashboard, MessageSquare, TerminalSquare, GraduationCap, Library, Gauge, Network, X } from "lucide-react";
+import { ICON_SIZE } from "@/components/ui/icon";
+import { SignalTrace } from "@/components/ui/signal-trace";
+
+// One place for the active/inactive link look, shared by the desktop rail and
+// the mobile bottom bar instead of each copy-pasting its own ternary. Quiet by
+// design: a subtle background tint + colored text/icon, no full-color fill, no
+// glow — active should read as "selected," not "lit up."
+function navItemStyle(isActive: boolean) {
+  return {
+    background: isActive ? "color-mix(in srgb, var(--accent-ai) 14%, transparent)" : "transparent",
+    color: isActive ? "var(--accent-ai)" : "var(--text-2)",
+    fontWeight: isActive ? 600 : 400,
+  };
+}
 
 // Small truth-teller for the GPU: which model is resident and for how long it's
 // been idle, with a manual unload. The server also auto-unloads after the
@@ -27,14 +41,15 @@ function GpuBadge() {
   return (
     <div className="mx-2 px-0 lg:px-3 py-1.5 flex items-center justify-center lg:justify-start gap-2 text-[10px] text-[var(--muted)]"
       title={`GPU model resident: ${info.model}${idle}`}>
-      <Cpu size={14} className="text-[var(--accent-ai)] shrink-0" />
-      <span className="hidden lg:inline truncate max-w-[90px]">{info.model}{idle}</span>
+      <Cpu size={ICON_SIZE.md} className="text-[var(--accent-ai)] shrink-0" />
+      <span className="hidden lg:inline truncate max-w-[70px]">{info.model}{idle}</span>
+      <SignalTrace size="sm" className="hidden lg:inline-flex" />
       <button title="unload model from GPU now"
         className="hidden lg:inline text-[var(--muted)] hover:text-[var(--accent-danger)]"
         onClick={async () => {
           try { const r = await fetch("/api/sysinfo", { method: "DELETE" }); if (r.ok) setInfo(null); } catch {}
         }}>
-        <X size={12} />
+        <X size={ICON_SIZE.sm} />
       </button>
     </div>
   );
@@ -46,6 +61,7 @@ const items = [
   { href: "/", label: "Dashboard", Icon: LayoutDashboard },
   { href: "/chat", label: "Chat", Icon: MessageSquare },
   { href: "/code", label: "Code", Icon: TerminalSquare },
+  { href: "/hive", label: "Hive", Icon: Network },
   { href: "/train", label: "Train", Icon: GraduationCap },
   { href: "/library", label: "Library", Icon: Library },
   { href: "/benchmark", label: "Bench", Icon: Gauge },
@@ -61,22 +77,24 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
           screen width; collapsed state takes NO layout space at all, with a small
           floating button left to bring it back. */}
       {!collapsed && (
-        <nav className="hidden md:flex md:flex-col fixed left-0 top-0 h-dvh w-14 lg:w-44 bg-[var(--surface-1)] border-r border-[var(--border)] z-50 py-3 gap-1">
-          <div className="flex items-center px-0 lg:px-4 mb-3 text-[var(--accent-ai)] font-bold tracking-widest text-sm">
-            <span className="flex-1 text-center lg:text-left">◉<span className="hidden lg:inline"> LOCAL&nbsp;AI&nbsp;LAB</span></span>
+        <nav className="hidden md:flex md:flex-col fixed left-0 top-0 h-dvh w-12 lg:w-36 bg-[var(--surface-1)] border-r border-[var(--border)] z-50 py-2 gap-0.5">
+          <div className="px-0 lg:px-3 mb-2 text-center lg:text-left">
+            <span className="text-[var(--text-2)] text-[11px] tracking-wide" style={{ fontFamily: "var(--font-display), monospace" }}>
+              <span className="hidden lg:inline">Local AI Lab</span><span className="lg:hidden">LAL</span>
+            </span>
           </div>
           {items.map(({ href, label, Icon }) => (
             <Link key={href} href={href}
-              className="flex items-center justify-center lg:justify-start gap-3 mx-2 px-0 lg:px-3 py-2.5 rounded-[var(--r-md)] text-sm transition-colors"
-              style={{ background: active(href) ? "var(--accent-ai)" : "transparent", color: active(href) ? "#05090c" : "var(--text-2)", fontWeight: active(href) ? 700 : 400 }}>
-              <Icon size={18} /><span className="hidden lg:inline">{label}</span>
+              className="flex items-center justify-center lg:justify-start gap-2.5 mx-1.5 px-0 lg:px-2.5 py-2 rounded-[var(--r-md)] text-xs transition-colors"
+              style={navItemStyle(active(href))}>
+              <Icon size={ICON_SIZE.md} /><span className="hidden lg:inline">{label}</span>
             </Link>
           ))}
           <div className="mt-auto">
             <GpuBadge />
             <button onClick={onToggle} title="hide sidebar"
               className="flex items-center justify-center lg:justify-start gap-2 mx-2 px-0 lg:px-3 py-2 rounded-[var(--r-md)] text-[var(--muted)] hover:text-[var(--text-2)] transition-colors w-[calc(100%-1rem)]">
-              <ChevronLeft size={16} /><span className="hidden lg:inline text-xs">hide</span>
+              <ChevronLeft size={ICON_SIZE.md} /><span className="hidden lg:inline text-xs">hide</span>
             </button>
           </div>
         </nav>
@@ -84,7 +102,7 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
       {collapsed && (
         <button onClick={onToggle} title="show sidebar"
           className="hidden md:flex fixed left-2 bottom-3 z-50 items-center justify-center w-8 h-8 rounded-full bg-[var(--surface-1)] border border-[var(--border)] text-[var(--text-2)] hover:text-[var(--accent-ai)] shadow-lg transition-colors">
-          <ChevronRight size={15} />
+          <ChevronRight size={ICON_SIZE.md} />
         </button>
       )}
 
@@ -93,7 +111,7 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
         {items.map(({ href, label, Icon }) => (
           <Link key={href} href={href} className="flex-1 flex flex-col items-center justify-center gap-0.5 text-[9px] tracking-wide"
             style={{ color: active(href) ? "var(--accent-ai)" : "var(--text-2)" }}>
-            <Icon size={19} /><span>{label}</span>
+            <Icon size={ICON_SIZE.md} /><span>{label}</span>
           </Link>
         ))}
       </nav>

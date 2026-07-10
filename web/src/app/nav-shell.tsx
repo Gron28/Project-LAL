@@ -10,7 +10,10 @@ export default function NavShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
-    try { setCollapsed(localStorage.getItem("nav_collapsed") === "1"); } catch {}
+    const t = setTimeout(() => {
+      try { setCollapsed(localStorage.getItem("nav_collapsed") === "1"); } catch {}
+    }, 0);
+    return () => clearTimeout(t);
   }, []);
 
   const toggle = () => {
@@ -24,7 +27,7 @@ export default function NavShell({ children }: { children: React.ReactNode }) {
   return (
     <NavCollapsedProvider value={collapsed}>
       <Nav collapsed={collapsed} onToggle={toggle} />
-      <div className={collapsed ? "" : "md:pl-14 lg:pl-44"}>{children}</div>
+      <div className={collapsed ? "" : "md:pl-12 lg:pl-36"}>{children}</div>
     </NavCollapsedProvider>
   );
 }

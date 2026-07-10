@@ -38,7 +38,7 @@ export default function Monitor() {
   const temp = (t: number | null) => t == null ? "—" : <span style={{ color: t >= 85 ? "var(--accent-danger)" : t >= 70 ? "var(--accent-warn)" : "var(--text-2)" }}>{t}°C</span>;
 
   return (
-    <div className="font-chat min-h-dvh bg-[var(--bg)] text-[var(--text)] p-4 pb-16">
+    <div className="min-h-dvh bg-[var(--bg)] text-[var(--text)] px-3 py-4 pb-16">
       <div className="max-w-2xl mx-auto flex flex-col gap-4">
         <h1 className="text-[var(--accent-ai)] tracking-widest font-bold">◉ SYSTEM MONITOR</h1>
         <div className={card + " p-5 flex flex-col gap-5"}>

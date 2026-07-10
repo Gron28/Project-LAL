@@ -1,6 +1,8 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Stat, LossChart, MetricHistoryChart, SourceLossChart, BlockHeatmap, LengthHistogramChart, ProbePanel, DeltaHeatmap, DeltaSurface3D, ConceptGalaxy3D, type AdapterDelta, type AdapterEvolution, type GalaxySnapshot } from "@/components/charts";
+import { SignalTrace } from "@/components/ui/signal-trace";
 
 type Row = {
   event: string; step?: number; steps?: number; loss?: number; best?: number;
@@ -164,6 +166,10 @@ export default function TrainPage() {
   const [extracting, setExtracting] = useState("");
   const [datasetOpen, setDatasetOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(true);
+  // Four sections used to be one long vertical stack — every graph, always
+  // rendered, regardless of whether you came here to watch a live run or dig
+  // into a past checkpoint's internals. Tabs make each its own focused screen.
+  const [viewTab, setViewTab] = useState<"live" | "compare" | "evolution" | "galaxy">("live");
   const [checkpoints, setCheckpoints] = useState<string[]>([]);
   const [compareSel, setCompareSel] = useState<string[]>([]);
   const [compareResults, setCompareResults] = useState<AdapterDelta[] | null>(null);
@@ -326,19 +332,31 @@ export default function TrainPage() {
   const recentSecPerStep = stepRows.slice(-9).map((s) => s.sec_per_step).filter((v): v is number => v != null).sort((a, b) => a - b);
   const medianSecPerStep = recentSecPerStep.length ? recentSecPerStep[Math.floor(recentSecPerStep.length / 2)] : null;
   const smoothEta = lastStep && medianSecPerStep ? (totalSteps - lastStep.step!) * medianSecPerStep : lastStep?.eta;
+  const generalizationGap = lastVal?.val_loss != null && lastStep?.loss != null ? lastVal.val_loss - lastStep.loss : null;
+  const retainedRows = modelRow?.blocks != null && modelRow.dropped_overlength != null
+    ? Math.round((100 * modelRow.blocks) / Math.max(1, modelRow.blocks + modelRow.dropped_overlength))
+    : null;
 
   const phase = done ? (last.ok ? "✓ done — ready in Chat" : "✗ failed") : errored ? "✗ " + last.msg : last?.phase || (rows.length ? "training" : "idle");
 
   // pb-20 clears the fixed mobile bottom tab bar (h-14 + safe-area inset) — pb-10
   // wasn't enough and the raw log / concept galaxy panels were rendering underneath it
   return (
-    <div className="font-chat min-h-dvh bg-[var(--bg)] text-[var(--text)] px-2.5 md:px-5 py-4 pb-20 md:pb-10">
+    <div className="min-h-dvh bg-[var(--bg)] text-[var(--text)] px-3 py-4 pb-20 md:pb-10">
       <div className="max-w-[1760px] mx-auto">
-        <h1 className="text-[var(--accent-ai)] tracking-widest font-bold mb-4 text-sm">◉ TRAINING GROUNDS</h1>
+        <div className="flex items-center gap-1 mb-2 overflow-x-auto pb-0.5">
+          {([["live", "Live"], ["compare", "Model deltas"], ["evolution", "Evolution"], ["galaxy", "Concept space"]] as const).map(([id, label]) => (
+            <button key={id} onClick={() => setViewTab(id)} className="h-8 px-3 rounded-[var(--r-md)] border text-[10px] whitespace-nowrap"
+              style={{ color: viewTab === id ? "var(--bg)" : "var(--text-2)", background: viewTab === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: viewTab === id ? "var(--accent-ai)" : "var(--border)", fontWeight: viewTab === id ? 700 : 400 }}>
+              {label}
+            </button>
+          ))}
+          <Link href="/benchmark" className="ml-auto h-8 px-3 inline-flex items-center rounded-[var(--r-md)] border border-[var(--border)] text-[10px] whitespace-nowrap text-[var(--text-2)] hover:border-[var(--border-loud)] hover:text-[var(--accent-ai)]">Open bench</Link>
+        </div>
         <div className="flex flex-col gap-4">
           {/* ---- monitor: one full-width panel; config lives as a dropdown off the header
               instead of a permanent second column, so it never pushes live data off screen ---- */}
-          <div className={card + " min-w-0"}>
+          <div className={card + " min-w-0"} style={{ display: viewTab === "live" ? undefined : "none" }}>
             <div className={head + " relative"}>
               <button onClick={() => setConfigOpen((v) => !v)}
                 className="flex items-center gap-1 normal-case tracking-normal text-[11px] px-2 py-1 -my-1 rounded-[var(--r-md)] border border-[var(--border)] text-[var(--text-2)] hover:border-[var(--border-loud)]">
@@ -357,13 +375,14 @@ export default function TrainPage() {
                     ■ Stop
                   </button>
                 )}
-                <span className="normal-case tracking-normal" style={{ color: done && last.ok ? "var(--accent-ai)" : errored || (done && !last.ok) ? "var(--accent-danger)" : "var(--accent-warn)" }}>{phase}</span>
+                {isRunningView && !done && !errored && <SignalTrace size="sm" />}
+                <span className="normal-case tracking-normal" style={{ color: done && last.ok ? "var(--accent-success)" : errored || (done && !last.ok) ? "var(--accent-danger)" : "var(--accent-warn)" }}>{phase}</span>
               </span>
 
               {configOpen && (
                 <>
                   <div className="fixed inset-0 z-20" onClick={() => setConfigOpen(false)} />
-                  <div className="absolute left-4 top-full mt-1.5 z-30 w-[600px] max-w-[92vw] bg-[var(--surface-1)] border border-[var(--border)] rounded-[var(--r-lg)] shadow-2xl p-4 flex flex-col gap-3 normal-case tracking-normal">
+                  <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-30 w-[680px] max-w-[92vw] max-h-[90vh] overflow-y-auto bg-[var(--surface-1)] border border-[var(--border-loud)] rounded-[var(--r-lg)] shadow-2xl p-4 flex flex-col gap-3 normal-case tracking-normal">
                     <div className="grid grid-cols-2 gap-3">
                       <div><label className={lbl}>Model name</label><input className={inp} value={name} onChange={(e) => setName(e.target.value)} /></div>
                       <div><label className={lbl}>Base</label><select className={inp} value={base} onChange={(e) => setBase(e.target.value)}>{(bases.length ? bases : [base]).map((b) => <option key={b}>{b}</option>)}</select></div>
@@ -492,7 +511,7 @@ export default function TrainPage() {
               {/* device + progress bar */}
               {start && (
                 <div className="flex items-center gap-2 text-[11px]">
-                  <span className="px-2 py-0.5 rounded-full font-bold tracking-widest uppercase text-[9px]" style={{ background: onGpu ? "var(--accent-ai)" : "var(--accent-danger)", color: "var(--bg)" }}>
+                  <span className="px-2 py-0.5 rounded-full font-bold tracking-widest uppercase text-[9px]" style={{ background: onGpu ? "var(--accent-success)" : "var(--accent-danger)", color: "var(--bg)" }}>
                     {onGpu ? "GPU" : "CPU"}{start.dtype ? " · " + start.dtype : ""}
                   </span>
                   {lastStep && <span className="text-[var(--text-2)]">step {lastStep.step}/{totalSteps}</span>}
@@ -503,7 +522,7 @@ export default function TrainPage() {
                 </div>
               )}
               <div className="h-2 rounded-full bg-[var(--surface-3)] overflow-hidden">
-                <div className="h-full rounded-full transition-all" style={{ width: progress + "%", background: onGpu ? "var(--accent-ai)" : "var(--accent-danger)" }} />
+                <div className="h-full rounded-full transition-all" style={{ width: progress + "%", background: onGpu ? "var(--accent-success)" : "var(--accent-danger)" }} />
               </div>
 
               {/* KPI strip — compact chips, wrap freely instead of a fixed 3-col grid */}
@@ -537,43 +556,65 @@ export default function TrainPage() {
                   a bordered/surfaced frame so an empty one reads as "an empty gauge", not a hole */}
               {/* single column below md: auto-fit/minmax degenerates into a 0px track on
                   narrow phones (measured: "230px 0px 103.5px") rather than just stacking */}
-              <div className="grid gap-3 mt-1" style={{ gridTemplateColumns: isWide ? "repeat(auto-fit, minmax(230px, 1fr))" : "1fr" }}>
-                <div className={panel + " col-span-1 md:col-span-2"}>
-                  <div className={panelLbl}>Loss</div>
-                  <div className="h-36"><LossChart rows={rows} /></div>
+              <div className="grid gap-3 mt-1" style={{ gridTemplateColumns: isWide ? "repeat(12, minmax(0, 1fr))" : "1fr" }}>
+                <div className="xl:col-span-12 flex items-end justify-between gap-3 pt-1">
+                  <div><div className="text-[9px] uppercase tracking-[0.18em] text-[var(--accent-ai)]">Learning signal</div><div className="text-sm font-semibold mt-1">Is the model learning cleanly?</div></div>
+                  <div className="text-[9px] text-[var(--muted)]">train / validation loss · stability · convergence</div>
                 </div>
-                <div className={panel}>
-                  <div className={panelLbl}>Gradient norm</div>
-                  <div className="h-36"><MetricHistoryChart rows={rows} field="grad_norm" color="#ffb454" threshold={5} /></div>
+                <div className={panel + " xl:col-span-8"}>
+                  <div className="flex items-center justify-between mb-1"><div className={panelLbl + " mb-0"}>Loss trajectory</div><div className="text-[9px] text-[var(--muted)]">raw · EMA · held-out validation</div></div>
+                  <div className="h-56"><LossChart rows={rows} /></div>
                 </div>
-                <div className={panel}>
-                  <div className={panelLbl}>Throughput (steps/s)</div>
-                  <div className="h-36"><MetricHistoryChart rows={rows} field="steps_s" color="#7c9cff" fmt={(v) => v.toFixed(2)} /></div>
-                </div>
-
-                <div className={panel + " col-span-1 md:col-span-2"}>
-                  <div className={panelLbl}>Loss by data source</div>
-                  <div className="h-24"><SourceLossChart rows={rows} /></div>
-                </div>
-                <div className={panel + " col-span-1 md:col-span-2"}>
-                  <div className="flex items-center justify-between mb-1">
-                    <div className={panelLbl + " mb-0"}>Per-block gradient heatmap</div>
-                    <div className="text-[9px] text-[var(--muted)]">block × step, brighter = larger gradient</div>
+                <div className={panel + " xl:col-span-4"}>
+                  <div className={panelLbl}>Run diagnosis</div>
+                  <div className="grid grid-cols-2 gap-px bg-[var(--border-soft)] border border-[var(--border-soft)] rounded-[var(--r-md)] overflow-hidden mt-2">
+                    <Diagnostic label="Convergence" value={improvePct != null ? `${improvePct}%` : "—"} note={bestLoss != null ? `best ${bestLoss.toFixed(3)}` : "awaiting signal"} tone={improvePct != null && improvePct > 0 ? "good" : "neutral"} />
+                    <Diagnostic label="Generalization gap" value={generalizationGap != null ? `${generalizationGap >= 0 ? "+" : ""}${generalizationGap.toFixed(3)}` : "—"} note={generalizationGap == null ? "needs validation" : Math.abs(generalizationGap) < 0.2 ? "train and val aligned" : "watch for overfit"} tone={generalizationGap != null && Math.abs(generalizationGap) >= 0.2 ? "warn" : generalizationGap != null ? "good" : "neutral"} />
+                    <Diagnostic label="Data retained" value={retainedRows != null ? `${retainedRows}%` : "—"} note={modelRow?.dropped_overlength != null ? `${modelRow.dropped_overlength} overlength rows` : "awaiting dataset scan"} tone={retainedRows != null && retainedRows < 95 ? "warn" : retainedRows != null ? "good" : "neutral"} />
+                    <Diagnostic label="Plateau budget" value={start?.patience ? `${stepsSinceBest ?? 0}/${start.patience}` : "off"} note={start?.patience ? "steps since best" : "no patience stop"} tone={start?.patience && (stepsSinceBest ?? 0) / start.patience > 0.7 ? "warn" : "neutral"} />
                   </div>
-                  <div className="h-24"><BlockHeatmap rows={rows} /></div>
+                  <div className="mt-3 text-[10px] leading-relaxed text-[var(--muted)]">{generalizationGap != null && generalizationGap > 0.25 ? "Validation is separating from training loss. The adapter may be starting to overfit this mix." : lastStep?.grad_norm != null && lastStep.grad_norm > 5 ? "Gradient norm is elevated. Watch for spikes or a rising loss curve before trusting the checkpoint." : stepRows.length ? "No major instability is visible in the latest telemetry." : "Diagnostics populate from the run event stream."}</div>
+                </div>
+                <div className={panel + " xl:col-span-6"}>
+                  <div className={panelLbl}>Gradient norm</div>
+                  <div className="h-40"><MetricHistoryChart rows={rows} field="grad_norm" color="#ffb454" threshold={5} /></div>
+                </div>
+                <div className={panel + " xl:col-span-6"}>
+                  <div className={panelLbl}>Throughput (steps/s)</div>
+                  <div className="h-40"><MetricHistoryChart rows={rows} field="steps_s" color="#7c9cff" fmt={(v) => v.toFixed(2)} /></div>
                 </div>
 
-                <div className={panel}>
-                  <div className={panelLbl}>Mix length distribution</div>
-                  <div className="h-24"><LengthHistogramChart hist={modelRow?.length_hist} /></div>
+                <div className="xl:col-span-12 flex items-end justify-between gap-3 pt-3 border-t border-[var(--border-soft)]">
+                  <div><div className="text-[9px] uppercase tracking-[0.18em] text-[var(--accent-ai)]">Data health</div><div className="text-sm font-semibold mt-1">What is shaping the gradient?</div></div>
+                  <div className="text-[9px] text-[var(--muted)]">source balance · sequence length · layer activity</div>
+                </div>
+                <div className={panel + " xl:col-span-8"}>
+                  <div className={panelLbl}>Loss by data source</div>
+                  <div className="h-40"><SourceLossChart rows={rows} /></div>
+                </div>
+                <div className={panel + " xl:col-span-4"}>
+                  <div className={panelLbl}>Sequence length distribution</div>
+                  <div className="h-40"><LengthHistogramChart hist={modelRow?.length_hist} /></div>
                   <div className="text-[9px] text-[var(--muted)] mt-1 flex gap-3">
                     <span><span className="inline-block w-2 h-2 rounded-sm mr-1 align-middle" style={{ background: "#34ffa6" }} />kept</span>
                     <span><span className="inline-block w-2 h-2 rounded-sm mr-1 align-middle" style={{ background: "#e2726b" }} />dropped</span>
                   </div>
                 </div>
-                <div className={panel + " col-span-1 md:col-span-3"}>
+                <div className={panel + " xl:col-span-12"}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className={panelLbl + " mb-0"}>Per-block gradient heatmap</div>
+                    <div className="text-[9px] text-[var(--muted)]">block × step, brighter = larger gradient</div>
+                  </div>
+                  <div className="h-40"><BlockHeatmap rows={rows} /></div>
+                </div>
+
+                <div className="xl:col-span-12 flex items-end justify-between gap-3 pt-3 border-t border-[var(--border-soft)]">
+                  <div><div className="text-[9px] uppercase tracking-[0.18em] text-[var(--accent-ai)]">Output evidence</div><div className="text-sm font-semibold mt-1">Is behavior moving toward the target?</div></div>
+                  <div className="text-[9px] text-[var(--muted)]">latest held-out generation, shown in full</div>
+                </div>
+                <div className={panel + " xl:col-span-12"}>
                   <div className={panelLbl}>Live sample vs. target</div>
-                  <div className="h-24 overflow-auto"><ProbePanel row={lastProbe} /></div>
+                  <div className="min-h-32 max-h-64 overflow-auto"><ProbePanel row={lastProbe} /></div>
                 </div>
               </div>
 
@@ -602,7 +643,7 @@ export default function TrainPage() {
               matrix) but the actual B@A*(alpha/r) delta each run learned per (layer,
               module) — a real, physically-meaningful "how different are these models"
               fingerprint, computed CPU-only from the saved best-val LoRA checkpoints ---- */}
-          <div className={card + " min-w-0"}>
+          <div className={card + " min-w-0"} style={{ display: viewTab === "compare" ? undefined : "none" }}>
             <div className={head}><span className="text-[var(--accent-ai)]">◆</span> COMPARE MODEL DELTAS</div>
             <div className="p-1.5 md:p-4 flex flex-col gap-3 min-w-0">
               <div className="flex flex-wrap gap-2">
@@ -620,7 +661,7 @@ export default function TrainPage() {
                 </button>
               </div>
               {compareErr && <div className="text-[11px] text-[var(--accent-danger)]">{compareErr}</div>}
-              <p className="text-[10px] text-[var(--muted)]">Per (layer, module) magnitude of the LoRA delta each run actually learned — same color scale across all selected models, so brighter really does mean "changed more," not just "different run."</p>
+              <p className="text-[10px] text-[var(--muted)]">Per (layer, module) magnitude of the LoRA delta each run actually learned — same color scale across all selected models, so brighter really does mean &quot;changed more,&quot; not just &quot;different run.&quot;</p>
               {compareResults && compareResults.length > 0 && (() => {
                 const vmax = Math.max(1e-6, ...compareResults.flatMap((r) => r.matrix.flat()));
                 return (
@@ -640,7 +681,7 @@ export default function TrainPage() {
           {/* ---- delta evolution: a REAL third axis (layer x step x magnitude), not the
               same snapshot redrawn taller — only populated for runs trained with
               "Snapshot every" enabled above, since it needs more than one point in time ---- */}
-          <div className={card + " min-w-0"}>
+          <div className={card + " min-w-0"} style={{ display: viewTab === "evolution" ? undefined : "none" }}>
             <div className={head}><span className="text-[var(--accent-ai)]">◆</span> DELTA EVOLUTION (3D)</div>
             <div className="p-1.5 md:p-4 flex flex-col gap-3 min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -673,7 +714,7 @@ export default function TrainPage() {
               prompt set, projected through a fixed PCA basis fit once pre-training —
               does fine-tuning actually pull same-topic prompts closer together over
               the run? A real, checkable claim, not an animation. ---- */}
-          <div className={card + " min-w-0"}>
+          <div className={card + " min-w-0"} style={{ display: viewTab === "galaxy" ? undefined : "none" }}>
             <div className={head}><span className="text-[var(--accent-ai)]">◆</span> CONCEPT GALAXY</div>
             <div className="p-1.5 md:p-4 flex flex-col gap-3 min-w-0">
               <p className="text-[10px] text-[var(--muted)]">16 fixed, held-out prompts across 7 topics, embedded (mean-pooled last-hidden-state) every val check and projected into the SAME fixed 3D basis each time — so trails show real movement, not a per-frame refit. Populates automatically for any run in progress; no extra config needed.</p>
@@ -707,6 +748,17 @@ export default function TrainPage() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function Diagnostic({ label, value, note, tone }: { label: string; value: string; note: string; tone: "good" | "warn" | "neutral" }) {
+  const color = tone === "good" ? "var(--accent-success)" : tone === "warn" ? "var(--accent-warn)" : "var(--text)";
+  return (
+    <div className="bg-[var(--surface-1)] p-3 min-w-0">
+      <div className="text-[8px] uppercase tracking-[0.14em] text-[var(--muted)] truncate">{label}</div>
+      <div className="text-lg font-semibold mt-1" style={{ color }}>{value}</div>
+      <div className="text-[8px] text-[var(--muted)] truncate">{note}</div>
     </div>
   );
 }

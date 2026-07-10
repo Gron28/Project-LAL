@@ -124,7 +124,7 @@ export function TrainKpisWidget({ ctx }: { ctx: WidgetCtx }) {
 
 export function TrainHistoryWidget({ ctx }: { ctx: WidgetCtx }) {
   const snap = ctx.snap; if (!snap) return empty;
-  const statusColor = (s: string) => s === "running" ? "var(--accent-warn)" : s === "done" ? "var(--accent-ai)" : s === "failed" ? "var(--accent-danger)" : "var(--muted)";
+  const statusColor = (s: string) => s === "running" ? "var(--accent-warn)" : s === "done" ? "var(--accent-success)" : s === "failed" ? "var(--accent-danger)" : "var(--muted)";
   return (
     <div className="flex flex-col gap-1 text-[10px]">
       {snap.runs.slice(0, 20).map((r) => (

@@ -9,35 +9,45 @@
   --surface-3: #15242b;
   --panel: var(--surface-1);
 
-  --border: #26513f;
-  --border-soft: #173228;
-  --border-loud: #34ffa6;
+  --border: #1e4a4c;
+  --border-soft: #142f31;
+  --border-loud: #3fa4b0;
 
-  --text: #eafff4;
-  --text-1: #eafff4;
-  --text-2: #a7d4c1;
-  --text-3: #6f9685;
+  --text: #e8f6f5;
+  --text-1: #e8f6f5;
+  --text-2: #a2cdd0;
+  --text-3: #6b9497;
   --muted: var(--text-3);
 
-  --accent: #34ffa6;
-  --accent-ai: #34ffa6;
-  --accent-wa: #34ffa6;
-  --accent-email: #5fe0ff;
+  /* Blue-leaning teal — shifted off the previous sage-green (#4fae87, hue ~154°)
+     toward hue ~189° so the whole app reads as blue-green rather than plain green.
+     accent-highlight is deliberately different: a small, rare yellow-green mark for
+     "this one thing is customized/notable," never the ambient UI color. */
+  --accent: #3fa4b0;
+  --accent-ai: #3fa4b0;
+  --accent-wa: #3fa4b0;
+  --accent-info: #6fa8ba;
   --accent-warn: #ffc24d;
   --accent-danger: #ff6b6b;
+  /* Distinct from accent-ai on purpose: "good/passing/high score" is a semantic
+     status, not the brand color — a benchmark near 100% should read as green
+     regardless of what hue the UI chrome happens to be this week. */
+  --accent-success: #3fb96c;
+  --accent-highlight: #abc000;
 
   --r-sm: 4px;
   --r-md: 8px;
   --r-lg: 12px;
-  --shadow-bubble: 0 1px 0 rgba(52,255,166,0.04);
+  --r-full: 999px;
+  --shadow-bubble: 0 1px 0 rgba(63,164,176,0.04);
 
-  --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --mono: var(--font-data), "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 }
 
 html, body {
   background: var(--bg);
   color: var(--text);
-  font-family: var(--mono);
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
 }
 
 @keyframes fade-in { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }
@@ -62,6 +72,13 @@ html, body { max-width: 100%; overflow-x: clip; }
 /* chat fills the viewport; on mobile it clears the 3.5rem bottom tab bar */
 .h-app-below-nav { height: 100dvh; }
 @media (max-width: 767px) { .h-app-below-nav { height: calc(100dvh - 3.5rem); } }
-.font-chat { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; letter-spacing: -0.005em; }
 @keyframes msg-in { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
 .animate-msg-in { animation: msg-in .3s cubic-bezier(0.22,1,0.36,1) both; }
+
+/* Signature element: the oscilloscope-style bar sweep (components/ui/signal-trace.tsx)
+   used everywhere a model is actively computing right now. */
+@keyframes signal-bar { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+.signal-bar { transform-origin: bottom; animation: signal-bar 1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .signal-bar { animation: none; transform: scaleY(0.7); }
+}

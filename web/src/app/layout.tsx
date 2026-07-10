@@ -1,17 +1,11 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Space_Mono, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import NavShell from "./nav-shell";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const displayFont = Space_Mono({ variable: "--font-display", weight: "700", subsets: ["latin"] });
+const bodyFont = IBM_Plex_Sans({ variable: "--font-body", weight: ["400", "500", "600"], subsets: ["latin"] });
+const dataFont = IBM_Plex_Mono({ variable: "--font-data", weight: ["400", "500"], subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Local AI Lab",
@@ -26,7 +20,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${displayFont.variable} ${bodyFont.variable} ${dataFont.variable} h-full antialiased`}
     >
       <body className="min-h-full">
         <NavShell>{children}</NavShell>

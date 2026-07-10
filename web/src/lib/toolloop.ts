@@ -34,6 +34,7 @@ export type ToolLoopEvent =
   | { k: "model_swap"; v: { from: string | null; to: string } }
   | { k: "think_recovered"; v: { count: number } }
   | { k: "forced_verify" }
+  | { k: "mutation_required_nudge"; v: { count: number } }
   | { k: "stall_nudge" }
   | { k: "research_depth_nudge"; v: { count: number; min: number } }
   // Live meter: emitted after each round from llama-server's usage/timings so the
@@ -171,6 +172,7 @@ export async function runToolLoop(opts: {
   repeatPenalty?: number;
   minResearchCalls?: number;  // deep-research mode's depth floor — see researchDepthNudge above
   maxResearchCalls?: number; // planning/default modes' depth ceiling — see researchCeilingRefusal above
+  requireMutation?: boolean; // reject text-only completion in implementation stages
   ctx?: number;               // serving context window, for the UI's context-fill meter (denominator)
   signal?: AbortSignal;       // real server-side stop: aborts the upstream fetch (llama-server
   // stops decoding when the socket closes) and is checked between rounds and before
@@ -199,6 +201,7 @@ export async function runToolLoop(opts: {
   let consecutiveReadOnlyRounds = 0;
   let stallNudgeDone = false;
   let actNudgeDone = false;
+  let mutationNudgeCount = 0;
   const canWrite = tools.some((t) => t.function.name === "write_file" || t.function.name === "edit_file");
   let researchCallCount = 0;
   let researchNudgeCount = 0;
@@ -376,6 +379,14 @@ export async function runToolLoop(opts: {
         messages.push({ role: "assistant", content });
         messages.push({ role: "user", content: FORCED_VERIFY_NUDGE, name: "nudge" });
         onEvent({ k: "forced_verify" });
+        continue;
+      }
+      if (opts.requireMutation && canWrite && !wroteFiles) {
+        mutationNudgeCount++;
+        if (mutationNudgeCount > 2) throw new Error("the worker claimed completion three times without making a required file mutation");
+        messages.push({ role: "assistant", content });
+        messages.push({ role: "user", content: "Rejected: this implementation stage has made zero file mutations. Inspect the actual source now, then call write_file or edit_file. A text-only completion claim cannot pass this stage.", name: "nudge" });
+        onEvent({ k: "mutation_required_nudge", v: { count: mutationNudgeCount } });
         continue;
       }
       if (canWrite && !wroteFiles && !actNudgeDone && PROMISES_ACTION_RE.test(content.slice(-400))) {
