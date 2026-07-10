@@ -205,6 +205,14 @@ export async function runToolLoop(opts: {
   const canWrite = tools.some((t) => t.function.name === "write_file" || t.function.name === "edit_file");
   let researchCallCount = 0;
   let researchNudgeCount = 0;
+  // A model pushed past its natural stopping point by minResearchCalls (a hard
+  // floor on tool calls before its answer counts) was observed to satisfy the floor
+  // by literally repeating the exact same web_search query 5 times in a row rather
+  // than generating a new angle — no prompt wording talked it out of this, it's a
+  // decoding-level rut, not a comprehension gap. Track exact (tool, args) repeats
+  // and refuse to re-run or re-count them, so padding the floor with a duplicate
+  // stops working and the model has to actually diversify (observed 2026-07-10).
+  const seenResearchCalls = new Set<string>();
 
   const throwIfAborted = () => {
     if (opts.signal?.aborted) {
@@ -430,6 +438,8 @@ export async function runToolLoop(opts: {
       onEvent({ k: "tool_request", v: { id: c.id, name: c.name, args } });
 
       const isResearchCall = c.name === "web_search" || c.name === "web_fetch";
+      const researchCallSig = isResearchCall ? `${c.name}:${JSON.stringify(args)}` : null;
+      const isDuplicateResearchCall = !!researchCallSig && seenResearchCalls.has(researchCallSig);
       let output: string;
       if (parseError) {
         // Malformed JSON almost always means maxTokens cut the round off mid-
@@ -452,6 +462,8 @@ export async function runToolLoop(opts: {
         }
       } else if (validateToolArguments(c.name, args)) {
         output = "error: invalid tool arguments — " + validateToolArguments(c.name, args) + ". The tool was NOT run; retry with the required fields." + toolCallExample(c.name);
+      } else if (isDuplicateResearchCall) {
+        output = `error: you already ran this exact ${c.name} call earlier in this research pass — repeating it wastes a round without learning anything new. Try a genuinely different query or angle, or if you're out of new angles, stop researching and write your findings now.`;
       } else if (isResearchCall && opts.maxResearchCalls && researchCallCount >= opts.maxResearchCalls) {
         output = researchCeilingRefusal(researchCallCount, opts.maxResearchCalls);
       } else {
@@ -468,7 +480,7 @@ export async function runToolLoop(opts: {
       const ok = !output.startsWith("error:") && output !== "denied by user";
       if (ok) anySuccessfulTool = true;
       if (ok && (c.name === "write_file" || c.name === "edit_file")) wroteFiles = true;
-      if (ok && (c.name === "web_search" || c.name === "web_fetch")) researchCallCount++;
+      if (ok && isResearchCall) { researchCallCount++; if (researchCallSig) seenResearchCalls.add(researchCallSig); }
       onEvent({ k: "tool_result", v: { id: c.id, name: c.name, ok, output } });
       messages.push({ role: "tool", tool_call_id: c.id, name: c.name, content: output });
       opts.onSnapshot?.(messages);

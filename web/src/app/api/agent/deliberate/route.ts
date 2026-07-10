@@ -7,7 +7,7 @@ import { runDeliberation } from "@/lib/deliberate";
 import { startRun, requestApproval } from "@/lib/runs";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 3600; // hard route ceiling — the minutes slider must stay comfortably under this
+export const maxDuration = 3600; // hard route ceiling — a cycle-boxed run (no minutes budget) must stay under this
 
 const DEFAULT_WORKSPACE = path.join(path.resolve(process.cwd(), ".."), "workspace");
 const DEFAULT_MODEL = "gemma4:12b"; // user's call 2026-07-07: one strong model for every role, no swap cost
@@ -22,20 +22,19 @@ function resolveProject(raw: unknown): { root: string } | { error: string } {
 }
 
 export async function GET() {
-  return NextResponse.json({ defaultModel: DEFAULT_MODEL, minMinutes: 2, maxMinutes: 60, defaultMinutes: 10 });
+  return NextResponse.json({ defaultModel: DEFAULT_MODEL });
 }
 
-// POST {query, minutes, project?, model?} -> {runId, conversationId}; the
-// deliberation itself runs detached in the run manager (like /api/agent/loop) and
-// clients follow via GET /api/agent/runs/<id>/stream. Deliberately a separate
-// endpoint from /api/agent/loop rather than another `mode`: this is a multi-phase,
-// multi-role orchestration with its own time budget and on-disk artifacts, not a
-// single tool-loop call.
+// POST {query, project?, model?} -> {runId, conversationId}; the deliberation
+// itself runs detached in the run manager (like /api/agent/loop) and clients follow
+// via GET /api/agent/runs/<id>/stream. Deliberately a separate endpoint from
+// /api/agent/loop rather than another `mode`: this is a multi-phase, multi-role
+// orchestration with its own cycle budget and on-disk artifacts, not a single
+// tool-loop call.
 export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
   const query = String(b.query || "").trim();
   if (!query) return new Response("no query", { status: 400 });
-  const minutes = Math.max(1, Math.min(120, Number(b.minutes) || 10));
   const model = (b.model as string) || DEFAULT_MODEL;
   const autoApprove = !!b.autoApprove;
 
@@ -55,23 +54,26 @@ export async function POST(req: NextRequest) {
     { kind: "deliberate", conversationId: cid, project: root, model },
     async (emit, signal) => {
       emit({ k: "project", v: { root } });
-      emit({ k: "query", v: { query, minutes, model } });
+      emit({ k: "query", v: { query, model } });
 
       // Serving happens inside the run — model load can take up to a minute and the
       // POST reply must not wait on it. Same gemma-routing gotcha as /api/agent/loop:
       // llama-b9835's health check passes for gemma archs it can't actually run, so
       // go straight to the Ollama shim.
       const mi = allModels().find((m) => m.name === model);
+      // 8192 floor, not 16384: ensureServing takes the MAX of this and the saved
+      // num_ctx, so a user-raised setting actually wins instead of being clamped to
+      // a hardcoded value regardless of what they configured. Also the context
+      // window runDeliberation reports to the UI's HUD meter, regardless of which
+      // backend below actually ends up serving it.
+      const ctx = Math.max(8192, o.num_ctx || 0);
       let baseUrl: string;
       if (mi?.source === "ollama" && /gemma/i.test(model)) {
         stopServing();
         baseUrl = "http://127.0.0.1:11434";
       } else {
         try {
-          // 8192 floor, not 16384: ensureServing takes the MAX of this and the saved
-          // num_ctx, so a user-raised setting actually wins instead of being clamped
-          // to a hardcoded value regardless of what they configured.
-          await ensureServing(model, Math.max(8192, o.num_ctx || 0));
+          await ensureServing(model, ctx);
           baseUrl = `http://127.0.0.1:${SERVE_PORT}`;
         } catch (e) {
           if (mi?.source === "ollama") { stopServing(); baseUrl = "http://127.0.0.1:11434"; }
@@ -89,7 +91,7 @@ export async function POST(req: NextRequest) {
       // as the regular /code session instead of being blanket-denied by omission.
       const fullExec = makeAgentExecutor({ workspaceDir: root, baseUrl, model, think: true, onEvent: () => {}, approve, signal });
       const dir = await runDeliberation({
-        query, minutes, project: root, baseUrl, model,
+        query, project: root, baseUrl, model, ctx,
         exec: fullExec, tools: fullExec.defs,
         sampling: { temperature: o.temperature, topP: o.top_p, topK: o.top_k, repeatPenalty: o.repeat_penalty },
         approve,

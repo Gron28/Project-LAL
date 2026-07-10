@@ -275,7 +275,6 @@ export default function CodePage() {
   const [think, setThink] = useState(true);
   const [modes, setModes] = useState<{ id: string; label: string; think?: boolean }[]>([{ id: "default", label: "default", think: true }]);
   const [mode, setMode] = useState("default");
-  const [minutes, setMinutes] = useState(10); // deliberate mode's time-budget slider
   const [settingsOpen, setSettingsOpen] = useState(false); // same LlmSettings panel /chat uses — temperature/num_ctx/etc, applies here too since serving reads the same saved options
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState("");
@@ -389,7 +388,8 @@ export default function CodePage() {
       const r = await fetch(`/api/agent/conversations/${id}`);
       if (!r.ok) return null;
       const j = await r.json();
-      const { blocks: b, history: h } = reconstructSession((j.messages ?? []) as RawMsg[]);
+      const rawMsgs = (j.messages ?? []) as RawMsg[];
+      const { blocks: b, history: h } = reconstructSession(rawMsgs);
       // Restore the session's project folder BEFORE rendering, so the file tree /
       // git panel load against the right root. Older sessions have no project
       // field; a saved default-workspace path maps back to "" (the select's
@@ -406,7 +406,6 @@ export default function CodePage() {
       setProject(savedProj && !projWarning ? savedProj : "");
       setOpenFile(null);
       history.current = h;
-      setBlocks(projWarning ? [...b, { t: "error", text: projWarning }] : b);
       setConvoId(id);
       setSessionUrl(id);
       setInstructionFiles([]);
@@ -416,7 +415,26 @@ export default function CodePage() {
       if (typeof j.mode === "string" && j.mode) setMode(j.mode);
       if (typeof j.think === "boolean") setThink(j.think);
       if (typeof j.autoApprove === "boolean") setAuto(j.autoApprove);
-      return (j.messages ?? []) as RawMsg[];
+      if (j.mode === "deliberate") {
+        // The saved transcript for a deliberation is a 2-message stub (the query +
+        // "Deliberation complete: <dir>") — deliberate.ts never writes its rich
+        // phase-by-phase transcript (roles, per-role research, every debate round,
+        // synthesis) back into the conversation record, only to the run's own event
+        // log and on-disk artifacts. Show the query immediately, then replay the
+        // underlying run's full log (works after completion too — see the stream
+        // route) to reconstruct the real transcript instead of the stub, and to
+        // repopulate the context/telemetry HUD from its last usage event.
+        const userMsg = rawMsgs.find((m) => m.role === "user");
+        setBlocks(userMsg ? [{ t: "user", text: userMsg.content ?? "", hIdx: -1 }] : []);
+        try {
+          const runs: { id: string; conversationId: string }[] = await fetch("/api/agent/runs?limit=200").then((r2) => r2.json());
+          const run = runs.find((x) => x.conversationId === id);
+          if (run) attachRun(run.id, null);
+        } catch { /* no matching run on disk — the stub query block is all there is */ }
+      } else {
+        setBlocks(projWarning ? [...b, { t: "error", text: projWarning }] : b);
+      }
+      return rawMsgs;
     } catch { return null; }
   };
 
@@ -504,6 +522,15 @@ export default function CodePage() {
         return;
       }
       if (raw.k === "usage") { setUsage(raw.v as Usage); return; }
+      // Deliberate mode's usage events never arrive at the top level — every one of
+      // its askOnce() calls wraps its events in {k:"inner", v:{phase, role, event}},
+      // so the check above never matches and the HUD's context/tok-s numbers stayed
+      // permanently empty for deliberate runs, live or replayed (observed 2026-07-10).
+      // Unwrap one level to find a usage event without disturbing normal rendering.
+      if (raw.k === "inner") {
+        const inner = (raw.v as { event?: { k?: string; v?: unknown } } | undefined)?.event;
+        if (inner?.k === "usage") setUsage(inner.v as Usage);
+      }
       if (raw.k === "truncated") { truncatedRef.current = true; return; }
       if (raw.k === "turn") {
         if (savedMsgs) {
@@ -685,7 +712,7 @@ export default function CodePage() {
     try {
       const res = await fetch("/api/agent/deliberate", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query, minutes, model, autoApprove: auto, project: project || undefined }),
+        body: JSON.stringify({ query, model, autoApprove: auto, project: project || undefined }),
       });
       if (!res.ok) throw new Error(await res.text());
       const j = await res.json();
@@ -828,12 +855,6 @@ export default function CodePage() {
             <select value={mode} onChange={(e) => changeMode(e.target.value)} className={inp + " w-28 max-w-[18%] truncate"} title="workflow mode">
               {modes.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
-            {mode === "deliberate" && (
-              <span className="flex items-center gap-1.5 text-xs bg-[var(--surface-2)] border border-[var(--border-soft)] rounded-lg px-2.5 py-1" title="deliberation time budget">
-                <input type="range" min={2} max={60} step={1} value={minutes} onChange={(e) => setMinutes(parseInt(e.target.value, 10))} className="w-20 accent-[var(--accent-ai)]" />
-                <span className="text-[var(--text-2)] tabular-nums w-12">{minutes}m</span>
-              </span>
-            )}
             <select value={project} onChange={(e) => { setProject(e.target.value); setOpenFile(null); newSession(); }}
               className={inp + " w-40 max-w-[24%] truncate"} title="project (switching starts a fresh session)">
               <option value="">{workspace ? "workspace" : "workspace"}</option>
@@ -1048,11 +1069,6 @@ export default function CodePage() {
               {modes.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
           </label>
-          {mode === "deliberate" && (
-            <label className="block text-[11px] text-[var(--muted)]">Time budget: {minutes}m
-              <input type="range" min={2} max={60} step={1} value={minutes} onChange={(e) => setMinutes(parseInt(e.target.value, 10))} className="w-full accent-[var(--accent-ai)] mt-1" />
-            </label>
-          )}
           <label className="block text-[11px] text-[var(--muted)]">Project
             <select value={project} onChange={(e) => { setProject(e.target.value); setOpenFile(null); newSession(); }} className={inp + " w-full mt-1 max-w-none"}>
               <option value="">workspace</option>

@@ -1,4 +1,4 @@
-// "Ultimate research" mode: a time-boxed, multi-perspective deliberative research
+// "Ultimate research" mode: a cycle-boxed, multi-perspective deliberative research
 // engine. Structurally different from a single runToolLoop call — it's an explicit
 // server-side state machine that makes MANY tool-loop calls across phases, not a
 // single model improvising the whole process (a small model asked to orchestrate
@@ -7,11 +7,14 @@
 // Phases: scope the relevant perspectives -> each perspective (+ one neutral) does
 // its own deep research -> the perspectives cross-examine each other's findings,
 // explicitly framed as truth-seeking rather than "winning" -> gap-driven follow-up
-// research -> repeat the debate/follow-up cycle until convergence or the time
-// budget runs out -> a neutral synthesis, plus a separate retrospective on whether
-// the process itself was sound. One model throughout (user's call, 2026-07-07): no
-// swap cost between phases, at the price of persona-driven rather than architecture-
-// driven diversity between roles.
+// research -> repeat the debate/follow-up cycle until convergence or
+// DEBATE_ROUND_HARD_CAP cycles are used up -> a neutral synthesis, plus a separate
+// retrospective on whether the process itself was sound. No wall-clock deadline
+// (2026-07-10: it let one slow research role eat the entire budget and silently
+// skip every later phase, including the debate loop itself) — completion, not a
+// time limit, is the goal; cycle count is the only budget. One model throughout
+// (user's call, 2026-07-07): no swap cost between phases, at the price of
+// persona-driven rather than architecture-driven diversity between roles.
 import fs from "node:fs";
 import path from "node:path";
 import { runToolLoop, type ToolLoopEvent, type ToolLoopMsg } from "./toolloop";
@@ -54,14 +57,14 @@ function truncate(s: string, n: number): string {
 }
 
 function scopingPrompt(query: string): string {
-  return `You are about to run a deep, multi-perspective research process on this question:\n\n"${query}"\n\nFirst, scope the research itself: identify exactly ${MAX_ROLES} distinct, genuinely relevant perspectives/roles that should each investigate this question independently — real, defensible viewpoints that would each reach a different, useful angle on it, not strawmen. For each, state its name, its lens (what it weighs most, and why that's relevant to THIS specific question), and a possible bias it should watch for in itself.\n\nThis is about the QUESTION, not any codebase or project — you do not need list_files/read_file/grep for this, there is nothing on disk to look at yet. Reason from what you already know about the topic and go straight to your answer.\n\nEnd your reply with exactly one fenced json block listing them, nothing after it:\n\`\`\`json\n[{"name": "...", "lens": "...", "bias": "..."}]\n\`\`\`\n(exactly ${MAX_ROLES} items.)`;
+  return `You are about to run a deep, multi-perspective research process on this question:\n\n"${query}"\n\nFirst, scope the research itself: identify exactly ${MAX_ROLES} distinct, genuinely relevant perspectives/roles that should each investigate this question independently — real, defensible viewpoints that would each reach a different, useful angle on it, not strawmen.\n\nCritical: each role must independently attempt to answer the WHOLE question, not just one slice of it. WRONG — task-splitting, not perspective diversity (e.g. for "what car should I buy?": a "Budget" role, a "Safety" role, and a "Fuel Economy" role, each covering one factor instead of proposing a full answer). RIGHT — each role proposes a full answer through a different lens (e.g. a "Domain Expert", a "Skeptical Reviewer", and a "Practical User", each independently recommending a car and why). Roles will later read and critique EACH OTHER's full findings on this SAME question — if two roles investigated disjoint slices instead of the same question from different angles, they'll have nothing to agree or disagree about.\n\nFor each, state its name, its lens (what it weighs most, and why that's relevant to THIS specific question), and a possible bias it should watch for in itself.\n\nThis is about the QUESTION, not any codebase or project — you do not need list_files/read_file/grep for this, there is nothing on disk to look at yet. Reason from what you already know about the topic and go straight to your answer.\n\nEnd your reply with exactly one fenced json block listing them, nothing after it:\n\`\`\`json\n[{"name": "...", "lens": "...", "bias": "..."}]\n\`\`\`\n(exactly ${MAX_ROLES} items.)`;
 }
 
 function researchPrompt(role: Role, query: string): string {
   const persona = role === NEUTRAL_ROLE
     ? "You are researching with no persona or advocacy — the neutral, best-available-evidence view."
     : `You are researching as: ${role.name}. Your lens: ${role.lens}. Watch for this bias in yourself: ${role.bias || "none stated"}.`;
-  return `${persona}\n\nResearch this question thoroughly from that lens: "${query}"\n\nThis is a genuine deep-research pass: decompose into distinct sub-questions from your perspective, use web_search + web_fetch on real sources (a snippet is never enough to answer from), and follow up on gaps rather than stopping at your first pass. Write your findings as your final reply: your conclusion, the evidence for it, and — if you have a persona — where you think your own lens might be coloring the answer.`;
+  return `${persona}\n\nResearch this question thoroughly from that lens: "${query}"\n\nThis is a genuine deep-research pass: decompose into distinct sub-questions from your perspective, use web_search + web_fetch on real sources (a snippet is never enough to answer from), and follow up on gaps rather than stopping at your first pass.\n\nCritical: your search queries must reflect YOUR specific lens, not just restate the question — other roles are researching this exact same question right now, and if your queries look like theirs, your findings will too, and there will be nothing real left to debate later. WRONG: a generic query anyone would run (e.g. "best plants for a shaded balcony"). RIGHT: a query only YOUR lens would prioritize (e.g. if your lens is space-efficiency, "vertical gardening techniques small balcony"; if your lens is local climate, "[location] frost dates microclimate"). Never repeat a query you've already run — if you can't think of a new angle from your lens, you're done researching, not stuck.\n\nWrite your findings as your final reply: your conclusion, the evidence for it, and — if you have a persona — where you think your own lens might be coloring the answer.`;
 }
 
 function debateTurnPrompt(role: Role, query: string, findingsDigest: string, priorRoundDigest?: string): string {
@@ -86,7 +89,7 @@ function retrospectivePrompt(query: string, fullDigest: string): string {
 
 async function askOnce(opts: {
   baseUrl: string; model: string; exec: Executor; tools: ToolDef[];
-  prompt: string; maxRounds: number; minResearchCalls?: number;
+  prompt: string; maxRounds: number; minResearchCalls?: number; ctx: number;
   phase: string; role?: string; sampling: Sampling; approve?: ApproveFn;
   signal?: AbortSignal;
   onEvent: (e: DeliberateEvent) => void;
@@ -104,7 +107,7 @@ async function askOnce(opts: {
       const messages: ToolLoopMsg[] = [{ role: "user", content: opts.prompt }];
       const final = await runToolLoop({
         baseUrl: opts.baseUrl, model: opts.model, messages, tools: opts.tools, exec: opts.exec,
-        maxRounds: opts.maxRounds, maxTokens: 4096, think: true,
+        maxRounds: opts.maxRounds, maxTokens: 4096, think: true, ctx: opts.ctx,
         temperature: opts.sampling.temperature ?? 0.3, topP: opts.sampling.topP, topK: opts.sampling.topK, repeatPenalty: opts.sampling.repeatPenalty,
         minResearchCalls: opts.minResearchCalls, approve: opts.approve,
         signal: opts.signal,
@@ -127,10 +130,10 @@ async function askOnce(opts: {
 
 export async function runDeliberation(opts: {
   query: string;
-  minutes: number;
   project: string;
   baseUrl: string;
   model: string;
+  ctx: number;
   exec: Executor;
   tools: ToolDef[];
   sampling?: Sampling;
@@ -140,7 +143,6 @@ export async function runDeliberation(opts: {
 }): Promise<string> {
   const { onEvent } = opts;
   const sampling = opts.sampling ?? {};
-  const deadline = Date.now() + Math.max(1, opts.minutes) * 60_000;
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const dir = path.join(opts.project, "_deliberation", stamp);
   fs.mkdirSync(dir, { recursive: true });
@@ -152,11 +154,16 @@ export async function runDeliberation(opts: {
   };
 
   const ask = (prompt: string, phase: string, role: string | undefined, maxRounds: number, minResearchCalls?: number) =>
-    askOnce({ baseUrl: opts.baseUrl, model: opts.model, exec: opts.exec, tools: opts.tools, prompt, maxRounds, minResearchCalls, phase, role, sampling, approve: opts.approve, signal: opts.signal, onEvent });
+    askOnce({ baseUrl: opts.baseUrl, model: opts.model, exec: opts.exec, tools: opts.tools, prompt, maxRounds, minResearchCalls, ctx: opts.ctx, phase, role, sampling, approve: opts.approve, signal: opts.signal, onEvent });
 
   // Phase 0: scope the perspectives themselves, before researching the actual question.
+  // No minResearchCalls here — the scoping prompt explicitly tells the model it needs
+  // no tools for this, and a stray minResearchCalls floor (copied from the research-
+  // phase call below, where it belongs) forced 9 pointless web_search rounds here,
+  // discarding a clean direct answer and burning >10% of the run's whole time budget
+  // before real research even started (observed 2026-07-10, run deliberate-mrf4e4tla8lj).
   onEvent({ k: "phase", v: { name: "scoping" } });
-  const scopingText = await ask(scopingPrompt(opts.query), "scoping", undefined, 10, 3);
+  const scopingText = await ask(scopingPrompt(opts.query), "scoping", undefined, 10);
   write("scoping.md", scopingText);
   let roles = ((extractJsonBlock(scopingText) as Role[] | null) || [])
     .filter((r) => r && typeof r.name === "string" && typeof r.lens === "string")
@@ -171,21 +178,15 @@ export async function runDeliberation(opts: {
   write("roles.json", JSON.stringify(roles, null, 2));
   onEvent({ k: "roles", v: { roles } });
 
-  // Phase 1: each role + one neutral pass do their own full deep research. The
-  // FIRST role always runs regardless of the deadline (there must be at least one
-  // finding), but a real run (2026-07-07: minutes=3 request took 384s/6.4min because
-  // nothing here checked the deadline) showed this fixed-cost phase can blow the
-  // time budget on its own if left unchecked — every role after the first respects
-  // it, skipping with a placeholder rather than silently running long.
+  // Phase 1: each role + one neutral pass do their own full deep research. No time
+  // budget gating this (or anything below) — cycles (DEBATE_ROUND_HARD_CAP) and
+  // convergence are the only stop conditions now. A wall-clock deadline here used to
+  // let one slow role (17 tool calls, 6+ minutes, observed 2026-07-10) eat the whole
+  // remaining budget and silently skip every later role AND the entire debate loop —
+  // completion, not a time limit, is the goal; let it take however long it takes.
   const findings: Record<string, string> = {};
   const allRoles = [...roles, NEUTRAL_ROLE];
-  for (let i = 0; i < allRoles.length; i++) {
-    const role = allRoles[i];
-    if (i > 0 && Date.now() >= deadline) {
-      findings[role.name] = "(skipped — time budget was already used up by earlier roles' research)";
-      write(`research_${slugify(role.name)}.md`, findings[role.name]);
-      continue;
-    }
+  for (const role of allRoles) {
     onEvent({ k: "role_progress", v: { role: role.name, stage: "researching" } });
     const text = await ask(researchPrompt(role, opts.query), "research", role.name, 20, 8);
     findings[role.name] = text;
@@ -195,11 +196,11 @@ export async function runDeliberation(opts: {
   const digestAll = () => allRoles.map((r) => `### ${r.name}\n${truncate(findings[r.name] || "", 1200)}`).join("\n\n");
 
   // Phase 2+3: cross-examine, then gap-driven follow-up, repeated until convergence
-  // or the time budget runs out (checked between rounds, not mid-generation — a live
-  // call is never aborted, so the last round can run slightly past the deadline).
+  // or DEBATE_ROUND_HARD_CAP cycles are used up — cycles are the only budget now,
+  // not wall-clock time (see the note on Phase 1 above).
   let round = 0;
   const debateLog: string[] = [];
-  while (Date.now() < deadline && round < DEBATE_ROUND_HARD_CAP) {
+  while (round < DEBATE_ROUND_HARD_CAP) {
     round++;
     onEvent({ k: "phase", v: { name: `debate round ${round}` } });
     const turns: string[] = [];
@@ -218,11 +219,10 @@ export async function runDeliberation(opts: {
     const m = verdictText.match(/CONVERGENCE:\s*(converged|continue|unresolved)/i);
     const verdict = (m?.[1].toLowerCase() as "converged" | "continue" | "unresolved" | undefined) || "continue";
     onEvent({ k: "convergence", v: { round, verdict } });
-    if (verdict !== "continue" || Date.now() >= deadline) break;
+    if (verdict !== "continue") break;
 
     onEvent({ k: "phase", v: { name: `follow-up research ${round}` } });
     for (const role of allRoles) {
-      if (Date.now() >= deadline) break;
       const followText = await ask(followUpPrompt(role, opts.query, truncate(roundText, 1500)), "followup", role.name, 12, 2);
       findings[role.name] = findings[role.name] + `\n\n---UPDATE (round ${round})---\n` + followText;
       write(`research_${slugify(role.name)}_round${round}.md`, followText);
