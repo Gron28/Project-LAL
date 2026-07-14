@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$HostUrl = if ($env:LAL_HOST) { $env:LAL_HOST.TrimEnd('/') } else { 'https://main-pc.tail3ba909.ts.net' }
+$HostUrl = if ($env:LAL_HOST) { $env:LAL_HOST.TrimEnd('/') } else { 'https://main-pc.tail3ba909.ts.net:8443' }
 $LalHome = Join-Path $HOME '.lal'
 $BinDir = Join-Path $env:LOCALAPPDATA 'LAL\bin'
 $RuntimeDir = Join-Path $env:LOCALAPPDATA 'LAL\runtime'

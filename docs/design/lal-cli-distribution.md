@@ -16,14 +16,19 @@ Install `lal` once on another tailnet computer, run it from any local folder, an
 Linux/macOS:
 
 ```bash
-curl -fsSL https://main-pc.tail3ba909.ts.net/lal/install.sh | bash
+curl -fsSL https://main-pc.tail3ba909.ts.net:8443/lal/install.sh | bash
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm https://main-pc.tail3ba909.ts.net/lal/install.ps1 | iex
+irm https://main-pc.tail3ba909.ts.net:8443/lal/install.ps1 | iex
 ```
+
+The bare hostname (443) is reserved for a separate app on this box (the inbox
+service); LAL's install/update endpoints live on `:8443` specifically. Every
+script here must use the explicit port — see the tailscale-serve drift memory
+if this regresses again.
 
 The installer prompts once for the shared prototype pairing token printed by `./start.sh --show-cli-token`. It then:
 

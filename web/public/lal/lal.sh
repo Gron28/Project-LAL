@@ -4,7 +4,7 @@ set -euo pipefail
 LAL_HOME="${LAL_HOME:-$HOME/.lal}"
 host="${LAL_HOST:-}"
 if [ -z "$host" ] && [ -f "$LAL_HOME/client-host" ]; then host="$(sed -n '1p' "$LAL_HOME/client-host")"; fi
-host="${host:-https://main-pc.tail3ba909.ts.net}"
+host="${host:-https://main-pc.tail3ba909.ts.net:8443}"
 
 if [ "${1:-}" = "update" ]; then
   token="${LAL_TOKEN:-}"

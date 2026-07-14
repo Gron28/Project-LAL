@@ -3,7 +3,7 @@ set -euo pipefail
 
 updating=0
 if [ "${1:-}" = "--update" ]; then updating=1; fi
-host="${LAL_HOST:-https://main-pc.tail3ba909.ts.net}"
+host="${LAL_HOST:-https://main-pc.tail3ba909.ts.net:8443}"
 host="${host%/}"
 lal_home="${LAL_HOME:-$HOME/.lal}"
 bin_dir="${LAL_BIN_DIR:-$HOME/.local/bin}"

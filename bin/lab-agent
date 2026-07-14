@@ -386,7 +386,7 @@ def tailnet_url(host: str, page: str) -> str:
     if configured:
         return configured + page
     if host.startswith("http://127.0.0.1") or host.startswith("http://localhost"):
-        return "https://main-pc.tail3ba909.ts.net" + page
+        return "https://main-pc.tail3ba909.ts.net:8443" + page
     return host.rstrip("/") + page
 
 
