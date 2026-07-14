@@ -15,6 +15,22 @@ const nextConfig: NextConfig = {
   // wasm loaders — opt them out of bundling entirely and let native `require` handle
   // them at runtime instead.
   serverExternalPackages: ["web-tree-sitter", "tree-sitter-wasms"],
+  async headers() {
+    // Next's static file server has no ".ps1" mime entry and falls back to
+    // application/octet-stream. Windows PowerShell's Invoke-RestMethod treats an
+    // unrecognized content type as a cue to attempt XML auto-parsing; the install
+    // script text isn't XML, so IRM silently hands back a bare XmlDocument object
+    // instead of the script text, and Invoke-Expression then tries to run that
+    // object's ToString() ("System.Xml.XmlDocument") as a command. Forcing
+    // text/plain here is what makes `irm .../install.ps1 | iex` and `lal update`
+    // actually receive the script as a string.
+    return [
+      {
+        source: "/lal/install.ps1",
+        headers: [{ key: "Content-Type", value: "text/plain; charset=utf-8" }],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
