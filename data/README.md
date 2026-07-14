@@ -23,3 +23,9 @@ Hermes/ToolACE/Toucan tool-use sets, OpenR1 math traces) and `scripts/gen_*.py`
 (generates verified-by-construction synthetic data, no external download). Run whichever
 you need; `scripts/build_mix.py` combines outputs into a training mix with cross-source
 dedup and a train/benchmark leak guard.
+
+For HIVE role adapters, use `scripts/build_hive_role_dataset.py` instead. It adds
+license/generator/check provenance, production tool-schema validation, permanent blind-
+probe guards, task-family train/validation isolation, stable example IDs and hashes, and
+an immutable adjacent manifest. See `docs/hive-specialist-training.md` for the complete
+Qwen3-4B adapter and promotion workflow.

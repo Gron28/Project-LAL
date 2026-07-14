@@ -11,11 +11,12 @@ import GitPanel from "@/components/code/git-panel";
 import RunPanel from "@/components/code/run-panel";
 import AgentSettings from "@/components/agent/agent-settings";
 import StatsHud, { StatsGlance, type Usage } from "@/components/agent/stats-hud";
+import CertaintyWave, { type TokenAlternatives } from "@/components/agent/certainty-wave";
 import { useNavCollapsed } from "@/app/nav-context";
 
 type Ev =
-  | { k: "text"; v: string; agent?: string }
-  | { k: "think"; v: string; agent?: string }
+  | { k: "text"; v: string; p?: number; alts?: [string, number][]; agent?: string }
+  | { k: "think"; v: string; p?: number; agent?: string }
   | { k: "round"; agent?: string }
   | { k: "max_rounds"; v: number; agent?: string }
   | { k: "stall_nudge"; agent?: string }
@@ -49,7 +50,7 @@ type Ev =
 type ToolCall = { id: string; name: string; args: Record<string, unknown>; agent?: string; ok?: boolean; output?: string; pendingApproval?: boolean; streaming?: boolean; progressChars?: number; preview?: string };
 type Block =
   | { t: "user"; text: string; hIdx: number }
-  | { t: "assistant"; text: string; think: string; agent?: string }
+  | { t: "assistant"; text: string; think: string; agent?: string; wave: number[]; alternatives: TokenAlternatives[] }
   | { t: "tool"; call: ToolCall }
   | { t: "status"; text: string }
   | { t: "error"; text: string };
@@ -83,7 +84,7 @@ function reconstructSession(messages: RawMsg[]): { blocks: Block[]; history: His
       if (m.name === "nudge") blocks.push({ t: "status", text: "auto-nudge: " + (m.content ?? "").slice(0, 140) });
       else blocks.push({ t: "user", text: m.content ?? "", hIdx: history.indexOf(m) });
     } else if (m.role === "assistant") {
-      if (m.content) blocks.push({ t: "assistant", text: m.content, think: "" });
+      if (m.content) blocks.push({ t: "assistant", text: m.content, think: "", wave: [], alternatives: [] });
       for (const tc of m.tool_calls ?? []) {
         let args: Record<string, unknown> = {};
         try { args = JSON.parse(tc.function.arguments); } catch {}
@@ -110,12 +111,12 @@ function applyEvent(next: Block[], e: Ev): void {
   const lastAssistant = () => {
     const last = next[next.length - 1];
     if (last?.t === "assistant" && last.agent === agent) return last;
-    const nb = { t: "assistant" as const, text: "", think: "", agent };
+    const nb = { t: "assistant" as const, text: "", think: "", agent, wave: [], alternatives: [] };
     next.push(nb);
     return nb;
   };
-  if (e.k === "text") { const a = lastAssistant(); a.text += e.v; }
-  else if (e.k === "think") { const a = lastAssistant(); a.think += e.v; }
+  if (e.k === "text") { const a = lastAssistant(); a.text += e.v; if (typeof e.p === "number") { a.wave.push(e.p); if (e.alts?.length) a.alternatives.push({ token: e.v, p: e.p, alts: e.alts }); } }
+  else if (e.k === "think") { const a = lastAssistant(); a.think += e.v; if (typeof e.p === "number") a.wave.push(e.p); }
   else if (e.k === "tool_progress") {
     // A call still decoding its arguments: update the streaming placeholder in
     // place, or open one. This is what makes an 80-second write_file paint live
@@ -163,7 +164,7 @@ function applyEvent(next: Block[], e: Ev): void {
   else if (e.k === "context_compacted") next.push({ t: "status", text: (agent ? `[${agent}] ` : "") + `trimmed ${e.v.trimmed} older tool output${e.v.trimmed === 1 ? "" : "s"} to stay within context` });
   else if (e.k === "phase") next.push({ t: "status", text: "── " + e.v.name + " ──" });
   else if (e.k === "roles") next.push({ t: "status", text: "Perspectives: " + e.v.roles.map((r) => `${r.name} (${r.lens})`).join(" · ") });
-  else if (e.k === "debate_turn") next.push({ t: "assistant", text: e.v.text, think: "", agent: e.v.role });
+  else if (e.k === "debate_turn") next.push({ t: "assistant", text: e.v.text, think: "", agent: e.v.role, wave: [], alternatives: [] });
   else if (e.k === "convergence") next.push({ t: "status", text: `convergence check, round ${e.v.round}: ${e.v.verdict}` });
   else if (e.k === "artifact") next.push({ t: "status", text: "saved: " + e.v.path.split("/").pop() });
   else if (e.k === "inner") applyEvent(next, { ...e.v.event, agent: e.v.role || e.v.phase } as Ev);
@@ -608,10 +609,9 @@ export default function CodePage() {
     fetch("/api/agent/models").then((r) => r.json()).then((j) => {
       const available = j.models || [];
       setModels(available);
-      // Gemma is kept for image chat, but the code agent needs a model known to
-      // emit native tool calls. Qwen3 is the local serving path validated for it.
-      const preferred = /^gemma/i.test(j.current || "") && available.includes("qwen3-4b-stock") ? "qwen3-4b-stock" : (j.current || available[0] || "");
-      setModel(preferred);
+      // Honor the model selected in Settings.  Gemma uses the Ollama compatibility
+      // path in the server, including textual tool-call recovery when needed.
+      setModel(j.current || available[0] || "");
     });
     try { setTreeOpen(localStorage.getItem("code_tree_open") === "1"); } catch {}
     // A new /code session starts genuinely blank — it does NOT resume the most
@@ -898,13 +898,12 @@ export default function CodePage() {
           </div>
         </header>
 
-        {/* Guard rail: gemma-family models were observed live (2026-07-09) failing
-            tool calls silently on both backends — don't let that be discovered the
-            hard way again. Warning only; the user can still proceed. */}
+        {/* Gemma runs through Ollama here.  The agent loop also understands the
+            textual tool-call tags emitted by some Gemma templates. */}
         {/gemma/i.test(model) && (
-          <div className="pb-1.5 -mt-1 flex items-center gap-1.5 text-[11px] text-[var(--accent-warn)]">
+          <div className="pb-1.5 -mt-1 flex items-center gap-1.5 text-[11px] text-[var(--accent-ai)]">
             <ShieldCheck size={12} />
-            gemma models are unreliable at tool calling here — pick a qwen3/victory model for agent tasks
+            Gemma is running through the Ollama compatibility backend
           </div>
         )}
 
@@ -960,6 +959,7 @@ export default function CodePage() {
               </div>
               {b.think && <details className="text-xs text-[var(--muted)] mb-1"><summary className="cursor-pointer">thinking…</summary><div className="whitespace-pre-wrap border-l border-[var(--border-soft)] pl-3 mt-1">{b.think}</div></details>}
               <MarkdownView text={b.text} />
+              {(b.wave.length > 0 || (busy && i === blocks.length - 1)) && <CertaintyWave wave={b.wave} alts={b.alternatives} active={busy && i === blocks.length - 1} />}
             </div>
           );
         })}

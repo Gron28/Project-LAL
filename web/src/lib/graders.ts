@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { makeExecutor } from "./tools";
 import { makeAgentExecutor, makeOrchestratorExecutor, ORCHESTRATOR_TOOLS } from "./agent-tools";
 import { runToolLoop, type ToolLoopMsg } from "./toolloop";
+import type { LoraRequest } from "./lab";
 
 export type Check =
   | { type: "regex"; pattern: string; flags?: string }
@@ -127,7 +128,7 @@ export function gradeChecks(got: string, checks: Check[]): GradeResult {
 // call sequence plus optional final-file-state assertions.
 export async function gradeTools(
   baseUrl: string, model: string, q: string, scenario: ToolScenario | undefined,
-  opts: { think?: boolean; maxTokens?: number } = {}
+  opts: { think?: boolean; maxTokens?: number; lora?: LoraRequest } = {}
 ): Promise<GradeResult> {
   if (!scenario) return { ok: false, detail: "no scenario" };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "labtools-"));
@@ -147,6 +148,7 @@ export async function gradeTools(
       // 1536, not 512: reasoning models (qwen3:8b) burn 300+ tokens thinking before the
       // first tool call — a 512 cap scored a stock 8B 0/8 as a pure artifact.
       think: opts.think, maxTokens: opts.maxTokens ?? 1536,
+      ...(opts.lora ? { lora: opts.lora } : {}),
       approve: async () => true,
       onEvent: (e) => { if (e.k === "tool_request") calls.push({ name: e.v.name, args: e.v.args }); },
     });
@@ -331,7 +333,7 @@ export async function gradeWebgen(got: string, item: BenchItem): Promise<GradeRe
   }
 }
 
-export type GradeCtx = { baseUrl: string; model: string; think?: boolean; maxTokens?: number };
+export type GradeCtx = { baseUrl: string; model: string; think?: boolean; maxTokens?: number; lora?: LoraRequest };
 export async function gradeItem(
   got: string, item: BenchItem, suiteGrade: BenchItem["grade"], ctx: GradeCtx
 ): Promise<GradeResult> {
@@ -340,7 +342,7 @@ export async function gradeItem(
     case "numeric": return { ok: gradeNumeric(got, item.a || []) };
     case "exec": return gradeExec(got, item);
     case "checks": return gradeChecks(got, item.checks || []);
-    case "tools": return gradeTools(ctx.baseUrl, ctx.model, item.q, item.scenario, { think: ctx.think, maxTokens: ctx.maxTokens });
+    case "tools": return gradeTools(ctx.baseUrl, ctx.model, item.q, item.scenario, { think: ctx.think, maxTokens: ctx.maxTokens, lora: ctx.lora });
     case "orchestrator-guard": return gradeOrchestratorDelegation(ctx.baseUrl, ctx.model, item.q, item.scenario, { think: ctx.think, maxTokens: ctx.maxTokens });
     case "webgen": return gradeWebgen(got, item);
     default: return { ok: gradeSubstring(got, item.a || []) };

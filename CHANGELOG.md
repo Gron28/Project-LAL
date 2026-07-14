@@ -3,6 +3,137 @@
 A running log of what got built, what broke, and what was learned — kept honest on
 purpose, including the runs that didn't work. Newest first.
 
+## 2026-07-14 — LAL becomes its own native Windows CLI
+
+Forked the selected Apache-2.0 terminal foundation into `@local-ai-lab/lal-cli`.
+The executable, banner, help, prompts, session UI, documentation bundle, and managed
+update behavior now identify as LAL. Upstream copyright and derivation notices remain
+intact. The Windows release is a self-contained `lal-cli-win-x64.zip` hosted by
+`main-pc`, includes its own Node runtime, and is SHA-256 verified before an atomic
+install with rollback. It no longer installs, discovers, or invokes a `qwen` command.
+
+The installer preserves `~/.lal` settings, device identity, credentials, and
+project-scoped chats. `lal update` now advances the native LAL runtime. Native
+Linux/macOS artifacts are the next packaging step; their recovery installer remains
+available during the transition.
+
+Runtime `0.1.0-lal.2` replaces the wordmark with LAL's compact paired-L mark: two
+angled L forms meet around the central A, while a deliberately detached lower stem
+keeps the silhouette from reading as a T. The managed `lal update` path preserves
+all existing settings and project chats while applying the new banner.
+
+Runtime `0.1.0-lal.3` corrects the first mark's uneven hand-spaced geometry. Every
+non-empty row now shares center column 13, all outer groups are mirrored around that
+axis, and the detached stem sits directly below the center group.
+
+Runtime `0.1.0-lal.4` widens the central A and removes the punctuation-like detached
+stem. A one-cell tail now connects directly to the lower center leg, while the wider
+crossbar and mirrored arms remain centered on a single axis.
+
+Runtime `0.1.0-lal.5` adopts the user-approved ten-row monogram verbatim. Its two
+angular L paths, open center, crossbar, internal center marks, and lower tail are all
+centered on column 19; no geometry is inferred or normalized beyond that approved
+spacing.
+
+Runtime `0.1.0-lal.6` removes the inherited Qwen provider onboarding from managed
+LAL. The updater now backs up existing settings once, preserves user preferences,
+and refreshes only the main-PC connection, model, authentication, and LAL context
+fields. If that managed connection is ever invalid, LAL shows a focused repair
+message instead of Alibaba/Qwen setup or upstream terms. `LAL.md` is now the primary
+managed project-context filename, with `AGENTS.md` and legacy `QWEN.md` still read
+for compatibility.
+
+Client `0.3.6` fixes the Windows settings migration writing UTF-8 with a byte-order
+mark, which the inherited JSON loader rejected. Managed settings are now explicitly
+written as BOM-free UTF-8, matching Node's JSON parser and preserving the repaired
+main-PC connection across launch.
+
+Runtime `0.1.0-lal.7` gives the LAL header a fixed product palette independent of
+the selected editor/syntax theme: cyan `#22D3C5`, green `#55E06F`, and restrained
+yellow `#E6D85C`. The monogram uses the three-color gradient, with a cyan panel
+border, green LAL title, and yellow version accent; blue and purple are absent from
+the branded header.
+
+## 2026-07-13 — Installable LAL terminal client and tailnet inference gateway
+
+Selected and cloned Qwen Code as the Apache-2.0 foundation for the full terminal
+client after auditing Qwen Code, OpenCode, Pi, Goose, Codex, Gemini CLI, Aider, and
+Crush. A live compatibility proof showed the required split works: the mature client
+and its file/shell tools run inside the project on the client computer while only
+OpenAI-compatible inference runs on `main-pc`. Project-scoped JSONL sessions resume
+locally without copying the repository to the server.
+
+Added a bearer-authenticated `/api/llm/v1` gateway, client model/settings discovery,
+single-GPU request serialization, and context-aware model reloads. The safe default
+is Qwen3-4B at 32k; a full 19k-token agent schema completed successfully, while an
+overlapping 8B/32k experiment honestly reproduced a Vulkan device loss on the 8GB
+card and established why the queue/model profile is necessary.
+
+Added idempotent Linux/macOS and Windows installers served over Tailscale, a pairing
+token command, a pinned standalone runtime, isolated `~/.lal` settings/sessions, and
+`lal update`. Runtime and LAL client versions are independent so frequent overlay
+changes do not reinstall the large runtime. An isolated end-to-end install test used
+the installed wrapper to create an exact file in the client project through a remote
+model tool call and persisted the session under that client's project history.
+
+Added persistent random device identities, authenticated launch heartbeats, request
+activity tracking, rejected-token counters, and `./start.sh --list-cli-devices` as a
+main-pc security view. The audit registry is deliberately metadata-only: it never
+stores prompts, project paths, tool arguments, or file contents.
+
+Windows release `0.2.1` fixed the installer treating the octet-stream response for
+`lal.cmd` as a printable byte array (`64 101 99 ...`) instead of decoding it as
+UTF-8 text. Re-running the idempotent installer repairs the wrapper without
+reinstalling the then-pinned foundation runtime or replacing chats/settings. Release
+`0.3.0` supersedes that runtime with the native LAL fork described above.
+
+## 2026-07-11 (later) — Base locked, first specialist dataset built, first training run
+
+Base-model bake-off for the specialist cohort, run under identical frozen
+conditions (same binary, flags, suites, token budgets): **Qwen3-4B stays.**
+Qwen3.5-4B (hybrid DeltaNet, no MoE at 4B — already servable by the b9835
+binary) lost on speed (47.5 vs 82 decode tok/s; 29 vs 62 at 6K context) and on
+coding (17/20 vs 19/20), and scored 1/14 on planning because its thinking
+overruns the frozen 1536-token budget — an honest operational failure even if
+not a capability one. Agentic 8/8 was its only win. No Qwen3.6 4B exists;
+Gemma 4 12B already loses agentic/planning locally and the pipeline is
+Qwen-specific.
+
+Built the first production role dataset: `data/hive_coder_v1.jsonl` — 3,001
+bounded decision windows (first_mutation/repair/verification) carved by the new
+`scripts/convert_swe_traces.py` from 939 resolved, permissively-licensed
+Open-SWE-Traces trajectories, block 2048, repo-grouped 2797/204 split, zero
+builder drops, registered in HIVE provenance as `ds-846ee6002f404256dde0885a`.
+
+Trainer upgrades in `finetune_hqq.py`/`finetune_sft.py`: `--grad_accum`,
+`--warmup` + `--cosine`, `--balance_sources`, and per-message `"train": false`
+loss masking (teach the recovery, not the mistake) — all wired through the
+train API. HIVE engine now serves specialist adapters with
+`enable_thinking:false` to match their no-think SFT format (prompted roles
+unchanged). 100-step smoke run on the new dataset launched the same afternoon.
+
+## 2026-07-11 — HIVE specialist cohort and live workspace foundation
+
+Implemented the coding-first specialist architecture around a shared Qwen3-4B base:
+coordinator/planner, coder/repairer, and read-only verifier roles; typed bounded
+handoffs; observable net workspace mutations; fresh post-mutation checks; post-repair
+independent review; machine-readable failure classes; and strict adapter/cohort
+promotion gates. llama.cpp can now preload promoted LoRA adapters and select one per
+request without leaking global adapter state or counting an adapter activation as a
+full model swap.
+
+Added the provenance-rich role dataset builder, task-family validation isolation,
+production tool-schema normalization, permanent blind-probe guards, verified-run
+harvesting/quarantine, adapter-only Qwen3-4B training/conversion, and immutable
+candidate manifests. **No adapter is promoted by this work alone**: real blind results
+are still required.
+
+The HIVE UI now includes one live Workspace view for the active file tree, read-only
+code, in-flight write/edit argument drafts, plan/research streams, and durable
+artifacts. HIVE shell work and deterministic checks run with only the selected
+workspace persistently writable, home credentials hidden, a scrubbed environment,
+and no network.
+
 ## 2026-07-09 — Hive: multi-agent workflow runtime (experimental, not yet a win)
 
 Added `/hive`: a durable multi-agent workflow engine (plan → research/implement →

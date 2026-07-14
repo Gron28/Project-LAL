@@ -9,6 +9,10 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    // Recovery/dev instances use isolated Next build directories. Generated
+    // bundles are never source and must not become lint input merely because a
+    // different distDir is active.
+    ".next-*/**",
     "out/**",
     "build/**",
     "next-env.d.ts",

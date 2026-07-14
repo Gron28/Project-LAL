@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Stat, LossChart, MetricHistoryChart, SourceLossChart, BlockHeatmap, LengthHistogramChart, ProbePanel, DeltaHeatmap, DeltaSurface3D, ConceptGalaxy3D, type AdapterDelta, type AdapterEvolution, type GalaxySnapshot } from "@/components/charts";
+import { Stat, LossChart, MetricHistoryChart, SourceLossChart, BlockHeatmap, GradientTerrain3D, LengthHistogramChart, ProbePanel, DeltaHeatmap, DeltaSurface3D, ConceptGalaxy3D, type AdapterDelta, type AdapterEvolution, type GalaxySnapshot } from "@/components/charts";
 import { SignalTrace } from "@/components/ui/signal-trace";
 
 type Row = {
@@ -19,6 +19,8 @@ type Row = {
   length_hist?: { edges: number[]; kept: number[]; dropped: number[] };
   prompt?: string; target?: string; generated?: string;
   points?: number[][]; labels?: string[]; categories?: string[];
+  trained_layer?: number | null; adapter_dtypes?: string[];
+  patience_used?: number; patience_unit?: string; val_every?: number;
 };
 type Sys = { gpu: number | null; vramUsedGb: number | null; vramTotalGb: number | null; vramPct: number | null; gpuTemp: number | null };
 
@@ -33,6 +35,12 @@ const panel = "py-1.5 md:p-2.5 md:bg-[var(--surface-2)] md:border md:border-[var
 const panelLbl = "text-[10px] uppercase tracking-widest text-[var(--muted)] mb-1";
 
 type DataFile = { name: string; chars: number; kind: "raw" | "sft" };
+type Experiment = {
+  name: string; base: string; mode: "raw" | "sft" | "hqq"; steps: number; lr: number;
+  targetLoss: number; patience?: number; valFrac?: number; block?: number;
+  dataset?: { name: string } | null;
+  recipe?: { gradAccum?: number; warmup?: number; cosine?: boolean; balanceSources?: boolean; stageWeightsCpu?: boolean; quantizeCpu?: boolean; lastFullBlockOnly?: boolean; adapterOnly?: boolean; noProbeEmbed?: boolean; valEvery?: number };
+};
 
 function DatasetManager({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [files, setFiles] = useState<DataFile[]>([]);
@@ -162,6 +170,7 @@ export default function TrainPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [running, setRunning] = useState<string | null>(null);
   const [runs, setRuns] = useState<{ name: string; status: string; finalLoss: number | null; lastStep: number }[]>([]);
+  const [experiments, setExperiments] = useState<Experiment[]>([]);
   const [viewName, setViewName] = useState<string | null>(null);
   const [extracting, setExtracting] = useState("");
   const [datasetOpen, setDatasetOpen] = useState(false);
@@ -176,6 +185,21 @@ export default function TrainPage() {
   const [compareBusy, setCompareBusy] = useState(false);
   const [compareErr, setCompareErr] = useState("");
   const [snapshotEvery, setSnapshotEvery] = useState(0);
+  const [plateauPatience, setPlateauPatience] = useState(100);
+  const [hqqBlock, setHqqBlock] = useState(1024);
+  const [valFrac, setValFrac] = useState(0.1);
+  const [valEvery, setValEvery] = useState(50);
+  const [gradAccum, setGradAccum] = useState(1);
+  const [warmup, setWarmup] = useState(0);
+  const [cosine, setCosine] = useState(false);
+  const [balanceSources, setBalanceSources] = useState(false);
+  const [stageWeightsCpu, setStageWeightsCpu] = useState(false);
+  const [quantizeCpu, setQuantizeCpu] = useState(false);
+  const [lastFullBlockOnly, setLastFullBlockOnly] = useState(false);
+  const [adapterOnly, setAdapterOnly] = useState(false);
+  const [noProbeEmbed, setNoProbeEmbed] = useState(false);
+  const [resume, setResume] = useState(false);
+  const [specialistRole, setSpecialistRole] = useState<"" | "coordinator_planner" | "coder_repairer" | "verifier">("");
   const [evoName, setEvoName] = useState("");
   const [evoModule, setEvoModule] = useState<string>("all");
   const [evoData, setEvoData] = useState<AdapterEvolution | null>(null);
@@ -195,7 +219,7 @@ export default function TrainPage() {
 
   useEffect(() => {
     fetch("/api/train?name=").then((r) => r.json()).then((j) => {
-      setBases(j.bases || []); setRunning(j.running); setRuns(j.runs || []);
+      setBases(j.bases || []); setRunning(j.running); setRuns(j.runs || []); setExperiments(j.experiments || []);
       if (j.running) { cur.current = j.running; setViewName(j.running); setConfigOpen(false); }
     });
     fetch("/api/train/data").then((r) => r.json()).then((j) => {
@@ -210,7 +234,7 @@ export default function TrainPage() {
   useEffect(() => {
     const t = setInterval(async () => {
       const meta = await fetch("/api/train?name=").then((r) => r.json()).catch(() => null);
-      if (meta) { setRunning(meta.running); setRuns(meta.runs || []); }
+      if (meta) { setRunning(meta.running); setRuns(meta.runs || []); setExperiments(meta.experiments || []); }
       if (cur.current) {
         const j = await fetch("/api/train?name=" + cur.current).then((r) => r.json()).catch(() => null);
         if (j) { setRows(j.rows || []); const last = j.rows?.[j.rows.length - 1]; if (last && (last.event === "done" || last.event === "error")) cur.current = null; }
@@ -257,17 +281,47 @@ export default function TrainPage() {
   }
 
   async function go() {
-    const patience = noPlateauStop ? 0 : undefined;
-    const extras = { valFrac: mode === "sft" && valSplit ? 0.1 : undefined, autoBench: autoBench || undefined, snapshotEvery: mode === "hqq" && snapshotEvery > 0 ? snapshotEvery : undefined };
+    const patience = noPlateauStop ? 0 : plateauPatience;
+    const hqqRecipe = mode === "hqq" ? { block: hqqBlock, gradAccum, warmup, cosine, balanceSources, stageWeightsCpu, quantizeCpu, lastFullBlockOnly, adapterOnly, noProbeEmbed, valEvery, resume } : {};
+    const extras = { valFrac: mode !== "raw" && valSplit ? valFrac : undefined, autoBench: !specialistRole && !adapterOnly && autoBench || undefined, snapshotEvery: mode === "hqq" && snapshotEvery > 0 ? snapshotEvery : undefined, ...hqqRecipe, ...(specialistRole ? { specialistRole, datasetManifest: `${dataFile}.manifest.json`, runtimeBaseModel: "qwen3-4b-stock" } : {}) };
     const body = mode !== "raw"
       ? { name, base, steps, lr, targetLoss, patience, mode, dataFile, ...extras }
       : { name, base, steps, lr, targetLoss, patience, mode, text, ...extras };
     if (mode !== "raw" && !dataFile) { alert("Pick a .jsonl instruction dataset."); return; }
+    if (specialistRole && (mode !== "hqq" || base !== "Qwen/Qwen3-4B")) { alert("HIVE specialists use Qwen/Qwen3-4B in HQQ mode."); return; }
     if (mode === "raw" && !text.trim()) { alert("Add training text (paste, or upload a PDF/txt)."); return; }
     const r = await fetch("/api/train", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((x) => x.json());
     if (r.error) { alert(r.error); return; }
     cur.current = r.name; setRows([]); setRunning(r.name); setViewName(r.name);
     setConfigOpen(false);
+  }
+
+  function applyQwen35SafePreset() {
+    setMode("hqq"); setBase("Qwen/Qwen3.5-9B"); setSteps(30); setLr(0.00005);
+    setTargetLoss(0); setPlateauPatience(3); setNoPlateauStop(false);
+    setValSplit(true); setValFrac(0.2); setValEvery(5); setHqqBlock(208); setGradAccum(4);
+    setWarmup(3); setCosine(true); setBalanceSources(false);
+    setStageWeightsCpu(true); setQuantizeCpu(false); setLastFullBlockOnly(true);
+    setAdapterOnly(true); setNoProbeEmbed(true); setAutoBench(false); setResume(false);
+    if (dataFiles.some((f) => f.name === "contemplative_foundations_sft.jsonl")) {
+      setDataFile("contemplative_foundations_sft.jsonl");
+      setName("contemplative-qwen35-9b");
+    }
+  }
+
+  function reuseExperiment(exp: Experiment) {
+    setName(`${exp.name}-rerun`); setBase(exp.base); setMode(exp.mode); setSteps(exp.steps);
+    setLr(exp.lr); setTargetLoss(exp.targetLoss); setPlateauPatience(exp.patience ?? 100);
+    setNoPlateauStop(exp.patience === 0); setValSplit((exp.valFrac ?? 0) > 0);
+    setValFrac(exp.valFrac ?? 0.1); setHqqBlock(exp.block ?? 1024);
+    if (exp.dataset?.name) setDataFile(exp.dataset.name);
+    const r = exp.recipe;
+    setGradAccum(r?.gradAccum ?? 1); setWarmup(r?.warmup ?? 0); setCosine(!!r?.cosine);
+    setBalanceSources(!!r?.balanceSources); setStageWeightsCpu(!!r?.stageWeightsCpu);
+    setQuantizeCpu(!!r?.quantizeCpu); setLastFullBlockOnly(!!r?.lastFullBlockOnly);
+    setAdapterOnly(!!r?.adapterOnly); setNoProbeEmbed(!!r?.noProbeEmbed);
+    setValEvery(r?.valEvery ?? 50); setResume(false);
+    if (r?.adapterOnly) setAutoBench(false);
   }
 
   async function stopTraining() {
@@ -325,6 +379,8 @@ export default function TrainPage() {
     .filter((r) => r.event === "embed" && Array.isArray(r.points))
     .map((r) => ({ step: r.step!, points: r.points! }));
   const stepsSinceBest = lastStep ? lastStep.step! - (lastStep.best_step ?? 0) : null;
+  const patienceUsed = lastStep?.patience_used ?? stepsSinceBest;
+  const patienceUnit = lastStep?.patience_unit ?? "steps";
   // ETA from a single instantaneous sec/step is noisy: every val_every-th step's
   // printed rate includes that step's validation-loop time, spiking sec/step ~3-4x
   // and swinging ETA from ~200min to ~600min and back. Median of the last 9 printed
@@ -397,14 +453,14 @@ export default function TrainPage() {
                         <input type="checkbox" checked={noPlateauStop} onChange={(e) => setNoPlateauStop(e.target.checked)} />
                         Disable plateau early-stop
                       </label>
-                      {mode === "sft" && (
-                        <label className="flex items-center gap-1.5 text-[11px] text-[var(--text-2)]" title="Hold out 10% of the data; val loss shows on the chart (amber) and the best-val checkpoint is what gets merged — guards against overfitting.">
+                      {mode !== "raw" && (
+                        <label className="flex items-center gap-1.5 text-[11px] text-[var(--text-2)]" title="Hold out part of the data; validation loss appears live and selects the best checkpoint.">
                           <input type="checkbox" checked={valSplit} onChange={(e) => setValSplit(e.target.checked)} />
-                          10% val split
+                          Validation split
                         </label>
                       )}
                       <label className="flex items-center gap-1.5 text-[11px] text-[var(--text-2)]" title="After the GGUF is built, run every battery suite on the new model automatically and save the scores.">
-                        <input type="checkbox" checked={autoBench} onChange={(e) => setAutoBench(e.target.checked)} />
+                        <input type="checkbox" checked={autoBench} disabled={adapterOnly} onChange={(e) => setAutoBench(e.target.checked)} />
                         Auto-bench after
                       </label>
                       {mode === "hqq" && (
@@ -426,9 +482,43 @@ export default function TrainPage() {
                         <button onClick={() => setMode("hqq")} className="px-3 py-1.5" style={{ background: mode === "hqq" ? "var(--accent-ai)" : "transparent", color: mode === "hqq" ? "var(--bg)" : "var(--text-2)" }}>HQQ 4-bit (4–8B)</button>
                         <button onClick={() => setMode("raw")} className="px-3 py-1.5" style={{ background: mode === "raw" ? "var(--accent-ai)" : "transparent", color: mode === "raw" ? "var(--bg)" : "var(--text-2)" }}>Raw text</button>
                       </div>
-                      <span className="text-[10px] text-[var(--muted)]">{mode === "sft" ? "fp16 LoRA, loss-masked (≤2B)" : mode === "hqq" ? "4-bit LoRA — fits 3–7B on 8GB (slower)" : "next-token on plain text"}</span>
+                      <span className="text-[10px] text-[var(--muted)]">{mode === "sft" ? "fp16 LoRA, loss-masked (≤2B)" : mode === "hqq" ? "4-bit LoRA · low-memory recipes" : "next-token on plain text"}</span>
                     </div>
-                    {mode === "hqq" && <div className="text-[10px] text-[var(--accent-warn)] -mt-1">HQQ 4-bit: pick a bigger Base (Qwen 3B/7B). Slower per step; merges to GGUF when done. 7B may be RAM-tight to load.</div>}
+                    <div className="grid md:grid-cols-[180px_1fr] gap-3 items-end">
+                      <div><label className={lbl}>HIVE specialist</label><select className={inp} value={specialistRole} onChange={(e) => { const role = e.target.value as typeof specialistRole; setSpecialistRole(role); if (role) { setMode("hqq"); setBase("Qwen/Qwen3-4B"); setValSplit(true); setAutoBench(false); } }}><option value="">General model</option><option value="coordinator_planner">Coordinator / planner</option><option value="coder_repairer">Coder / repairer</option><option value="verifier">Verifier</option></select></div>
+                      <p className="text-[10px] text-[var(--muted)] leading-relaxed">{specialistRole ? `Adapter-only candidate on the shared qwen3-4b-stock base. Requires ${dataFile}.manifest.json and remains inactive until blind promotion gates pass.` : adapterOnly ? "Saves a lightweight adapter without creating another full model copy." : "Builds and quantizes a standalone merged model."}</p>
+                    </div>
+                    {mode === "hqq" && (
+                      <div className="border border-[var(--border)] rounded-[var(--r-md)] p-3 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <div><div className="text-[10px] uppercase tracking-widest text-[var(--text-2)]">HQQ recipe</div><div className="text-[10px] text-[var(--muted)] mt-0.5">Reusable low-memory controls used by the managed trainer.</div></div>
+                          <button type="button" onClick={applyQwen35SafePreset} className="ml-auto px-2.5 py-1.5 text-[10px] border border-[var(--accent-ai)] text-[var(--accent-ai)] rounded-[var(--r-md)] hover:bg-[var(--accent-ai)] hover:text-[var(--bg)]">Qwen3.5 · 8GB safe</button>
+                        </div>
+                        <select className={inp + " text-xs"} defaultValue="" onChange={(e) => { const exp = experiments.find((x) => x.name === e.target.value); if (exp) reuseExperiment(exp); e.currentTarget.value = ""; }}>
+                          <option value="">Reuse recipe from a previous HQQ run…</option>
+                          {experiments.filter((e) => e.mode === "hqq").map((e) => <option key={e.name} value={e.name}>{e.name} · {e.base}</option>)}
+                        </select>
+                        <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+                          <div><label className={lbl}>Block</label><input className={inp} type="number" min={32} value={hqqBlock} onChange={(e) => setHqqBlock(+e.target.value)} /></div>
+                          <div><label className={lbl}>Grad accum</label><input className={inp} type="number" min={1} value={gradAccum} onChange={(e) => setGradAccum(+e.target.value)} /></div>
+                          <div><label className={lbl}>Warmup</label><input className={inp} type="number" min={0} value={warmup} onChange={(e) => setWarmup(+e.target.value)} /></div>
+                          <div><label className={lbl}>Val fraction</label><input className={inp} type="number" min={0} max={0.5} step={0.05} value={valFrac} disabled={!valSplit} onChange={(e) => setValFrac(+e.target.value)} /></div>
+                          <div><label className={lbl} title="Run held-out validation and refresh its live chart every N optimizer steps.">Validate every</label><input className={inp} type="number" min={1} value={valEvery} disabled={!valSplit} onChange={(e) => setValEvery(+e.target.value)} /></div>
+                          <div><label className={lbl} title={valSplit ? "Validation checks without improvement before stopping." : "Optimizer steps without improvement before stopping."}>Patience</label><input className={inp} type="number" min={0} value={plateauPatience} disabled={noPlateauStop} onChange={(e) => setPlateauPatience(+e.target.value)} /></div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-[var(--text-2)]">
+                          <label className="flex items-center gap-2" title="Keep the giant frozen embedding/output weights in system RAM so larger models fit VRAM."><input type="checkbox" checked={stageWeightsCpu} onChange={(e) => setStageWeightsCpu(e.target.checked)} />Stage frozen weights on CPU</label>
+                          <label className="flex items-center gap-2" title="Quantize HQQ layers on CPU before transfer. Slower, but lowers peak load-time VRAM."><input type="checkbox" checked={quantizeCpu} onChange={(e) => setQuantizeCpu(e.target.checked)} />Quantize on CPU</label>
+                          <label className="flex items-center gap-2" title="Qwen3.5/RDNA2 workaround: detach before and train only the last full-attention block, avoiding its unstable linear-attention backward path."><input type="checkbox" checked={lastFullBlockOnly} onChange={(e) => setLastFullBlockOnly(e.target.checked)} />Final full-attention block only</label>
+                          <label className="flex items-center gap-2" title="Keep the lightweight LoRA adapter and skip the disk-heavy full-model merge and GGUF conversion."><input type="checkbox" checked={adapterOnly} onChange={(e) => { setAdapterOnly(e.target.checked); if (e.target.checked) setAutoBench(false); }} />Adapter only · skip merge</label>
+                          <label className="flex items-center gap-2"><input type="checkbox" checked={cosine} onChange={(e) => setCosine(e.target.checked)} />Cosine learning-rate decay</label>
+                          <label className="flex items-center gap-2"><input type="checkbox" checked={balanceSources} onChange={(e) => setBalanceSources(e.target.checked)} />Balance dataset sources</label>
+                          <label className="flex items-center gap-2" title="Continue the same named run from its last saved adapter checkpoint. The name and recipe must match an existing checkpoint."><input type="checkbox" checked={resume} onChange={(e) => setResume(e.target.checked)} />Resume named checkpoint</label>
+                          <label className="flex items-center gap-2 md:col-span-2" title="Keeps real-time loss, gradient, layer, GPU and VRAM charts; skips the extra generation and embedding passes at validation checkpoints to preserve VRAM."><input type="checkbox" checked={noProbeEmbed} onChange={(e) => setNoProbeEmbed(e.target.checked)} />Lean live telemetry · skip probe and concept snapshots</label>
+                        </div>
+                        {lastFullBlockOnly && <p className="text-[10px] text-[var(--accent-warn)]">Partial LoRA: suited to style/behavior adaptation on Qwen3.5 when full hybrid-backbone gradients are unstable. Loss, validation, gradients, layer activity, GPU and VRAM remain live.</p>}
+                      </div>
+                    )}
 
                     {datasetOpen && <DatasetManager onClose={() => setDatasetOpen(false)} onSaved={() => fetch("/api/train/data").then((r) => r.json()).then((j) => { const files = j.files || []; setDataFiles(files); })} />}
                     {mode !== "raw" ? (
@@ -543,10 +633,10 @@ export default function TrainPage() {
                     color={modelRow.dropped_overlength > 0 ? "var(--accent-warn)" : undefined}
                     sub={modelRow.blocks ? `of ${modelRow.blocks + modelRow.dropped_overlength} rows` : undefined} />
                 )}
-                {lastStep && start?.patience != null && (
-                  <Stat label="Plateau" value={`${stepsSinceBest}/${start.patience}`}
-                    color={(stepsSinceBest ?? 0) / start.patience > 0.7 ? "var(--accent-warn)" : undefined}
-                    sub="steps since best" />
+                {lastStep && !!start?.patience && (
+                  <Stat label="Plateau" value={`${patienceUsed}/${start.patience}`}
+                    color={(patienceUsed ?? 0) / start.patience > 0.7 ? "var(--accent-warn)" : undefined}
+                    sub={patienceUnit + " without improvement"} />
                 )}
               </div>
 
@@ -571,7 +661,7 @@ export default function TrainPage() {
                     <Diagnostic label="Convergence" value={improvePct != null ? `${improvePct}%` : "—"} note={bestLoss != null ? `best ${bestLoss.toFixed(3)}` : "awaiting signal"} tone={improvePct != null && improvePct > 0 ? "good" : "neutral"} />
                     <Diagnostic label="Generalization gap" value={generalizationGap != null ? `${generalizationGap >= 0 ? "+" : ""}${generalizationGap.toFixed(3)}` : "—"} note={generalizationGap == null ? "needs validation" : Math.abs(generalizationGap) < 0.2 ? "train and val aligned" : "watch for overfit"} tone={generalizationGap != null && Math.abs(generalizationGap) >= 0.2 ? "warn" : generalizationGap != null ? "good" : "neutral"} />
                     <Diagnostic label="Data retained" value={retainedRows != null ? `${retainedRows}%` : "—"} note={modelRow?.dropped_overlength != null ? `${modelRow.dropped_overlength} overlength rows` : "awaiting dataset scan"} tone={retainedRows != null && retainedRows < 95 ? "warn" : retainedRows != null ? "good" : "neutral"} />
-                    <Diagnostic label="Plateau budget" value={start?.patience ? `${stepsSinceBest ?? 0}/${start.patience}` : "off"} note={start?.patience ? "steps since best" : "no patience stop"} tone={start?.patience && (stepsSinceBest ?? 0) / start.patience > 0.7 ? "warn" : "neutral"} />
+                    <Diagnostic label="Plateau budget" value={start?.patience ? `${patienceUsed ?? 0}/${start.patience}` : "off"} note={start?.patience ? patienceUnit + " without improvement" : "no patience stop"} tone={start?.patience && (patienceUsed ?? 0) / start.patience > 0.7 ? "warn" : "neutral"} />
                   </div>
                   <div className="mt-3 text-[10px] leading-relaxed text-[var(--muted)]">{generalizationGap != null && generalizationGap > 0.25 ? "Validation is separating from training loss. The adapter may be starting to overfit this mix." : lastStep?.grad_norm != null && lastStep.grad_norm > 5 ? "Gradient norm is elevated. Watch for spikes or a rising loss curve before trusting the checkpoint." : stepRows.length ? "No major instability is visible in the latest telemetry." : "Diagnostics populate from the run event stream."}</div>
                 </div>
@@ -600,12 +690,19 @@ export default function TrainPage() {
                     <span><span className="inline-block w-2 h-2 rounded-sm mr-1 align-middle" style={{ background: "#e2726b" }} />dropped</span>
                   </div>
                 </div>
-                <div className={panel + " xl:col-span-12"}>
+                <div className={panel + " xl:col-span-6"}>
                   <div className="flex items-center justify-between mb-1">
                     <div className={panelLbl + " mb-0"}>Per-block gradient heatmap</div>
                     <div className="text-[9px] text-[var(--muted)]">block × step, brighter = larger gradient</div>
                   </div>
                   <div className="h-40"><BlockHeatmap rows={rows} /></div>
+                </div>
+                <div className={panel + " xl:col-span-6"}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className={panelLbl + " mb-0"}>Gradient terrain</div>
+                    <div className="text-[9px] text-[var(--muted)]">same gradients in 3D — drag to steer, hover for exact ‖g‖</div>
+                  </div>
+                  <div className="h-40"><GradientTerrain3D rows={rows} /></div>
                 </div>
 
                 <div className="xl:col-span-12 flex items-end justify-between gap-3 pt-3 border-t border-[var(--border-soft)]">
@@ -621,6 +718,8 @@ export default function TrainPage() {
               {modelRow && (
                 <div className="text-[10px] text-[var(--muted)] flex flex-wrap gap-x-3">
                   <span>LoRA params: <b className="text-[var(--text-2)]">{((modelRow.trainable_params ?? 0) / 1e6).toFixed(1)}M</b>{modelRow.total_params ? ` / ${(modelRow.total_params / 1e6).toFixed(0)}M total` : ""}</span>
+                  {modelRow.trained_layer != null && <span>full-attention layer {modelRow.trained_layer} only</span>}
+                  {modelRow.adapter_dtypes?.length ? <span>adapter {modelRow.adapter_dtypes.join("/")}</span> : null}
                   {modelRow.blocks != null && <span>{modelRow.blocks} text blocks</span>}
                   {start?.lr && <span>lr {start.lr}</span>}
                   {(modelRow?.block ?? start?.block) && <span>block {modelRow?.block ?? start?.block}</span>}

@@ -22,11 +22,26 @@ export async function POST(req: NextRequest) {
     dataFile: b.dataFile || "",
     text: b.text || "",
     valFrac: b.valFrac != null ? +b.valFrac : undefined,
+    valEvery: b.valEvery != null ? +b.valEvery : undefined,
     block: b.block != null ? +b.block : undefined,
     // true -> the whole battery; or an explicit list of suite ids
     autoBench: b.autoBench === true ? getBattery().suites : Array.isArray(b.autoBench) ? b.autoBench.map(String) : undefined,
     snapshotEvery: b.snapshotEvery != null ? +b.snapshotEvery : undefined,
     noProbeEmbed: !!b.noProbeEmbed,
+    noProbe: !!b.noProbe,
+    noEmbed: !!b.noEmbed,
+    gradAccum: b.gradAccum != null ? +b.gradAccum : undefined,
+    warmup: b.warmup != null ? +b.warmup : undefined,
+    cosine: !!b.cosine,
+    balanceSources: !!b.balanceSources,
+    resume: !!b.resume,
+    stageWeightsCpu: !!b.stageWeightsCpu,
+    quantizeCpu: !!b.quantizeCpu,
+    lastFullBlockOnly: !!b.lastFullBlockOnly,
+    adapterOnly: !!b.adapterOnly,
+    specialistRole: ["coordinator_planner", "coder_repairer", "verifier"].includes(String(b.specialistRole)) ? b.specialistRole : undefined,
+    datasetManifest: typeof b.datasetManifest === "string" ? b.datasetManifest : undefined,
+    runtimeBaseModel: typeof b.runtimeBaseModel === "string" ? b.runtimeBaseModel : undefined,
   }));
 }
 

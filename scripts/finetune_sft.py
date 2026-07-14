@@ -40,11 +40,13 @@ def load_rows(path):
         except Exception:
             continue
         msgs = o.get("messages")
+        hive_meta = o.get("_hive") if isinstance(o.get("_hive"), dict) else {}
         if msgs:
             if not any(m.get("role") == "assistant" for m in msgs):
                 continue
             rows.append({"messages": msgs, "tools": o.get("tools"), "key": line,
-                        "source": o.get("source", "unknown")})
+                        "source": o.get("source", hive_meta.get("source", "unknown")),
+                        "split": hive_meta.get("split"), "task_family": hive_meta.get("task_family")})
             continue
         instr = o.get("instruction") or o.get("q") or o.get("prompt") or o.get("question")
         out = o.get("output")
@@ -55,7 +57,8 @@ def load_rows(path):
         resp = out if isinstance(out, str) else (out[0] if isinstance(out, list) and out else json.dumps(out))
         rows.append({"messages": [{"role": "user", "content": str(instr)},
                                   {"role": "assistant", "content": str(resp)}],
-                     "tools": None, "key": line, "source": o.get("source", "unknown")})
+                     "tools": None, "key": line, "source": o.get("source", hive_meta.get("source", "unknown")),
+                     "split": hive_meta.get("split"), "task_family": hive_meta.get("task_family")})
     return rows
 
 
@@ -66,8 +69,11 @@ def encode_conversation(tok, msgs, tools, block):
     and assistant spans are located by their ChatML markers (<|im_start|>assistant
     ... <|im_end|>) — prefix-diffing doesn't work for Qwen3, whose template strips
     <think> from previous turns (not prefix-stable). Unmasking every assistant span
-    is what teaches tool_call emission in multi-round traces. Non-ChatML templates
-    fall back to last-assistant-turn training (v1 behaviour).
+    is what teaches tool_call emission in multi-round traces. An assistant message
+    carrying "train": false stays masked — its failure observation and the
+    corrective turn after it still train, which teaches recovery without teaching
+    the mistake. Non-ChatML templates fall back to last-assistant-turn training
+    (v1 behaviour).
     """
     kw = {"tokenize": True, "return_dict": False}
     if tools:
@@ -77,15 +83,21 @@ def encode_conversation(tok, msgs, tools, block):
     end = tok.encode("<|im_end|>", add_special_tokens=False)
     if hdr and len(end) == 1:
         end_id = end[0]
+        # nth rendered assistant span <-> nth assistant message (template renders
+        # them 1:1 in order when add_generation_prompt=False)
+        span_trains = [m.get("train") is not False for m in msgs if m.get("role") == "assistant"]
         labels = [-100] * len(ids)
-        i, found = 0, False
+        i, span, found = 0, 0, False
         while i <= len(ids) - len(hdr):
             if ids[i: i + len(hdr)] == hdr:
+                trains = span_trains[span] if span < len(span_trains) else True
+                span += 1
                 j = i + len(hdr)
                 while j < len(ids) and ids[j] != end_id:
-                    labels[j] = ids[j]
+                    if trains:
+                        labels[j] = ids[j]
                     j += 1
-                if j < len(ids):
+                if j < len(ids) and trains:
                     labels[j] = ids[j]  # train the <|im_end|> stop too
                 found = True
                 i = j + 1
@@ -109,6 +121,10 @@ def encode_last_turn(tok, msgs, tools, block):
 
 def is_val(row, val_frac):
     """Deterministic split: same row lands on the same side across runs/resumes."""
+    # Provenance-rich HIVE datasets are grouped by task family before training;
+    # honor that split exactly so paraphrases/repairs cannot leak across sides.
+    if row.get("split") in ("train", "validation"):
+        return row["split"] == "validation"
     h = int(hashlib.md5(row["key"].encode()).hexdigest(), 16)
     return (h % 10000) < int(val_frac * 10000)
 
@@ -154,7 +170,10 @@ def main():
                       "base": args.base, "data": os.path.basename(args.data), "steps": args.steps,
                       "lr": args.lr, "mode": "sft",
                       "val_frac": args.val_frac, "resume": args.resume}), flush=True)
-    tok = AutoTokenizer.from_pretrained(args.base)
+    # fix_mistral_regex=True: transformers itself warns Mistral-family tokenizers ship an
+    # incorrect regex pattern causing real (not cosmetic) mis-tokenization; harmless no-op
+    # kwarg on non-Mistral tokenizers (verified 2026-07-12), so passed unconditionally.
+    tok = AutoTokenizer.from_pretrained(args.base, fix_mistral_regex=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     model = AutoModelForCausalLM.from_pretrained(args.base, torch_dtype=DTYPE).to(DEVICE)

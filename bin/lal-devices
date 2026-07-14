@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Show authenticated LAL CLI clients recorded by main-pc."""
+
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+ROOT = Path(__file__).resolve().parent.parent
+REGISTRY = Path(os.environ.get("LAL_DEVICES_FILE", ROOT / "web" / ".data" / "cli-devices.json"))
+
+
+def relative_time(value: str) -> tuple[str, float]:
+    try:
+        when = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        seconds = max(0.0, (datetime.now(timezone.utc) - when).total_seconds())
+    except (TypeError, ValueError):
+        return "unknown", float("inf")
+    if seconds < 60:
+        return f"{int(seconds)}s ago", seconds
+    if seconds < 3600:
+        return f"{int(seconds / 60)}m ago", seconds
+    if seconds < 86400:
+        return f"{int(seconds / 3600)}h ago", seconds
+    return f"{int(seconds / 86400)}d ago", seconds
+
+
+def online_ips() -> set[str]:
+    try:
+        result = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        status = json.loads(result.stdout)
+    except (FileNotFoundError, subprocess.SubprocessError, json.JSONDecodeError):
+        return set()
+    addresses: set[str] = set()
+    for peer in status.get("Peer", {}).values():
+        if peer.get("Online"):
+            addresses.update(peer.get("TailscaleIPs", []))
+    if status.get("Self", {}).get("Online"):
+        addresses.update(status["Self"].get("TailscaleIPs", []))
+    return addresses
+
+
+def main() -> int:
+    try:
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        print("No LAL clients have connected yet.")
+        return 0
+    except json.JSONDecodeError as error:
+        print(f"Cannot read device registry: {error}", file=sys.stderr)
+        return 1
+
+    if "--json" in sys.argv[1:]:
+        print(json.dumps(registry, indent=2))
+        return 0
+
+    devices = sorted(registry.get("devices", {}).values(), key=lambda item: item.get("lastSeen", ""), reverse=True)
+    if not devices:
+        print("No authenticated LAL clients have connected yet.")
+    else:
+        connected_ips = online_ips()
+        rows = []
+        for device in devices:
+            seen, age = relative_time(device.get("lastSeen", ""))
+            ip = device.get("lastIp", "unknown")
+            state = "ACTIVE" if age <= 600 else ("ONLINE" if ip in connected_ips else "SEEN")
+            rows.append([
+                state,
+                device.get("name", "unknown"),
+                device.get("platform", "unknown"),
+                device.get("clientVersion", "unknown"),
+                ip,
+                seen,
+                device.get("lastActivity", "unknown"),
+                str(device.get("requests", 0)),
+                device.get("id", "unknown"),
+            ])
+        headers = ["STATE", "DEVICE", "PLATFORM", "CLIENT", "ADDRESS", "LAST SEEN", "ACTIVITY", "REQS", "DEVICE ID"]
+        widths = [max(len(str(row[index])) for row in [headers, *rows]) for index in range(len(headers))]
+        print("  ".join(value.ljust(widths[index]) for index, value in enumerate(headers)))
+        print("  ".join("-" * width for width in widths))
+        for row in rows:
+            print("  ".join(str(value).ljust(widths[index]) for index, value in enumerate(row)))
+
+    denied = registry.get("denied", {})
+    denied_total = int(denied.get("total", 0) or 0)
+    print()
+    if denied_total:
+        seen, _ = relative_time(denied.get("lastSeen", ""))
+        print(f"Rejected-token attempts: {denied_total} (last {seen} from {denied.get('lastIp', 'unknown')})")
+    else:
+        print("Rejected-token attempts: 0")
+    print("Only connection metadata is stored; prompts, paths, and file contents are not logged here.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

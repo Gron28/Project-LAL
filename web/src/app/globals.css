@@ -3,6 +3,11 @@
 /* Local AI Lab theme — assistant component variables mapped to the Fractal Lab palette
    (dark terminal, green accent, mono). Keeps the copied assistant UI on-brand. */
 :root {
+  /* System stacks keep local/offline builds deterministic.  The application is
+     an on-device tool, so a remote font request must never block a release. */
+  --font-display: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-body: ui-sans-serif, system-ui, sans-serif;
+  --font-data: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --bg: #05090c;
   --surface-1: #0b1318;
   --surface-2: #0f1a20;
@@ -65,6 +70,11 @@ html, body {
    becomes the sticky containing scroller. `clip` clips identically WITHOUT
    creating a scroll container, so sticky keeps working. */
 html, body { max-width: 100%; overflow-x: clip; }
+
+/* HIVE's six run views remain swipeable on narrow phones without spending a
+   conspicuous row of vertical space on the browser's native scrollbar. */
+.hive-tabs { scrollbar-width: none; }
+.hive-tabs::-webkit-scrollbar { display: none; }
 
 /* custom classes the chat/agent UI relies on for full-height layout.
    No top nav here, so full-height surfaces use the whole viewport. */

@@ -1,0 +1,8 @@
+{
+  "name": "config2",
+  "version": "2.0.0",
+  "dependencies": {
+    "dep1": "1.0.0",
+    "dep2": "2.0.0"
+  }
+}

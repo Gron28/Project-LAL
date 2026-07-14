@@ -9,11 +9,12 @@ type Entry = { name: string; dir: boolean; size?: number };
 
 const DIM_DIRS = new Set(["node_modules", ".git", ".next", "__pycache__"]);
 
-export default function FileTree({ project, refreshTick, onOpenFile, selected }: {
+export default function FileTree({ project, refreshTick, onOpenFile, selected, readOnly = false }: {
   project: string;
   refreshTick: number;
   onOpenFile: (rel: string) => void;
   selected: string | null;
+  readOnly?: boolean;
 }) {
   const [dirs, setDirs] = useState<Map<string, Entry[] | "loading">>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set(["."]));
@@ -45,11 +46,14 @@ export default function FileTree({ project, refreshTick, onOpenFile, selected }:
     if (!refreshTick) return;
     const open = [...expanded];
     Promise.all(open.map(async (rel) => [rel, await fetchDir(rel).catch(() => null)] as const))
-      .then((pairs) => setDirs((prev) => {
-        const next = new Map(prev);
-        for (const [rel, e] of pairs) if (e) next.set(rel, e);
-        return next;
-      }));
+      .then((pairs) => {
+        if (pairs.some(([, entries]) => entries)) setError("");
+        setDirs((prev) => {
+          const next = new Map(prev);
+          for (const [rel, entries] of pairs) if (entries) next.set(rel, entries);
+          return next;
+        });
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshTick]);
 
@@ -108,10 +112,10 @@ export default function FileTree({ project, refreshTick, onOpenFile, selected }:
             <File size={11} className="shrink-0 text-[var(--muted)]" />
             <span className="truncate">{e.name}</span>
           </button>
-          <button onClick={() => deleteFile(childRel, rel)} title="delete file"
+          {!readOnly && <button onClick={() => deleteFile(childRel, rel)} title="delete file"
             className="shrink-0 px-1.5 text-[var(--muted)] hover:text-[var(--accent-danger)] opacity-0 group-hover:opacity-100">
             <Trash2 size={11} />
-          </button>
+          </button>}
         </div>
       );
     });

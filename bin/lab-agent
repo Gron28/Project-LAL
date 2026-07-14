@@ -1,0 +1,665 @@
+#!/usr/bin/env python3
+"""Small, dependency-free CLI client for the Local AI Lab coding agent."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shlex
+import signal
+import socket
+import subprocess
+import sys
+import tarfile
+import tempfile
+from typing import Any, Iterator
+import webbrowser
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
+
+
+DEFAULT_HOST = "http://127.0.0.1:8770"
+TERMINAL = {"done", "error", "stopped", "interrupted"}
+SYNC_EXCLUDES = {
+    "node_modules", ".next", ".venv", "venv", "dist", "build", "target",
+    "__pycache__", ".cache", ".gradle", ".idea", ".vscode",
+    ".ssh", ".gnupg", ".aws", ".azure",
+}
+SSH_OPTIONS = ["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]
+
+
+class ClientError(RuntimeError):
+    pass
+
+
+def api_json(host: str, method: str, path: str, body: Any | None = None, timeout: float | None = 30) -> Any:
+    data = None if body is None else json.dumps(body).encode()
+    request = Request(
+        host.rstrip("/") + path,
+        data=data,
+        method=method,
+        headers={"accept": "application/json", "content-type": "application/json"},
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+    except HTTPError as exc:
+        detail = exc.read().decode(errors="replace").strip()
+        raise ClientError(f"{method} {path}: HTTP {exc.code}: {detail or exc.reason}") from exc
+    except URLError as exc:
+        raise ClientError(f"cannot reach {host}: {exc.reason}") from exc
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ClientError(f"{method} {path}: server returned invalid JSON") from exc
+
+
+def sse_events(host: str, run_id: str) -> Iterator[dict[str, Any]]:
+    path = "/api/agent/runs/" + quote(run_id, safe="") + "/stream?after=0"
+    request = Request(host.rstrip("/") + path, headers={"accept": "text/event-stream"})
+    try:
+        response = urlopen(request, timeout=None)
+    except HTTPError as exc:
+        detail = exc.read().decode(errors="replace").strip()
+        raise ClientError(f"stream: HTTP {exc.code}: {detail or exc.reason}") from exc
+    except URLError as exc:
+        raise ClientError(f"cannot open run stream at {host}: {exc.reason}") from exc
+
+    data_lines: list[str] = []
+    try:
+        for raw_line in response:
+            line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+            if not line:
+                if data_lines:
+                    payload = "\n".join(data_lines)
+                    data_lines.clear()
+                    try:
+                        event = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(event, dict):
+                        yield event
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+        if data_lines:
+            try:
+                event = json.loads("\n".join(data_lines))
+            except json.JSONDecodeError:
+                return
+            if isinstance(event, dict):
+                yield event
+    finally:
+        response.close()
+
+
+def compact(value: Any, limit: int = 180) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except TypeError:
+        text = str(value)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+class Renderer:
+    def __init__(self, host: str, assume_yes: bool, quiet_tools: bool, verbose: bool, show_thinking: bool):
+        self.host = host
+        self.assume_yes = assume_yes
+        self.quiet_tools = quiet_tools
+        self.verbose = verbose
+        self.show_thinking = show_thinking
+        self.calls: dict[str, str] = {}
+        self.wrote_text = False
+        self.last_text_ended_newline = True
+        self.status = ""
+        self.hive_workflow_id = ""
+
+    def note(self, message: str) -> None:
+        print(f"[lab] {message}", file=sys.stderr, flush=True)
+
+    def approve(self, call: dict[str, Any]) -> None:
+        call_id = str(call.get("id", ""))
+        name = str(call.get("name", "tool"))
+        args = call.get("args", {})
+        allowed = self.assume_yes
+        if not self.assume_yes:
+            prompt = f"Allow {name} {compact(args)}? [y/N] "
+            try:
+                if not sys.stdin.isatty() and os.path.exists("/dev/tty"):
+                    with open("/dev/tty", "r+", encoding="utf-8") as tty:
+                        tty.write(prompt)
+                        tty.flush()
+                        answer = tty.readline()
+                else:
+                    answer = input(prompt)
+                allowed = answer.strip().lower() in {"y", "yes"}
+            except (EOFError, OSError):
+                allowed = False
+        if self.hive_workflow_id:
+            api_json(
+                self.host,
+                "POST",
+                "/api/hive/workflows/" + quote(self.hive_workflow_id, safe="") + "/approve",
+                {"callId": call_id, "allow": allowed},
+            )
+        else:
+            api_json(self.host, "PATCH", "/api/agent/loop", {"id": call_id, "allow": allowed})
+        self.note(("allowed " if allowed else "denied ") + name)
+
+    def render(self, event: dict[str, Any], agent: str = "") -> None:
+        kind = str(event.get("k", ""))
+        value = event.get("v")
+        prefix = f"[{agent}] " if agent else ""
+
+        if kind == "inner" and isinstance(value, dict) and isinstance(value.get("event"), dict):
+            self.render(value["event"], str(value.get("role") or value.get("phase") or agent))
+        elif kind == "text":
+            text = str(value or "")
+            print(text, end="", flush=True)
+            self.wrote_text = True
+            self.last_text_ended_newline = text.endswith("\n")
+        elif kind == "think" and self.show_thinking:
+            print(prefix + str(value or ""), end="", file=sys.stderr, flush=True)
+        elif kind == "model_loading" and isinstance(value, dict):
+            self.note(f"{prefix}loading {value.get('model')} ({value.get('ctx')} context)")
+        elif kind == "model_ready" and isinstance(value, dict):
+            backend = f" via {value.get('backend')}" if value.get("backend") else ""
+            self.note(f"{prefix}{value.get('model')} ready{backend}")
+        elif kind == "tool_request" and isinstance(value, dict):
+            call_id = str(value.get("id", ""))
+            name = str(value.get("name", "tool"))
+            self.calls[call_id] = name
+            if not self.quiet_tools:
+                self.note(f"{prefix}→ {name} {compact(value.get('args', {}))}")
+        elif kind == "tool_result" and isinstance(value, dict):
+            name = self.calls.get(str(value.get("id", "")), "tool")
+            ok = bool(value.get("ok"))
+            if not self.quiet_tools:
+                self.note(f"{prefix}{'✓' if ok else '✗'} {name}")
+            if self.verbose and value.get("output"):
+                self.note(str(value["output"]))
+        elif kind == "approval_needed" and isinstance(value, dict):
+            self.approve(value)
+        elif kind == "error":
+            self.note(prefix + "error: " + str(value or event.get("error") or "unknown error"))
+        elif kind == "phase" and isinstance(value, dict):
+            self.note(prefix + str(value.get("name", "phase")))
+        elif kind == "workflow_node" and isinstance(value, dict):
+            node = str(event.get("nodeId", "stage"))
+            role = str(event.get("role", "agent"))
+            status = str(value.get("status", ""))
+            if status in {"running", "succeeded", "failed"}:
+                self.note(f"Hive · {node} · {role} · {status}")
+        elif kind == "stage_trace" and isinstance(value, dict):
+            trace_kind = str(value.get("kind", ""))
+            text = str(value.get("text", ""))
+            if trace_kind == "output" and text:
+                print(text, end="", flush=True)
+                self.wrote_text = True
+                self.last_text_ended_newline = text.endswith("\n")
+            elif trace_kind == "reasoning" and self.show_thinking and text:
+                print(prefix + text, end="", file=sys.stderr, flush=True)
+        elif kind == "workflow_finished" and isinstance(value, dict):
+            self.note("Hive finished · " + str(value.get("status", "succeeded")))
+        elif kind == "status":
+            status = str(value or "")
+            if status in TERMINAL:
+                self.status = status
+                if status != "done":
+                    self.note(status + (": " + str(event.get("error")) if event.get("error") else ""))
+
+    def finish(self) -> None:
+        if self.wrote_text and not self.last_text_ended_newline:
+            print()
+
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="lab-agent",
+        description="Run the Local AI Lab coding agent in the current directory.",
+        epilog='Examples: lab-agent "fix the tests" | lab-agent --new my-app -y "build a small web app and git init"',
+    )
+    p.add_argument("prompt", nargs="*", help="task for the agent; reads stdin when omitted")
+    location = p.add_mutually_exclusive_group()
+    location.add_argument("-C", "--project", metavar="DIR", help="server-side project directory (default: current directory)")
+    location.add_argument("--new", metavar="DIR", help="create a directory, then run the agent inside it")
+    p.add_argument("--host", default=os.environ.get("LAB_AGENT_URL", DEFAULT_HOST), help="lab URL (or LAB_AGENT_URL)")
+    p.add_argument("--ssh", default=os.environ.get("LAL_SSH", ""), metavar="USER@HOST", help="sync this folder and run on a remote lab over SSH (or LAL_SSH)")
+    p.add_argument("--model", help="model name; defaults to the lab setting")
+    p.add_argument("--mode", default="default", choices=["default", "quick-edit", "planning", "deep-research", "orchestrator"])
+    thinking = p.add_mutually_exclusive_group()
+    thinking.add_argument("--think", dest="think", action="store_true", help="enable model reasoning")
+    thinking.add_argument("--no-think", dest="think", action="store_false", help="disable model reasoning")
+    p.set_defaults(think=None)
+    p.add_argument("--show-thinking", action="store_true", help="print reasoning chunks to stderr")
+    p.add_argument("-y", "--yes", action="store_true", help="automatically approve mutating tools")
+    p.add_argument("--quiet-tools", action="store_true", help="hide tool activity")
+    p.add_argument("-v", "--verbose", action="store_true", help="show tool output")
+    p.add_argument("--detach", action="store_true", help="start the run and print its IDs without following it")
+    p.add_argument("--resume", metavar="RUN_ID", help="follow an existing run instead of starting one")
+    p.add_argument("--stop", metavar="RUN_ID", help="stop an existing run")
+    p.add_argument("--list-models", action="store_true", help="list available models")
+    p.add_argument("--tui", action="store_true", help="open the interactive terminal workspace")
+    return p
+
+
+def read_prompt(parts: list[str]) -> str:
+    if parts:
+        return " ".join(parts).strip()
+    if not sys.stdin.isatty():
+        return sys.stdin.read().strip()
+    try:
+        return input("Task: ").strip()
+    except EOFError:
+        return ""
+
+
+def sync_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+    parts = Path(info.name).parts
+    if any(part in SYNC_EXCLUDES for part in parts) or info.issym() or info.islnk():
+        return None
+    return info
+
+
+def run_checked(command: list[str], label: str, capture: bool = False) -> subprocess.CompletedProcess[str]:
+    try:
+        result = subprocess.run(command, text=True, capture_output=capture)
+    except FileNotFoundError as exc:
+        raise ClientError(f"{command[0]} is required for remote-folder mode") from exc
+    if result.returncode:
+        detail = (result.stderr or result.stdout or "").strip() if capture else ""
+        raise ClientError(label + (": " + detail if detail else ""))
+    return result
+
+
+def safe_extract(archive: Path, destination: Path) -> set[str]:
+    files: set[str] = set()
+    root = destination.resolve()
+    with tarfile.open(archive, "r:gz") as bundle:
+        members = []
+        for member in bundle.getmembers():
+            name = member.name.removeprefix("./")
+            if not name or name == ".":
+                continue
+            target = (destination / name).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError as exc:
+                raise ClientError(f"remote archive contains an unsafe path: {member.name}") from exc
+            if not (member.isfile() or member.isdir()):
+                # Cross-machine symlink semantics are easy to get dangerously wrong.
+                continue
+            members.append(member)
+            if member.isfile():
+                files.add(name.replace("\\", "/"))
+        bundle.extractall(destination, members=members)
+    return files
+
+
+def remote_workspace(args: argparse.Namespace, project: Path) -> int:
+    target = str(args.ssh).strip()
+    if not target:
+        raise ClientError("remote SSH target is empty")
+    if project == Path.home().resolve():
+        print("[lab] remote sync excludes credential/config folders and build caches from your home directory", file=sys.stderr)
+
+    identity = hashlib.sha256((socket.gethostname() + "\0" + str(project)).encode()).hexdigest()[:12]
+    token = hashlib.sha256(os.urandom(32)).hexdigest()[:16]
+    safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in project.name)[:40] or "workspace"
+    remote_leaf = f"{safe_name}-{identity}-{token[:8]}"
+    remote_dir = f"$HOME/.local/share/lal/workspaces/{remote_leaf}"
+    remote_in = f"/tmp/lal-{token}-in.tar.gz"
+    remote_out = f"/tmp/lal-{token}-out.tar.gz"
+
+    with tempfile.TemporaryDirectory(prefix="lal-sync-") as temporary:
+        upload = Path(temporary) / "workspace.tar.gz"
+        download = Path(temporary) / "result.tar.gz"
+        print(f"[lab] syncing {project} → {target}:{remote_dir}", file=sys.stderr)
+        with tarfile.open(upload, "w:gz") as bundle:
+            bundle.add(project, arcname="workspace", recursive=True, filter=sync_filter)
+        run_checked(["scp", *SSH_OPTIONS, "-q", str(upload), f"{target}:{remote_in}"], "could not upload the workspace")
+        prepare = (
+            f'mkdir -p "{remote_dir}" && '
+            f'tar -xzf {shlex.quote(remote_in)} -C "{remote_dir}" --strip-components=1 && '
+            f'rm -f {shlex.quote(remote_in)}'
+        )
+        run_checked(["ssh", *SSH_OPTIONS, target, prepare], "could not prepare the remote workspace")
+
+        remote_command = ["lal" if not args.prompt else "lab-agent", "-C", remote_dir]
+        if args.prompt:
+            if args.model:
+                remote_command += ["--model", args.model]
+            if args.mode:
+                remote_command += ["--mode", args.mode]
+            if args.think is True:
+                remote_command.append("--think")
+            elif args.think is False:
+                remote_command.append("--no-think")
+            if args.yes:
+                remote_command.append("-y")
+            remote_command += args.prompt
+        command_text = " ".join(f'"{remote_dir}"' if value == remote_dir else shlex.quote(value) for value in remote_command)
+        result = subprocess.run(["ssh", *SSH_OPTIONS, "-tt", target, command_text])
+
+        pack = f'tar -czf {shlex.quote(remote_out)} -C "{remote_dir}" .'
+        run_checked(["ssh", *SSH_OPTIONS, target, pack], "could not package remote changes")
+        run_checked(["scp", *SSH_OPTIONS, "-q", f"{target}:{remote_out}", str(download)], "could not download remote changes")
+        run_checked(["ssh", *SSH_OPTIONS, target, f"rm -f {shlex.quote(remote_out)}"], "could not remove the temporary remote archive")
+        safe_extract(download, project)
+        print("[lab] synced remote additions and edits back to " + str(project), file=sys.stderr)
+        print("[lab] safety note: remote file deletions are not applied locally in this prototype", file=sys.stderr)
+        return result.returncode
+
+
+def ansi(code: str, text: str) -> str:
+    if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def choose(title: str, values: list[str], current: str) -> str:
+    print(ansi("1;36", f"\n{title}"))
+    for index, value in enumerate(values, 1):
+        marker = "●" if value == current else " "
+        print(f"  {index:>2}. {marker} {value}")
+    try:
+        answer = input("Select number (Enter keeps current): ").strip()
+    except EOFError:
+        return current
+    if not answer:
+        return current
+    try:
+        return values[int(answer) - 1]
+    except (ValueError, IndexError):
+        print("Invalid selection.")
+        return current
+
+
+def tailnet_url(host: str, page: str) -> str:
+    configured = os.environ.get("LAL_WEB_URL", "").rstrip("/")
+    if configured:
+        return configured + page
+    if host.startswith("http://127.0.0.1") or host.startswith("http://localhost"):
+        return "https://main-pc.tail3ba909.ts.net" + page
+    return host.rstrip("/") + page
+
+
+def open_page(host: str, page: str) -> None:
+    url = tailnet_url(host, page)
+    print(ansi("4;36", url))
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        print("Open that address on this phone/computer; this terminal is running over SSH.")
+        return
+    try:
+        if not webbrowser.open(url):
+            print("Open the address above in your browser.")
+    except Exception:
+        print("Open the address above in your browser.")
+
+
+def follow_run(host: str, run_id: str, renderer: Renderer) -> int:
+    renderer.note(f"run {run_id}")
+    try:
+        for event in sse_events(host, run_id):
+            renderer.render(event)
+            if renderer.status in TERMINAL:
+                break
+    except KeyboardInterrupt:
+        renderer.note("interrupt received; stopping the run")
+        try:
+            api_json(host, "POST", "/api/agent/runs/" + quote(run_id, safe="") + "/stop", {}, timeout=10)
+        except ClientError as exc:
+            renderer.note(str(exc))
+        renderer.finish()
+        return 130
+    renderer.finish()
+    return 0 if renderer.status == "done" else 1
+
+
+def tui_help() -> None:
+    print("""
+Commands
+  /model       choose a local model       /mode        choose Code/Chat/Hive/Research
+  /effort      Hive normal/thorough/extra /think       toggle model thinking
+  /approve     toggle automatic approvals /settings    show the active session settings
+  /clear       start a fresh conversation /resume ID   attach to a durable run
+  /voice       open hands-free voice chat /web          open the full Code workspace
+  /help        show this list              /quit         leave LAL
+
+Type a message without a slash to send it using the active mode.
+""")
+
+
+def terminal_ui(host: str, project: Path, initial_model: str | None = None) -> int:
+    model_data = api_json(host, "GET", "/api/agent/models")
+    models = [str(value) for value in model_data.get("models", [])]
+    model = initial_model or str(model_data.get("current") or (models[0] if models else ""))
+    if not model:
+        raise ClientError("the lab has no available model")
+
+    modes = [
+        "default", "quick-edit", "planning", "deep-research", "orchestrator",
+        "deliberate", "hive-code", "hive-research", "chat",
+    ]
+    mode = "default"
+    effort = "normal"
+    think = True
+    auto_approve = False
+    conversation_id = ""
+    messages: list[dict[str, str]] = []
+
+    print("\033[2J\033[H" if sys.stdout.isatty() else "", end="")
+    print(ansi("1;35", "╭─────────────────────────────────────────────────────────────╮"))
+    print(ansi("1;35", "│  LAL  ·  Local AI Lab                                      │"))
+    print(ansi("1;35", "╰─────────────────────────────────────────────────────────────╯"))
+    print(f"  workspace  {ansi('36', str(project))}")
+    print(f"  model      {ansi('36', model)}")
+    print("  /help for controls · Ctrl-C stops the active run\n")
+
+    while True:
+        state = f"{mode} · {model} · effort:{effort} · think:{'on' if think else 'off'} · {'auto' if auto_approve else 'ask'}"
+        print(ansi("2", state))
+        try:
+            line = input(ansi("1;32", "❯ ")).strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nLeaving LAL.")
+            return 0
+        if not line:
+            continue
+        if line.startswith("/"):
+            command, _, argument = line.partition(" ")
+            command = command.lower()
+            argument = argument.strip()
+            if command in {"/quit", "/exit", "/q"}:
+                print("Leaving LAL.")
+                return 0
+            if command == "/help":
+                tui_help()
+            elif command == "/model":
+                model = argument if argument in models else choose("Model", models, model)
+            elif command == "/mode":
+                mode = argument if argument in modes else choose("Mode", modes, mode)
+            elif command == "/effort":
+                effort = argument if argument in {"normal", "thorough", "extra"} else choose("Hive effort", ["normal", "thorough", "extra"], effort)
+            elif command == "/think":
+                think = argument.lower() in {"on", "true", "yes", "1"} if argument else not think
+            elif command == "/approve":
+                auto_approve = argument.lower() in {"on", "true", "yes", "1"} if argument else not auto_approve
+            elif command == "/settings":
+                print(json.dumps({"workspace": str(project), "host": host, "model": model, "mode": mode, "effort": effort, "think": think, "autoApprove": auto_approve}, indent=2))
+            elif command == "/clear":
+                conversation_id = ""
+                messages = []
+                print("Conversation cleared; workspace files are unchanged.")
+            elif command == "/voice":
+                open_page(host, "/chat")
+            elif command in {"/web", "/ui"}:
+                open_page(host, "/code")
+            elif command == "/chat":
+                mode = "chat"
+                print("Mode: chat")
+            elif command == "/deliberate":
+                mode = "deliberate"
+                print("Mode: deliberate research")
+            elif command == "/hive":
+                mode = "hive-research" if argument.lower().startswith("r") else "hive-code"
+                print("Mode: " + mode)
+            elif command == "/resume" and argument:
+                renderer = Renderer(host, auto_approve, False, False, False)
+                follow_run(host, argument, renderer)
+            else:
+                print("Unknown command. Type /help.")
+            continue
+
+        renderer = Renderer(host, auto_approve, False, False, False)
+        try:
+            if mode.startswith("hive-"):
+                kind = "research" if mode == "hive-research" else "coding"
+                body: dict[str, Any] = {
+                    "kind": kind,
+                    "objective": line,
+                    "budget": effort,
+                    "preferredModel": model,
+                    "autoApprove": auto_approve,
+                }
+                if kind == "coding":
+                    body["workspace"] = str(project)
+                started = api_json(host, "POST", "/api/hive/workflows", body)
+                workflow_id = str(started.get("workflowId", ""))
+                run_id = str(started.get("runId", ""))
+                if not workflow_id or not run_id:
+                    raise ClientError("Hive did not return workflow and run IDs")
+                renderer.hive_workflow_id = workflow_id
+                print(ansi("1;35", f"Hive {kind} · {effort} · {workflow_id}"))
+                follow_run(host, run_id, renderer)
+            elif mode == "deliberate":
+                started = api_json(host, "POST", "/api/agent/deliberate", {"query": line, "project": str(project), "model": model, "autoApprove": auto_approve})
+                follow_run(host, str(started.get("runId", "")), renderer)
+            elif mode == "chat":
+                incoming = [*messages, {"role": "user", "content": line}]
+                body = {"messages": incoming, "model": model, "think": think}
+                if conversation_id:
+                    body["conversationId"] = conversation_id
+                started = api_json(host, "POST", "/api/agent/chat", body)
+                conversation_id = str(started.get("conversationId", conversation_id))
+                follow_run(host, str(started.get("runId", "")), renderer)
+                if conversation_id:
+                    saved = api_json(host, "GET", "/api/agent/conversations/" + quote(conversation_id, safe=""))
+                    messages = [{"role": str(m.get("role", "")), "content": str(m.get("content", ""))} for m in saved.get("messages", [])]
+            else:
+                incoming = [*messages, {"role": "user", "content": line}]
+                body = {"messages": incoming, "project": str(project), "model": model, "mode": mode, "think": think, "autoApprove": auto_approve}
+                if conversation_id:
+                    body["conversationId"] = conversation_id
+                started = api_json(host, "POST", "/api/agent/loop", body)
+                conversation_id = str(started.get("conversationId", conversation_id))
+                follow_run(host, str(started.get("runId", "")), renderer)
+                if conversation_id:
+                    saved = api_json(host, "GET", "/api/agent/conversations/" + quote(conversation_id, safe=""))
+                    messages = [{"role": str(m.get("role", "")), "content": str(m.get("content", ""))} for m in saved.get("messages", []) if m.get("role") != "system"]
+        except ClientError as exc:
+            print(ansi("31", "error: " + str(exc)), file=sys.stderr)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    host = args.host.rstrip("/")
+
+    try:
+        invoked_as = Path(sys.argv[0]).name.lower()
+        if args.ssh:
+            raw_project = args.new or args.project or os.getcwd()
+            project = Path(raw_project).expanduser().resolve()
+            if args.new:
+                project.mkdir(parents=True, exist_ok=True)
+            if not project.is_dir():
+                raise ClientError(f"project directory does not exist: {project}")
+            return remote_workspace(args, project)
+        if args.tui or (invoked_as == "lal" and not args.prompt and not args.resume and not args.stop and not args.list_models):
+            raw_project = args.new or args.project or os.getcwd()
+            project = Path(raw_project).expanduser().resolve()
+            if args.new:
+                project.mkdir(parents=True, exist_ok=True)
+            if not project.is_dir():
+                raise ClientError(f"project directory does not exist: {project}")
+            return terminal_ui(host, project, args.model)
+        if args.list_models:
+            result = api_json(host, "GET", "/api/agent/models")
+            current = result.get("current") if isinstance(result, dict) else None
+            for model in result.get("models", []) if isinstance(result, dict) else []:
+                print(str(model) + (" *" if model == current else ""))
+            return 0
+        if args.stop:
+            api_json(host, "POST", "/api/agent/runs/" + quote(args.stop, safe="") + "/stop", {})
+            print(f"stopping {args.stop}")
+            return 0
+
+        renderer = Renderer(host, args.yes, args.quiet_tools, args.verbose, args.show_thinking)
+        run_id = args.resume
+        conversation_id = ""
+        project: Path | None = None
+
+        if not run_id:
+            prompt = read_prompt(args.prompt)
+            if not prompt:
+                raise ClientError("no task supplied")
+            raw_project = args.new or args.project or os.getcwd()
+            project = Path(raw_project).expanduser().resolve()
+            if args.new:
+                project.mkdir(parents=True, exist_ok=True)
+            if not project.is_dir():
+                raise ClientError(f"project directory does not exist: {project}")
+
+            body: dict[str, Any] = {
+                "messages": [{"role": "user", "content": prompt}],
+                "project": str(project),
+                "mode": args.mode,
+                "autoApprove": args.yes,
+            }
+            if args.model:
+                body["model"] = args.model
+            if args.think is not None:
+                body["think"] = args.think
+            result = api_json(host, "POST", "/api/agent/loop", body)
+            run_id = str(result.get("runId", ""))
+            conversation_id = str(result.get("conversationId", ""))
+            if not run_id:
+                raise ClientError("server did not return a run ID")
+
+        if args.detach:
+            print(json.dumps({"runId": run_id, "conversationId": conversation_id, "project": str(project or "")}))
+            return 0
+
+        renderer.note(f"run {run_id}" + (f" in {project}" if project else ""))
+        interrupted = False
+        try:
+            for event in sse_events(host, run_id):
+                renderer.render(event)
+                if renderer.status in TERMINAL:
+                    break
+        except KeyboardInterrupt:
+            interrupted = True
+            renderer.note("interrupt received; stopping the run")
+            try:
+                api_json(host, "POST", "/api/agent/runs/" + quote(run_id, safe="") + "/stop", {}, timeout=10)
+            except ClientError as exc:
+                renderer.note(str(exc))
+        finally:
+            renderer.finish()
+        if interrupted:
+            return 130
+        return 0 if renderer.status == "done" else 1
+    except ClientError as exc:
+        print(f"lab-agent: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    raise SystemExit(main())

@@ -1,0 +1,15 @@
+{
+  "api": {
+    "port": 8080,
+    "host": "production-server",
+    "timeout": 60
+  },
+  "database": {
+    "user": "admin",
+    "pass": "new-secret"
+  },
+  "features": {
+    "logging": true,
+    "caching": true
+  }
+}

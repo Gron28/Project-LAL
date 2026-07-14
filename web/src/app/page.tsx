@@ -27,6 +27,11 @@ export default function Dashboard() {
   const [editing, setEditing] = useState(false);
   const [addType, setAddType] = useState(Object.keys(WIDGETS)[0]);
 
+  const stopEverything = async () => {
+    if (!confirm("Stop every active agent and release models from the GPU?")) return;
+    await fetch("/api/agent/runs/stop-all", { method: "POST" }).catch(() => {});
+  };
+
   useEffect(() => {
     fetch("/api/dashboard").then((r) => r.json()).then((j) => {
       if (j.layout?.widgets?.length) setLayout(j.layout);
@@ -75,6 +80,9 @@ export default function Dashboard() {
           )}
           <Button size="sm" active={editing} onClick={() => setEditing((v) => !v)} className="h-7 text-[10px] uppercase border border-[var(--border)] whitespace-nowrap">
             {editing ? "done" : "edit layout"}
+          </Button>
+          <Button size="sm" onClick={stopEverything} className="h-7 text-[10px] uppercase border border-[var(--accent-danger)] text-[var(--accent-danger)] whitespace-nowrap">
+            stop all agents
           </Button>
         </div>
       </div>

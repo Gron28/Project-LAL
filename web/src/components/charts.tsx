@@ -151,6 +151,9 @@ export type LossRow = {
   patience?: number; best_step?: number;
   length_hist?: { edges: number[]; kept: number[]; dropped: number[] };
   prompt?: string; target?: string; generated?: string; error?: string;
+  // per-token certitude of the probe generation — chosen-token softmax prob and
+  // full-distribution entropy (nats), straight from the trainer's logits
+  tokens?: string[]; probs?: number[]; entropy?: number[];
 };
 
 // ---- training loss canvas: raw (faint) + EMA (bold) + val (amber) + best marker ----
@@ -720,6 +723,13 @@ export function ConceptGalaxy3D({ snapshots, categories, labels, upToIndex }: {
   }, [snapshots, categories, uniqueCats, upToIndex, yaw, pitch]);
 
   useEffect(() => { draw(); }, [draw]);
+  // idle drift — the same slow view rotation as the gradient terrain; data is fixed
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => { if (!drag.current && !hover) setYaw((v) => v + 0.0022); raf = requestAnimationFrame(tick); };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [hover]);
   const idxSafe = Math.min(upToIndex, snapshots.length - 1);
 
   return (
@@ -756,9 +766,14 @@ export function ConceptGalaxy3D({ snapshots, categories, labels, upToIndex }: {
 }
 
 // ---- live sample-vs-target diff: what the model actually says, periodically ----
+// When per-token certitude is present, each generated token is tinted by its
+// UNCERTAINTY (1 − chosen-token probability) — confident text reads plain, shaky
+// text glows. Hover a token for its exact p and entropy. Real logits, no theatre.
 export function ProbePanel({ row }: { row?: LossRow }) {
   if (!row) return <div className="text-[11px] text-[var(--muted)]">— no probe yet —</div>;
   if (row.error) return <div className="text-[11px] text-[var(--accent-danger)]">probe failed: {row.error}</div>;
+  const hasCert = Array.isArray(row.tokens) && Array.isArray(row.probs) && row.tokens.length === row.probs.length && row.tokens.length > 0;
+  const meanP = hasCert ? row.probs!.reduce((a, b) => a + b, 0) / row.probs!.length : null;
   return (
     <div className="text-[11px] leading-relaxed space-y-2">
       <div><span className="uppercase tracking-widest text-[9px] text-[var(--muted)]">prompt</span>
@@ -766,9 +781,134 @@ export function ProbePanel({ row }: { row?: LossRow }) {
       <div className="grid grid-cols-2 gap-3">
         <div><span className="uppercase tracking-widest text-[9px] text-[var(--muted)]">target</span>
           <div className="text-[var(--text-2)] font-mono whitespace-pre-wrap">{row.target}</div></div>
-        <div><span className="uppercase tracking-widest text-[9px] text-[var(--accent-ai)]">model @ step {row.step}</span>
-          <div className="text-[var(--text)] font-mono whitespace-pre-wrap">{row.generated}</div></div>
+        <div>
+          <span className="uppercase tracking-widest text-[9px] text-[var(--accent-ai)]">model @ step {row.step}</span>
+          {meanP != null && <span className="ml-2 text-[9px] text-[var(--muted)]">certitude {Math.round(meanP * 100)}% · tint = uncertainty</span>}
+          {hasCert ? (
+            <div className="text-[var(--text)] font-mono whitespace-pre-wrap">
+              {row.tokens!.map((t, i) => (
+                <span key={i}
+                  title={`p=${row.probs![i]}${row.entropy?.[i] != null ? ` · H=${row.entropy[i]} nats` : ""}`}
+                  style={{ backgroundColor: `rgba(255,107,157,${(0.55 * (1 - row.probs![i])).toFixed(3)})`, borderRadius: 2 }}>
+                  {t}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[var(--text)] font-mono whitespace-pre-wrap">{row.generated}</div>
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+// ---- gradient terrain: layer_gnorm as a 3D ridge surface, step (x) × layer (z),
+// height ∝ √(‖g‖/max) — sqrt is a display transform so spikes don't flatten the
+// floor; the hover tooltip reports the exact raw value. Slow idle auto-rotation,
+// drag to steer. Same fixed data → same terrain: nothing is animated but the view. ----
+export function GradientTerrain3D({ rows, maxCols = 90 }: { rows: LossRow[]; maxCols?: number }) {
+  const cv = useRef<HTMLCanvasElement>(null);
+  const yawRef = useRef(0.65);
+  const [pitch, setPitch] = useState(0.42);
+  const drag = useRef<{ x: number; y: number } | null>(null);
+  const [hover, setHover] = useState<{ x: number; y: number; w: number; h: number; step: number; layer: number; v: number } | null>(null);
+  const hit = useRef<{ sx: number; sy: number; step: number; layer: number; v: number }[]>([]);
+
+  const draw = useCallback(() => {
+    const c = cv.current; if (!c) return;
+    const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+    c.width = w * dpr; c.height = h * dpr; const x = c.getContext("2d")!; x.scale(dpr, dpr); x.clearRect(0, 0, w, h);
+    const st = rows.filter((r) => r.event === "step" && Array.isArray(r.layer_gnorm) && r.layer_gnorm!.length);
+    if (!st.length) { x.fillStyle = "#7fa896"; x.font = "10px monospace"; x.textAlign = "center"; x.fillText("awaiting per-layer gradients", w / 2, h / 2); return; }
+    const cols = st.slice(-maxCols);
+    const nLayers = cols[0].layer_gnorm!.length;
+    let vmax = 0;
+    cols.forEach((s) => s.layer_gnorm!.forEach((v) => { if (v > vmax) vmax = v; }));
+    vmax = vmax || 1;
+
+    const yaw = yawRef.current;
+    const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const span = 1.15;
+    const scale = Math.min(w, h) / (2.6 * span);
+    const project = (gx: number, gy: number, gz: number) => {
+      const x1 = gx * cy - gz * sy, z1 = gx * sy + gz * cy;
+      const y2 = gy * cp - z1 * sp, z2 = gy * sp + z1 * cp;
+      const persp = 1 + z2 * 0.18 / span;
+      return { sx: w / 2 + x1 * scale * persp, sy: h / 2 + 14 + y2 * scale * persp, depth: z2 };
+    };
+    // grid coords in [-1,1]; height sqrt-normalized into [0, 0.85]
+    const gx = (ci: number) => (cols.length < 2 ? 0 : (ci / (cols.length - 1)) * 2 - 1);
+    const gz = (li: number) => (nLayers < 2 ? 0 : (li / (nLayers - 1)) * 2 - 1);
+    const gy = (v: number) => -Math.sqrt(Math.min(1, v / vmax)) * 0.85;
+
+    // painter's algorithm over layers: draw the ridge furthest from camera first
+    const order = Array.from({ length: nLayers }, (_, i) => i)
+      .sort((a, b) => project(0, 0, gz(a)).depth - project(0, 0, gz(b)).depth);
+    const hitPts: typeof hit.current = [];
+    for (const li of order) {
+      const base = cols.map((s, ci) => project(gx(ci), 0, gz(li)));
+      const crest = cols.map((s, ci) => project(gx(ci), gy(s.layer_gnorm![li]), gz(li)));
+      // fill under the ridge — translucent so rear layers glow through
+      x.beginPath();
+      crest.forEach((p, i) => (i ? x.lineTo(p.sx, p.sy) : x.moveTo(p.sx, p.sy)));
+      for (let i = base.length - 1; i >= 0; i--) x.lineTo(base[i].sx, base[i].sy);
+      x.closePath();
+      const depth01 = (order.indexOf(li) + 1) / nLayers; // nearer → brighter
+      x.fillStyle = `rgba(52,255,166,${(0.05 + depth01 * 0.10).toFixed(3)})`;
+      x.fill();
+      // crest line, phosphor ramp by that layer's own peak (identity = position, magnitude = color)
+      const peak = Math.max(...cols.map((s) => s.layer_gnorm![li])) / vmax;
+      const t = Math.sqrt(Math.min(1, peak));
+      x.strokeStyle = `rgb(${Math.round(16 + t * 36)},${Math.round(90 + t * 165)},${Math.round(70 + t * 96)})`;
+      x.lineWidth = 1.2; x.globalAlpha = 0.5 + depth01 * 0.5;
+      x.beginPath();
+      crest.forEach((p, i) => (i ? x.lineTo(p.sx, p.sy) : x.moveTo(p.sx, p.sy)));
+      x.stroke(); x.globalAlpha = 1;
+      crest.forEach((p, ci) => hitPts.push({ sx: p.sx, sy: p.sy, step: cols[ci].step!, layer: li, v: cols[ci].layer_gnorm![li] }));
+    }
+    hit.current = hitPts;
+    x.fillStyle = "#90c0ac"; x.font = "9px monospace"; x.textAlign = "left";
+    x.fillText(`${nLayers} layers × last ${cols.length} steps · height ∝ √‖g‖ · max ${vmax.toFixed(3)}`, 6, 12);
+  }, [rows, maxCols, pitch]);
+
+  // slow idle rotation — pure view motion over fixed real data; pauses while dragging
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => { if (!drag.current && !hover) { yawRef.current += 0.0022; draw(); } raf = requestAnimationFrame(tick); };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [draw, hover]);
+  useEffect(() => { draw(); }, [draw]);
+
+  return (
+    <div className="relative w-full h-full">
+      <canvas ref={cv} className="w-full h-full cursor-grab active:cursor-grabbing"
+        onMouseDown={(e) => { drag.current = { x: e.clientX, y: e.clientY }; }}
+        onMouseMove={(e) => {
+          const c = cv.current; if (!c) return;
+          const r = c.getBoundingClientRect(); const mx = e.clientX - r.left, my = e.clientY - r.top;
+          if (drag.current) {
+            const dx = e.clientX - drag.current.x, dy = e.clientY - drag.current.y;
+            drag.current = { x: e.clientX, y: e.clientY };
+            yawRef.current += dx * 0.01;
+            setPitch((v) => Math.max(0.08, Math.min(1.35, v + dy * 0.01)));
+            setHover(null); draw();
+            return;
+          }
+          let best = null, bestDist = Infinity;
+          for (const p of hit.current) { const d = (p.sx - mx) ** 2 + (p.sy - my) ** 2; if (d < bestDist) { bestDist = d; best = p; } }
+          if (best && bestDist < 90) setHover({ x: mx, y: my, w: r.width, h: r.height, step: best.step, layer: best.layer, v: best.v }); else setHover(null);
+        }}
+        onMouseUp={() => { drag.current = null; }}
+        onMouseLeave={() => { drag.current = null; setHover(null); }}
+      />
+      {hover && (
+        <HoverBox x={hover.x} y={hover.y} w={hover.w} h={hover.h}>
+          <div><b>layer {hover.layer}</b> · step {hover.step}</div>
+          <div>‖g‖ = {hover.v}</div>
+        </HoverBox>
+      )}
     </div>
   );
 }

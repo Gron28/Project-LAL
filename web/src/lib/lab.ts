@@ -119,6 +119,8 @@ export function renameModel(oldName: string, newName: string): { ok: boolean; er
 }
 
 export type ModelInfo = { name: string; source: "local" | "ollama"; path: string; gb: number };
+export type ServingLora = { key: string; path: string };
+export type LoraRequest = { id: number; scale: number }[];
 export function allModels(): ModelInfo[] {
   const out: ModelInfo[] = [];
   try {
@@ -158,10 +160,12 @@ export function allModels(): ModelInfo[] {
 }
 
 // ---- llama-server singleton (persists across requests in one Node process) ----
-type Srv = { proc: ChildProcess | null; model: string | null; ollamaModel: string | null; lastUsedAt?: number };
+type Srv = { proc: ChildProcess | null; model: string | null; ollamaModel: string | null; lastUsedAt?: number; loras: ServingLora[]; ctx: number };
 const g = globalThis as unknown as { __lab_srv?: Srv; __lab_idle_reaper?: ReturnType<typeof setInterval> };
-if (!g.__lab_srv) g.__lab_srv = { proc: null, model: null, ollamaModel: null };
+if (!g.__lab_srv) g.__lab_srv = { proc: null, model: null, ollamaModel: null, loras: [], ctx: 0 };
 const srv = g.__lab_srv;
+if (!Array.isArray(srv.loras)) srv.loras = [];
+if (!Number.isFinite(srv.ctx)) srv.ctx = 0;
 
 async function health(): Promise<boolean> {
   try { return (await fetch(`http://127.0.0.1:${SERVE_PORT}/health`)).ok; } catch { return false; }
@@ -170,7 +174,16 @@ export function servingModel() { return srv.model; }
 export function stopServing() {
   try { srv.proc?.kill("SIGKILL"); } catch {}
   try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
-  srv.proc = null; srv.model = null;
+  srv.proc = null; srv.model = null; srv.loras = []; srv.ctx = 0;
+}
+
+// llama.cpp assigns adapter ids in command-line order. Supplying the complete
+// scale vector per request avoids global /lora-adapters state leaking between a
+// Hive specialist and an unrelated chat request using the same resident base.
+export function servingLoraRequest(activeKey?: string): LoraRequest | undefined {
+  if (!srv.loras.length) return undefined;
+  if (activeKey && !srv.loras.some((adapter) => adapter.key === activeKey)) throw new Error(`LoRA adapter is not loaded: ${activeKey}`);
+  return srv.loras.map((adapter, id) => ({ id, scale: activeKey === adapter.key ? 1 : 0 }));
 }
 
 // ---- GPU idle policy ----
@@ -187,12 +200,12 @@ export function setIdleHold(fn: () => boolean) { idleHold = fn; }
 // without importing runs.ts into a module lab.ts already imports.
 export function runsAreLive(): boolean { return idleHold?.() ?? false; }
 
-export function servingInfo(): { model: string | null; idleSec: number | null; idleLimitMin: number } {
+export function servingInfo(): { model: string | null; idleSec: number | null; idleLimitMin: number; loras: string[] } {
   const idleLimitMin = readSettings().serveIdleMinutes;
   return {
     model: srv.model,
     idleSec: srv.model && srv.lastUsedAt ? Math.round((Date.now() - srv.lastUsedAt) / 1000) : null,
-    idleLimitMin,
+    idleLimitMin, loras: srv.loras.map((adapter) => adapter.key),
   };
 }
 
@@ -223,6 +236,10 @@ async function stopOllama(model: string): Promise<void> {
     await fetch("http://127.0.0.1:11434/api/generate", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ model, keep_alive: 0 }),
+      // An active Ollama decode can otherwise hold a Hive stage forever before
+      // the local GGUF fallback is even attempted.  Unloading is best effort;
+      // bounded progress is more important than waiting for an idle backend.
+      signal: AbortSignal.timeout(5_000),
     });
   } catch {}
 }
@@ -232,15 +249,40 @@ async function stopOllama(model: string): Promise<void> {
 // while a 12B teacher still sits in memory. Training on top of that OOMs the box.
 async function unloadOllamaAll(): Promise<void> {
   try {
-    const r = await fetch("http://127.0.0.1:11434/api/ps");
+    const r = await fetch("http://127.0.0.1:11434/api/ps", { signal: AbortSignal.timeout(5_000) });
     const loaded: { models?: { name: string }[] } = await r.json();
     for (const m of loaded.models || []) await stopOllama(m.name);
   } catch {}
 }
 
-export async function ensureServing(model: string, minCtx = 0): Promise<void> {
+// Emergency-stop companion to stopServing().  A local agent may be decoding via
+// either backend: llama-server for GGUFs or Ollama for Gemma/vision.  Releasing
+// only llama-server made the old "stop all" look successful while an Ollama job
+// could remain resident (and occasionally keep the GPU busy).  This intentionally
+// affects only model processes owned by the Lab, never arbitrary GPU processes.
+export async function stopAllServing(): Promise<void> {
+  stopServing();
+  await unloadOllamaAll();
+}
+
+export async function ensureServing(model: string, minCtx = 0, loras: ServingLora[] = []): Promise<void> {
   touchServing();
-  if (srv.model === model && srv.proc && srv.proc.exitCode === null && (await health())) return;
+  const normalizedLoras = [...loras]
+    .map((adapter) => ({ key: adapter.key, path: path.resolve(adapter.path) }))
+    .filter((adapter, index, all) => adapter.key && all.findIndex((item) => item.key === adapter.key) === index)
+    .sort((a, b) => a.key.localeCompare(b.key));
+  for (const adapter of normalizedLoras) {
+    if (!fs.existsSync(adapter.path) || !fs.statSync(adapter.path).isFile()) throw new Error(`LoRA adapter file not found: ${adapter.path}`);
+  }
+  const requestedLoras = JSON.stringify(normalizedLoras);
+  const loadedLoras = JSON.stringify(srv.loras);
+  const o = readSettings().options;
+  const ctx = Math.max(o.num_ctx || 8192, minCtx);
+  // Enforce one-GPU ownership even on the healthy-local-server fast path below.
+  // Ollama has no relationship to our singleton state, so it may still hold a
+  // previous Gemma after a cancelled Hive run.
+  await unloadOllamaAll();
+  if (srv.model === model && requestedLoras === loadedLoras && srv.ctx >= ctx && srv.proc && srv.proc.exitCode === null && (await health())) return;
   // The lens tool needs the whole card to itself, same as training (see runLensScript).
   if (lensState.running) throw new Error("GPU is busy: a lens run is in progress. Try again after it finishes.");
   // A trainer may be running OUTSIDE this app (CLI runs write the same out/ logs but
@@ -252,22 +294,45 @@ export async function ensureServing(model: string, minCtx = 0): Promise<void> {
   }
   const mi = allModels().find((m) => m.name === model);
   if (!mi) throw new Error("model not found: " + model);
-  const o = readSettings().options;
+  // The local server and Ollama share this machine's single GPU.  A stopped
+  // Gemma request can leave Ollama's weights resident; without this handoff a
+  // subsequent local-model Hive node may hang or OOM while both backends hold
+  // VRAM.  The early return above preserves a healthy already-loaded local model.
   // a long-generation bench (webgen: think + a whole HTML file) may need more context
   // than the chat settings default — grow, never shrink.
-  const ctx = String(Math.max(o.num_ctx || 8192, minCtx));
+  const ctxArg = String(ctx);
 
   const tryServe = async (ngl: number, waitMs: number): Promise<boolean> => {
     try { srv.proc?.kill("SIGKILL"); } catch {}
     try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
-    srv.proc = null; srv.model = null;
+    srv.proc = null; srv.model = null; srv.loras = []; srv.ctx = 0;
     await new Promise((r) => setTimeout(r, 400));
     const env: NodeJS.ProcessEnv = { ...process.env, LD_LIBRARY_PATH: LLAMA_DIR };
     if (ngl === 0) env.HIP_VISIBLE_DEVICES = ""; // pure CPU — don't even touch the GPU
+    // Log to a file, never "ignore": when llama-server died in a GPU wedge
+    // (amdgpu ring reset, 2026-07-11) there was NO record anywhere of why —
+    // the only witness was the kernel log. Append with a launch separator so
+    // back-to-back crash-and-respawn cycles keep every attempt's evidence
+    // (truncate-per-launch erased the first wedge's trace within minutes).
+    let logFd: number | undefined;
+    try {
+      logFd = fs.openSync(path.join(ROOT, "out", "llama-server.log"), "a");
+      fs.writeSync(logFd, `\n===== launch ${new Date().toISOString()} model=${model} ngl=${ngl} =====\n`);
+    } catch {}
+    // -b/-ub 512: this Vulkan build dies with vk::ErrorDeviceLost when a cold
+    // multi-thousand-token prompt is crunched in default 2048-token batches —
+    // one batch at the observed ~276 tok/s runs ~7.5s, brushing amdgpu's 10s
+    // ring watchdog; a slow batch trips it and the kernel resets the GPU
+    // (three identical wedges on 2026-07-11, all during large-prompt stages).
+    // 512-token submissions stay ~2s each, far under the watchdog.
+    const loraArgs = normalizedLoras.length
+      ? [...normalizedLoras.flatMap((adapter) => ["--lora", adapter.path]), "--lora-init-without-apply"]
+      : [];
     const proc = spawn(LLAMA_SERVER,
-      ["-m", mi.path, "-ngl", String(ngl), "--host", "127.0.0.1", "--port", String(SERVE_PORT), "-c", ctx, "--jinja"],
-      { env, stdio: "ignore" });
-    srv.proc = proc; srv.model = model;
+      ["-m", mi.path, "-ngl", String(ngl), "--host", "127.0.0.1", "--port", String(SERVE_PORT), "-c", ctxArg, "--jinja", "-b", "512", "-ub", "512", ...loraArgs],
+      { env, stdio: logFd === undefined ? "ignore" : ["ignore", logFd, logFd] });
+    if (logFd !== undefined) try { fs.closeSync(logFd); } catch {}
+    srv.proc = proc; srv.model = model; srv.loras = normalizedLoras; srv.ctx = ctx;
     const deadline = Date.now() + waitMs;
     while (Date.now() < deadline) {
       if (proc.exitCode !== null) return false;            // exited (OOM/error) → caller falls back
@@ -286,7 +351,7 @@ export async function ensureServing(model: string, minCtx = 0): Promise<void> {
   for (const ngl of ladder) {
     if (await tryServe(ngl, ngl === 0 ? 300000 : 60000)) return;
   }
-  srv.model = null;
+  srv.model = null; srv.loras = []; srv.ctx = 0;
   throw new Error("could not start the model (GPU busy, and CPU load failed/timed out)");
 }
 
@@ -610,7 +675,7 @@ export function pinBench(suite: string, model: string, pinned: boolean): { ok: b
   } catch { return { ok: false, error: "bench result not found" }; }
 }
 
-export type BenchOpts = { maxTokens?: number; grade?: "substring" | "numeric" | "exec" | "checks" | "tools" | "webgen" | "orchestrator-guard"; think?: boolean; temperature?: number };
+export type BenchOpts = { maxTokens?: number; grade?: "substring" | "numeric" | "exec" | "checks" | "tools" | "webgen" | "orchestrator-guard"; think?: boolean; temperature?: number; lora?: ServingLora };
 export async function runBench(model: string, items: BenchItem[] = BENCH_SUITE, opts: BenchOpts = {}) {
   const maxTokens = opts.maxTokens ?? 128;
   const suiteGrade = opts.grade ?? "substring";
@@ -628,9 +693,10 @@ export async function runBench(model: string, items: BenchItem[] = BENCH_SUITE, 
     srv.ollamaModel = model;
   } else {
     if (srv.ollamaModel) { await stopOllama(srv.ollamaModel); srv.ollamaModel = null; }
-    await ensureServing(model, maxTokens > 4096 ? maxTokens + 1024 : 0);
+    await ensureServing(model, maxTokens > 4096 ? maxTokens + 1024 : 0, opts.lora ? [opts.lora] : []);
     baseUrl = `http://127.0.0.1:${SERVE_PORT}`;
   }
+  const loraRequest = opts.lora ? servingLoraRequest(opts.lora.key) : undefined;
   const results: { cat: string; q: string; ok: boolean; got: string; detail?: string; shot?: string }[] = [];
   let totalTokSec = 0, n = 0, totalMs = 0, ttftMs = 0, ttftN = 0;
   for (const it of items) {
@@ -657,6 +723,7 @@ export async function runBench(model: string, items: BenchItem[] = BENCH_SUITE, 
       } else {
         const body: Record<string, unknown> = { model, messages: [{ role: "user", content: it.q }], temperature: opts.temperature ?? 0, max_tokens: maxTokens };
         if (!think) body.chat_template_kwargs = { enable_thinking: false };
+        if (loraRequest) body.lora = loraRequest;
         const r = await fetch(`${baseUrl}/v1/chat/completions`, {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
@@ -675,7 +742,7 @@ export async function runBench(model: string, items: BenchItem[] = BENCH_SUITE, 
     // pass the SUITE's maxTokens (possibly undefined), not the 128 single-shot default:
     // gradeTools needs its own roomier fallback — 128/round starved reasoning models
     // into 0/8 agentic scores (finish_reason "length" before the first tool call).
-    const g = await gradeItem(stripped, it, suiteGrade, { baseUrl, model, think, maxTokens: opts.maxTokens });
+    const g = await gradeItem(stripped, it, suiteGrade, { baseUrl, model, think, maxTokens: opts.maxTokens, lora: loraRequest });
     results.push({ cat: it.cat, q: it.q, ok: g.ok, got: stripped.slice(0, 120), detail: g.detail, shot: g.shot });
   }
   const cats: Record<string, { ok: number; total: number }> = {};
@@ -803,6 +870,7 @@ const FINETUNE = path.join(ROOT, "scripts", "finetune.py");           // raw nex
 const FINETUNE_SFT = path.join(ROOT, "scripts", "finetune_sft.py");   // instruction SFT (loss-masked)
 const FINETUNE_HQQ = path.join(ROOT, "scripts", "finetune_hqq.py");   // 4-bit HQQ SFT (4-8B on 8GB)
 const CONVERT = path.join(ROOT, "llama", "src", "convert_hf_to_gguf.py");
+const CONVERT_LORA = path.join(ROOT, "llama", "src", "convert_lora_to_gguf.py");
 const QUANTIZE = path.join(LLAMA_DIR, "llama-quantize");
 const DATA_DIR = path.join(ROOT, "data");
 const OUT_DIR = path.join(ROOT, "out");
@@ -815,6 +883,9 @@ export const TRAIN_BASES = [
   "Qwen/Qwen3-1.7B",
   "Qwen/Qwen3-4B",
   "Qwen/Qwen3-8B",
+  // Qwen3.5-9B is the largest plausible HQQ training target on the 8GB card;
+  // require a smoke run before committing to a full fine-tune.
+  "Qwen/Qwen3.5-9B",
   // Qwen2.5
   "Qwen/Qwen2.5-0.5B-Instruct",
   "Qwen/Qwen2.5-1.5B-Instruct",
@@ -1125,9 +1196,11 @@ export type ExperimentRecord = {
   patience?: number;
   valFrac?: number;
   block?: number;
+  recipe?: { gradAccum?: number; warmup?: number; cosine?: boolean; balanceSources?: boolean; stageWeightsCpu?: boolean; quantizeCpu?: boolean; lastFullBlockOnly?: boolean; adapterOnly?: boolean; noProbeEmbed?: boolean; valEvery?: number };
   autoBench?: string[];
   dataset: { name: string; sha256: string; bytes: number; rows: number | null } | null;
   model?: string | null;
+  specialist?: { role: "coordinator_planner" | "coder_repairer" | "verifier"; runtimeBaseModel: string; datasetManifestHash: string; adapterId?: string; adapterPath?: string };
   error?: string;
 };
 
@@ -1174,14 +1247,72 @@ export function listExperiments(): ExperimentRecord[] {
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export async function startTrain(o: { name: string; base: string; steps: number; lr: number; text?: string; targetLoss?: number; patience?: number; mode?: "raw" | "sft" | "hqq"; dataFile?: string; valFrac?: number; block?: number; autoBench?: string[]; snapshotEvery?: number; noProbeEmbed?: boolean }) {
+type SpecialistTrainingRole = "coordinator_planner" | "coder_repairer" | "verifier";
+const SPECIALIST_ROLES = new Set<SpecialistTrainingRole>(["coordinator_planner", "coder_repairer", "verifier"]);
+// The shared-base hot-swap design (docs/hive-specialist-training.md) assumes every role's
+// adapter sits on ONE loaded base for cheap per-request switching — that only holds within
+// a base. Training a role on a different base (e.g. mistralai/Ministral-3-8B-Instruct-2512,
+// verified compatible 2026-07-12 after stream_quantize_load gained multimodal-wrapper
+// unwrapping) means that role can no longer hot-swap with roles still on Qwen3-4B; serving
+// it needs a full model swap until the other roles are retrained on the same base too.
+const SPECIALIST_BASES: Record<string, string> = {
+  "Qwen/Qwen3-4B": "qwen3-4b-stock",
+  // NOT "mistralai/Ministral-3-8B-Instruct-2512" — that repo ships natively FP8-quantized
+  // (quant_method: fp8, per-layer weight_scale/activation_scale tensors); HQQ training needs
+  // real float weights to quantize from. This -BF16 repo is the same architecture, unquantized.
+  "mistralai/Ministral-3-8B-Instruct-2512-BF16": "ministral-3-8b-instruct",
+};
+export const HIVE_ADAPTER_DIR = path.join(MODELS_DIR, "hive-adapters");
+
+function runtimeVersionHash(modelName: string): string | null {
+  const info = allModels().find((model) => model.source === "local" && model.name === modelName);
+  if (!info) return null;
+  try {
+    const stat = fs.statSync(info.path);
+    return crypto.createHash("sha256").update(`${info.path}:${stat.size}:${stat.mtimeMs}`).digest("hex");
+  } catch { return null; }
+}
+
+function defaultRuntimeBase(base: string): string | undefined {
+  if (base in SPECIALIST_BASES) return SPECIALIST_BASES[base];
+  return allModels().find((model) => model.source === "local" && model.name === base)?.name;
+}
+
+function fileSha256(file: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(file);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+export async function startTrain(o: { name: string; base: string; steps: number; lr: number; text?: string; targetLoss?: number; patience?: number; mode?: "raw" | "sft" | "hqq"; dataFile?: string; valFrac?: number; block?: number; autoBench?: string[]; snapshotEvery?: number; noProbeEmbed?: boolean; noProbe?: boolean; noEmbed?: boolean; gradAccum?: number; warmup?: number; cosine?: boolean; balanceSources?: boolean; resume?: boolean; stageWeightsCpu?: boolean; quantizeCpu?: boolean; lastFullBlockOnly?: boolean; adapterOnly?: boolean; valEvery?: number; specialistRole?: SpecialistTrainingRole; datasetManifest?: string; runtimeBaseModel?: string }) {
   if (train.running) return { error: "already training: " + train.running };
+  if (o.resume && !fs.existsSync(path.join(OUT_DIR, (o.name || "").replace(/[^a-zA-Z0-9_-]/g, "") + "_ckpt", "last"))) {
+    return { error: "no checkpoint to resume: " + o.name };
+  }
   if (lensState.running) return { error: "GPU is busy: a lens run is in progress. Try again after it finishes." };
   const name = (o.name || "model").replace(/[^a-zA-Z0-9_-]/g, "") || "model";
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
   const mode = o.mode === "sft" ? "sft" : o.mode === "hqq" ? "hqq" : "raw";
+  const specialistRole = o.specialistRole && SPECIALIST_ROLES.has(o.specialistRole) ? o.specialistRole : undefined;
+  let specialistManifest: { manifest_hash: string; role: string; dataset_hash: string } | undefined;
+  const runtimeBaseModel = o.runtimeBaseModel || defaultRuntimeBase(o.base);
+  if (specialistRole) {
+    if (mode !== "hqq" || !(o.base in SPECIALIST_BASES)) return { error: "HIVE specialists currently require HQQ training from one of: " + Object.keys(SPECIALIST_BASES).join(", ") };
+    if (!runtimeBaseModel || !runtimeVersionHash(runtimeBaseModel)) return { error: "the specialist runtime base GGUF is not installed" };
+    const manifestName = path.basename(o.datasetManifest || "").replace(/[^a-zA-Z0-9_.-]/g, "");
+    const manifestPath = path.join(DATA_DIR, manifestName);
+    try { specialistManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")); } catch { return { error: "specialist training requires a valid dataset manifest in data/" }; }
+    if (specialistManifest?.role !== specialistRole || !specialistManifest.manifest_hash || !specialistManifest.dataset_hash) return { error: "dataset manifest role/hash does not match the requested specialist" };
+    if (fs.existsSync(path.join(MODELS_DIR, `${name}.hive-adapter.json`)) || fs.existsSync(path.join(HIVE_ADAPTER_DIR, `${name}.gguf`))) return { error: "specialist run name already has an immutable adapter artifact" };
+    o.valFrac = o.valFrac && o.valFrac > 0 ? o.valFrac : 0.1;
+    o.block = o.block || 1024;
+  }
   let dataPath: string;
   if (mode === "sft" || mode === "hqq") {
     // SFT / HQQ train on an EXISTING .jsonl (instruction/thought_process/output)
@@ -1193,6 +1324,7 @@ export async function startTrain(o: { name: string; base: string; steps: number;
     fs.writeFileSync(dataPath, o.text || "");
   }
   const data = datasetInfo(path.basename(dataPath));
+  if (specialistManifest && data?.sha256 !== specialistManifest.dataset_hash) return { error: "dataset bytes do not match the immutable specialist manifest" };
   saveExperiment({
     name,
     status: "running",
@@ -1206,26 +1338,49 @@ export async function startTrain(o: { name: string; base: string; steps: number;
     ...(o.patience != null ? { patience: o.patience } : {}),
     ...(o.valFrac != null ? { valFrac: o.valFrac } : {}),
     ...(o.block != null ? { block: o.block } : {}),
+    ...(mode === "hqq" ? { recipe: {
+      gradAccum: o.gradAccum, warmup: o.warmup, cosine: !!o.cosine,
+      balanceSources: !!o.balanceSources, stageWeightsCpu: !!o.stageWeightsCpu,
+      quantizeCpu: !!o.quantizeCpu, lastFullBlockOnly: !!o.lastFullBlockOnly,
+      adapterOnly: !!o.adapterOnly, noProbeEmbed: !!o.noProbeEmbed,
+      valEvery: o.valEvery,
+    } } : {}),
     ...(o.autoBench?.length ? { autoBench: o.autoBench } : {}),
     dataset: data ? { name: data.name, sha256: data.sha256, bytes: data.bytes, rows: data.rows } : null,
+    ...(specialistRole && runtimeBaseModel && specialistManifest ? { specialist: { role: specialistRole, runtimeBaseModel, datasetManifestHash: specialistManifest.manifest_hash } } : {}),
   });
   try { srv.proc?.kill("SIGKILL"); } catch {}            // free the GPU (single-tenant)
   try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
-  srv.proc = null; srv.model = null;
+  srv.proc = null; srv.model = null; srv.loras = []; srv.ctx = 0;
   await unloadOllamaAll(); srv.ollamaModel = null;       // 12B teacher resident -> trainer load = OOM
 
-  const ws = fs.createWriteStream(path.join(OUT_DIR, name + ".train.log"));
+  // --resume continues an existing run's log, not a fresh one — truncating here
+  // would erase the pre-crash step/val history the UI already rendered.
+  const ws = fs.createWriteStream(path.join(OUT_DIR, name + ".train.log"), o.resume ? { flags: "a" } : undefined);
   train.running = name; train.ws = ws; train.stopping = false; train.proc = null;
 
   const script = mode === "hqq" ? FINETUNE_HQQ : mode === "sft" ? FINETUNE_SFT : FINETUNE;
   const args = [script, "--base", o.base, "--data", dataPath,
     "--out", path.join(OUT_DIR, name), "--steps", String(o.steps), "--lr", String(o.lr),
-    "--target_loss", String(o.targetLoss ?? 0.1), "--merge"];
+    "--target_loss", String(o.targetLoss ?? 0.1), ...(specialistRole || o.adapterOnly ? [] : ["--merge"])];
   if (o.patience != null) args.push("--patience", String(o.patience));
   if ((mode === "sft" || mode === "hqq") && o.valFrac) args.push("--val_frac", String(o.valFrac));
+  if (mode === "hqq" && o.valEvery && o.valEvery > 0) args.push("--val_every", String(o.valEvery));
   if ((mode === "sft" || mode === "hqq") && o.block) args.push("--block", String(o.block));
   if (mode === "hqq" && o.snapshotEvery) args.push("--snapshot_every", String(o.snapshotEvery));
   if (mode === "hqq" && o.noProbeEmbed) args.push("--no_probe_embed");
+  if (mode === "hqq" && !o.noProbeEmbed && o.noProbe) args.push("--no_probe");
+  if (mode === "hqq" && !o.noProbeEmbed && o.noEmbed) args.push("--no_embed");
+  if (mode === "hqq" && o.gradAccum && o.gradAccum > 1) args.push("--grad_accum", String(o.gradAccum));
+  if (mode === "hqq" && o.warmup) args.push("--warmup", String(o.warmup));
+  if (mode === "hqq" && o.resume) args.push("--resume");
+  if (mode === "hqq" && o.cosine) args.push("--cosine");
+  if (mode === "hqq" && o.balanceSources) args.push("--balance_sources");
+  // Near-ceiling models can keep their frozen embedding / vocabulary projection
+  // on CPU. This trades speed for enough VRAM to make a real LoRA smoke test.
+  if (mode === "hqq" && o.stageWeightsCpu) args.push("--stage_weights_cpu");
+  if (mode === "hqq" && o.quantizeCpu) args.push("--quantize_cpu");
+  if (mode === "hqq" && o.lastFullBlockOnly) args.push("--last_full_block_only");
 
   const runFinetune = (cpu: boolean, done: (code: number | null, errTail: string) => void) => {
     ws.write(JSON.stringify({ event: "phase", phase: cpu ? "fine-tuning (CPU)" : "fine-tuning (GPU)" }) + "\n");
@@ -1240,11 +1395,19 @@ export async function startTrain(o: { name: string; base: string; steps: number;
     const env: NodeJS.ProcessEnv = gpuTrainEnv();
     if (cpu) { env.HIP_VISIBLE_DEVICES = ""; env.CUDA_VISIBLE_DEVICES = ""; }
     let errTail = "";
+    let stdoutTail = "";
     const ft = spawn(VENV_PY, args, { cwd: ROOT, env });
     train.proc = ft;
-    ft.stdout.on("data", (d: Buffer) => { for (const l of d.toString().split("\n")) if (l.trim().startsWith("{")) ws.write(l + "\n"); });
+    ft.stdout.on("data", (d: Buffer) => {
+      const lines = (stdoutTail + d.toString()).split("\n");
+      stdoutTail = lines.pop() || "";
+      for (const line of lines) if (line.trim().startsWith("{")) ws.write(line + "\n");
+    });
     ft.stderr.on("data", (d: Buffer) => { errTail = (errTail + d.toString()).slice(-2000); });
-    ft.on("close", (code) => { if (!train.stopping) done(code, errTail); });
+    ft.on("close", (code) => {
+      if (stdoutTail.trim().startsWith("{")) ws.write(stdoutTail + "\n");
+      if (!train.stopping) done(code, errTail);
+    });
   };
 
   // After conversion the training python has exited (GPU free), so benching can
@@ -1308,8 +1471,54 @@ export async function startTrain(o: { name: string; base: string; steps: number;
     updateExperiment(name, { status: "failed", error: last.slice(0, 300) });
   };
 
+  const convertSpecialist = () => {
+    if (!specialistRole || !runtimeBaseModel || !specialistManifest) { fail("specialist registration metadata disappeared"); return; }
+    const adapterSource = path.join(OUT_DIR, name + "_ckpt", "best");
+    if (!fs.existsSync(path.join(adapterSource, "adapter_model.safetensors"))) { fail("best validation adapter was not produced"); return; }
+    fs.mkdirSync(HIVE_ADAPTER_DIR, { recursive: true });
+    const adapterPath = path.join(HIVE_ADAPTER_DIR, `${name}.gguf`);
+    ws.write(JSON.stringify({ event: "phase", phase: `converting ${specialistRole} LoRA to GGUF` }) + "\n");
+    const cv = spawn(VENV_PY, [CONVERT_LORA, adapterSource, "--outfile", adapterPath, "--outtype", "f16", "--base-model-id", o.base], { cwd: ROOT });
+    train.proc = cv;
+    let stderr = "";
+    cv.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-2_000); });
+    cv.on("close", async (code) => {
+      if (train.stopping) return;
+      if (code !== 0 || !fs.existsSync(adapterPath)) { try { fs.unlinkSync(adapterPath); } catch {} fail(stderr || "LoRA GGUF conversion failed"); return; }
+      try {
+        const adapterHash = await fileSha256(adapterPath);
+        const adapterStat = fs.statSync(adapterPath);
+        const baseVersionHash = runtimeVersionHash(runtimeBaseModel);
+        if (!baseVersionHash) throw new Error("runtime base changed or disappeared during conversion");
+        const adapterId = `${specialistRole}:${name}`;
+        const manifest = {
+          id: adapterId, role: specialistRole, baseModel: runtimeBaseModel, baseVersionHash, adapterHash, adapterPath, adapterSize: adapterStat.size, adapterMtimeMs: adapterStat.mtimeMs,
+          trainingRunId: name, datasetManifestHash: specialistManifest.manifest_hash, promotionStatus: "candidate",
+          evaluation: { heldOutRoleImprovementPoints: 0, coreRegressionPoints: 0, schemaTestsPassed: false, toolTestsPassed: false, heldOutTasks: 0, seeds: 0, unauthorizedActions: 0, falseCompletionRate: 1, adapterCompatible: false },
+        };
+        const manifestPath = path.join(MODELS_DIR, `${name}.hive-adapter.json`);
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", { flag: "wx" });
+        ws.write(JSON.stringify({ event: "specialist", role: specialistRole, adapterId, adapterPath, manifestPath, promotionStatus: "candidate" }) + "\n");
+        ws.write(JSON.stringify({ event: "done", ok: true, model: runtimeBaseModel, specialist: adapterId }) + "\n");
+        ws.end(); train.running = null; train.proc = null; train.ws = null;
+        updateExperiment(name, { status: "done", model: runtimeBaseModel, specialist: { role: specialistRole, runtimeBaseModel, datasetManifestHash: specialistManifest.manifest_hash, adapterId, adapterPath } });
+      } catch (error) { fail((error as Error).message); }
+    });
+  };
+
   runFinetune(false, (code, err) => {
-    if (code === 0) { convert(); return; }
+    if (code === 0) {
+      if (specialistRole) { convertSpecialist(); return; }
+      if (o.adapterOnly) {
+        const adapter = path.join(OUT_DIR, name + "_adapter");
+        const ok = fs.existsSync(path.join(adapter, "adapter_model.safetensors"));
+        ws.write(JSON.stringify({ event: "done", ok, model: null, adapter: ok ? adapter : null }) + "\n");
+        ws.end(); train.running = null; train.proc = null; train.ws = null;
+        updateExperiment(name, { status: ok ? "done" : "failed", model: null, ...(ok ? {} : { error: "adapter output missing" }) });
+        return;
+      }
+      convert(); return;
+    }
     fail(err || "GPU training failed — check VRAM (training never falls back to CPU)");
   });
   return { started: true, name };

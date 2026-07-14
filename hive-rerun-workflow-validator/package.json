@@ -1,0 +1,9 @@
+{
+  "name": "hive-rerun-workflow-validator",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "node index.js"
+  }
+}

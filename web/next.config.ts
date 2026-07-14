@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Permit an isolated recovery/dev instance to use the same source tree
+  // without contending for the primary .next lock. Both instances still share
+  // the durable .data directory, so workflow state survives a broken hot reload.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   // Local tool: don't let strict types block running the copied assistant UI.
   typescript: { ignoreBuildErrors: true },
   // ast-cache.ts loads a wasm grammar via a computed require.resolve() path — webpack's

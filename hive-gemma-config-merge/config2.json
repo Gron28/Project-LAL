@@ -1,0 +1,12 @@
+{
+  "api": {
+    "timeout": 60,
+    "host": "production-server"
+  },
+  "database": {
+    "pass": "new-secret"
+  },
+  "features": {
+    "caching": true
+  }
+}

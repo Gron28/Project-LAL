@@ -1,7 +1,21 @@
 export const HIVE_CONTRACT_VERSION = 1 as const;
 
 export type HiveWorkflowKind = "research" | "coding";
-export type BudgetName = "quick" | "standard" | "deep";
+export type BudgetName = "normal" | "thorough" | "extra";
+export type HiveSpecialistRole = "coordinator_planner" | "coder_repairer" | "verifier";
+export type SpecialistPromotionStatus = "candidate" | "promoted" | "rejected";
+export type HiveFailureCode =
+  | "failed_decomposition"
+  | "context_loss"
+  | "missing_mutation"
+  | "malformed_tool_call"
+  | "premature_completion"
+  | "incorrect_repair"
+  | "incomplete_requirement_coverage"
+  | "verification_failure"
+  | "schema_failure"
+  | "infrastructure_failure"
+  | "budget_exhaustion";
 export type NodeStatus = "pending" | "ready" | "running" | "awaiting_approval" | "paused" | "succeeded" | "failed" | "skipped" | "cancelled";
 export type WorkflowStatus = "queued" | "running" | "paused" | "awaiting_approval" | "succeeded" | "failed" | "cancelled";
 export type StageStatus = "succeeded" | "failed" | "needs_followup" | "blocked";
@@ -42,17 +56,47 @@ export type StageResult = {
   uncertainties: string[];
   errors: string[];
   verification?: VerificationResult;
+  failureCodes?: HiveFailureCode[];
+};
+
+export type SpecialistAdapter = {
+  id: string;
+  role: HiveSpecialistRole;
+  baseModel: string;
+  baseVersionHash: string;
+  adapterHash: string;
+  adapterPath: string;
+  adapterSize: number;
+  adapterMtimeMs: number;
+  trainingRunId: string;
+  datasetManifestHash: string;
+  promotionStatus: SpecialistPromotionStatus;
+  evaluation: {
+    heldOutRoleImprovementPoints: number;
+    coreRegressionPoints: number;
+    schemaTestsPassed: boolean;
+    toolTestsPassed: boolean;
+    heldOutTasks: number;
+    seeds: number;
+    unauthorizedActions: number;
+    falseCompletionRate: number;
+    adapterCompatible: boolean;
+    evaluatedAt?: number;
+  };
 };
 
 export type ResourceBudget = {
   name: BudgetName;
-  wallTimeMs: number;
+  // Effort is bounded by refinement work, not wall-clock: a local rig is slow by
+  // design and a mission must never die because minutes passed. cycles = how many
+  // verify→repair passes the workflow may spend polishing before it reports
+  // failure honestly. Hang protection is per-node, not per-run.
+  cycles: number;
   inferenceTokens: number;
   contextTokens: number;
   modelSwaps: number;
   retries: number;
   researchCalls: number;
-  shallowVerification: boolean;
 };
 
 export type ModelCapability = "chat" | "structured_output" | "tools" | "coding" | "research" | "planning" | "verification" | "vision";
@@ -74,6 +118,11 @@ export type ModelProfile = {
   probeStatus: "discovered" | "probing" | "verified" | "failed";
   probedAt?: number;
   probeError?: string;
+  // Optional, durable outcomes from role-specific evaluation suites.  Values are
+  // normalized to [0, 1] and deliberately live on the profile so replacing a
+  // checkpoint (versionHash changes) discards stale fine-tune assumptions.
+  roleScores?: Partial<Record<string, { score: number; samples: number; updatedAt: number }>>;
+  specialist?: SpecialistAdapter;
 };
 
 export type ContextPolicy = {
@@ -131,6 +180,32 @@ export type TaskEnvelope = {
   requiredOutput: string;
   definitionOfDone: string[];
   workspace?: string;
+};
+
+// The exact bounded payload crossing a specialist boundary. Full outputs remain
+// in SQLite/artifacts; workers receive this small, inspectable contract instead
+// of a lossy prose summary or the complete prior transcript.
+export type SpecialistHandoff = {
+  version: typeof HIVE_CONTRACT_VERSION;
+  target: { nodeId: string; role: string; label: string };
+  task: Pick<TaskEnvelope, "objective" | "constraints" | "requiredOutput" | "definitionOfDone" | "workspace">;
+  ownedPackage: string;
+  dependencies: {
+    nodeId: string;
+    role: string;
+    status: StageStatus;
+    summary: string;
+    findings: { id: string; text: string; evidenceIds?: string[]; confidence?: number }[];
+    artifacts: ArtifactRef[];
+    uncertainties: string[];
+    verification?: VerificationResult;
+    failureCodes: HiveFailureCode[];
+  }[];
+  evidence: Pick<EvidenceRecord, "id" | "url" | "title" | "claim" | "stance">[];
+  exactFailures: { code: string; detail: string }[];
+  operatorGuidance: unknown[];
+  conversation: { role: string; text: string }[];
+  priorMission: unknown;
 };
 
 export type RoutingDecision = {

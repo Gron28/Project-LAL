@@ -1,0 +1,10 @@
+{
+  "name": "reverse-words",
+  "version": "1.0.0",
+  "description": "A simple project to reverse word order in a sentence.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "node test.js"
+  }
+}

@@ -94,6 +94,10 @@ hiveDb.exec(`
   CREATE INDEX IF NOT EXISTS idx_hive_events_workflow ON hive_events(workflow_id, seq);
   CREATE INDEX IF NOT EXISTS idx_evidence_workflow ON evidence(workflow_id, node_id);
 `);
+// Additive migration for databases created before specialist adapters existed.
+if (!hiveDb.prepare("PRAGMA table_info(workflow_nodes)").all().some((column) => column.name === "adapter_ms")) {
+  hiveDb.exec("ALTER TABLE workflow_nodes ADD COLUMN adapter_ms INTEGER NOT NULL DEFAULT 0");
+}
 
 const json = (v: unknown) => JSON.stringify(v);
 const parse = <T>(v: unknown, fallback: T): T => { try { return JSON.parse(String(v)) as T; } catch { return fallback; } };
@@ -102,7 +106,7 @@ const now = () => Date.now();
 export type WorkflowNodeRecord = {
   nodeId: string; label: string; role: string; action: string; status: NodeStatus; attempt: number;
   modelProfileId?: string; modelVersion?: string; startedAt?: number; finishedAt?: number; durationMs?: number;
-  promptTokens: number; completionTokens: number; contextTokens: number; swapMs: number; toolCalls: number;
+  promptTokens: number; completionTokens: number; contextTokens: number; swapMs: number; adapterMs: number; toolCalls: number;
   result?: StageResult; error?: string; idempotencyKey: string;
 };
 
@@ -130,7 +134,7 @@ function nodeFromRow(row: Record<string, unknown>): WorkflowNodeRecord {
     modelVersion: row.model_version ? String(row.model_version) : undefined, startedAt: row.started_at ? Number(row.started_at) : undefined,
     finishedAt: row.finished_at ? Number(row.finished_at) : undefined, durationMs: row.duration_ms ? Number(row.duration_ms) : undefined,
     promptTokens: Number(row.prompt_tokens), completionTokens: Number(row.completion_tokens), contextTokens: Number(row.context_tokens),
-    swapMs: Number(row.swap_ms), toolCalls: Number(row.tool_calls), result: row.result_json ? parse(row.result_json, undefined) : undefined,
+    swapMs: Number(row.swap_ms), adapterMs: Number(row.adapter_ms || 0), toolCalls: Number(row.tool_calls), result: row.result_json ? parse(row.result_json, undefined) : undefined,
     error: row.error ? String(row.error) : undefined, idempotencyKey: String(row.idempotency_key),
   };
 }
@@ -173,11 +177,11 @@ export function updateNode(workflowId: string, nodeId: string, patch: Partial<Wo
   const row = hiveDb.prepare("SELECT * FROM workflow_nodes WHERE workflow_id=? AND node_id=?").get(workflowId, nodeId);
   if (!row) return;
   const n = nodeFromRow(row);
-  hiveDb.prepare(`UPDATE workflow_nodes SET status=?,attempt=?,model_profile_id=?,model_version=?,started_at=?,finished_at=?,duration_ms=?,prompt_tokens=?,completion_tokens=?,context_tokens=?,swap_ms=?,tool_calls=?,result_json=?,error=? WHERE workflow_id=? AND node_id=?`).run(
+  hiveDb.prepare(`UPDATE workflow_nodes SET status=?,attempt=?,model_profile_id=?,model_version=?,started_at=?,finished_at=?,duration_ms=?,prompt_tokens=?,completion_tokens=?,context_tokens=?,swap_ms=?,adapter_ms=?,tool_calls=?,result_json=?,error=? WHERE workflow_id=? AND node_id=?`).run(
     patch.status ?? n.status, patch.attempt ?? n.attempt, patch.modelProfileId ?? n.modelProfileId ?? null, patch.modelVersion ?? n.modelVersion ?? null,
     patch.startedAt ?? n.startedAt ?? null, patch.finishedAt ?? n.finishedAt ?? null, patch.durationMs ?? n.durationMs ?? null,
     patch.promptTokens ?? n.promptTokens, patch.completionTokens ?? n.completionTokens, patch.contextTokens ?? n.contextTokens,
-    patch.swapMs ?? n.swapMs, patch.toolCalls ?? n.toolCalls, patch.result !== undefined ? json(patch.result) : n.result ? json(n.result) : null,
+    patch.swapMs ?? n.swapMs, patch.adapterMs ?? n.adapterMs, patch.toolCalls ?? n.toolCalls, patch.result !== undefined ? json(patch.result) : n.result ? json(n.result) : null,
     patch.error ?? n.error ?? null, workflowId, nodeId,
   );
   hiveDb.prepare("UPDATE workflow_runs SET updated_at=? WHERE id=?").run(now(), workflowId);
@@ -200,6 +204,29 @@ export function getHiveEvents(workflowId: string, after = 0, limit = 500): HiveE
   return hiveDb.prepare("SELECT * FROM hive_events WHERE workflow_id=? AND seq>? ORDER BY seq LIMIT ?").all(workflowId, after, Math.min(limit, 2_000)).map((r) => ({
     seq: Number(r.seq), ts: Number(r.ts), kind: String(r.kind), nodeId: r.node_id ? String(r.node_id) : undefined,
     role: r.role ? String(r.role) : undefined, modelVersion: r.model_version ? String(r.model_version) : undefined, payload: parse(r.payload_json, null),
+  }));
+}
+
+export function getLatestHiveEvents(workflowId: string, limit = 500): HiveEvent[] {
+  return hiveDb.prepare("SELECT * FROM hive_events WHERE workflow_id=? ORDER BY seq DESC LIMIT ?").all(workflowId, Math.min(limit, 2_000)).reverse().map((r) => ({
+    seq: Number(r.seq), ts: Number(r.ts), kind: String(r.kind), nodeId: r.node_id ? String(r.node_id) : undefined,
+    role: r.role ? String(r.role) : undefined, modelVersion: r.model_version ? String(r.model_version) : undefined, payload: parse(r.payload_json, null),
+  }));
+}
+
+export function getLatestHiveToolResult(workflowId: string, toolName: string): HiveEvent | null {
+  const row = hiveDb.prepare("SELECT * FROM hive_events WHERE workflow_id=? AND kind='worker_tool_result' AND json_extract(payload_json, '$.name')=? ORDER BY seq DESC LIMIT 1").get(workflowId, toolName);
+  if (!row) return null;
+  return {
+    seq: Number(row.seq), ts: Number(row.ts), kind: String(row.kind), nodeId: row.node_id ? String(row.node_id) : undefined,
+    role: row.role ? String(row.role) : undefined, modelVersion: row.model_version ? String(row.model_version) : undefined, payload: parse(row.payload_json, null),
+  };
+}
+
+export function getLatestHiveToolResults(workflowId: string, toolName: string, limit = 20): HiveEvent[] {
+  return hiveDb.prepare("SELECT * FROM hive_events WHERE workflow_id=? AND kind='worker_tool_result' AND json_extract(payload_json, '$.name')=? ORDER BY seq DESC LIMIT ?").all(workflowId, toolName, Math.min(limit, 100)).reverse().map((row) => ({
+    seq: Number(row.seq), ts: Number(row.ts), kind: String(row.kind), nodeId: row.node_id ? String(row.node_id) : undefined,
+    role: row.role ? String(row.role) : undefined, modelVersion: row.model_version ? String(row.model_version) : undefined, payload: parse(row.payload_json, null),
   }));
 }
 
@@ -243,10 +270,10 @@ export function upsertModelProfile(profile: ModelProfile): void {
 }
 export function listModelProfiles(): ModelProfile[] { return hiveDb.prepare("SELECT profile_json FROM model_profiles ORDER BY model").all().map((r) => parse(r.profile_json, {} as ModelProfile)); }
 
-export function workflowSnapshot(id: string, eventLimit = 300) {
+export function workflowSnapshot(id: string, eventLimit = 300, eventAfter = 0) {
   const workflow = getWorkflow(id);
   if (!workflow) return null;
-  return { workflow, nodes: getWorkflowNodes(id), evidence: getEvidence(id), events: getHiveEvents(id, 0, eventLimit) };
+  return { workflow, nodes: getWorkflowNodes(id), evidence: getEvidence(id), events: getHiveEvents(id, eventAfter, eventLimit) };
 }
 
 // User-editable overrides on top of presets.ts's hardcoded ROLE_PROFILES — which
@@ -308,5 +335,16 @@ export function finishSideEffect(workflowId: string, nodeId: string, fingerprint
 
 export function resetInterruptedNodes(workflowId: string): number {
   const r = hiveDb.prepare("UPDATE workflow_nodes SET status='pending',error='execution interrupted; resuming from the last completed node',started_at=NULL WHERE workflow_id=? AND status IN ('running','ready','cancelled','awaiting_approval')").run(workflowId);
+  return Number(r.changes);
+}
+
+// A user-requested resume of a FAILED workflow must give its failed node a
+// genuinely fresh start — attempt count included. Without this, resume left
+// failed nodes terminal, the dependency graph saw them as blockers, and the
+// workflow re-failed instantly as "blocked by failed node(s)" (observed
+// 2026-07-11: a GPU wedge failed the judge, resume was a no-op). Attempt
+// resets too, because the stored spec's maxAttempts already rejected the node.
+export function resetFailedNodes(workflowId: string): number {
+  const r = hiveDb.prepare("UPDATE workflow_nodes SET status='pending',attempt=0,error='reset for resume after failure',started_at=NULL,finished_at=NULL WHERE workflow_id=? AND status='failed'").run(workflowId);
   return Number(r.changes);
 }

@@ -8,11 +8,19 @@ Open `/hive` to start and inspect a workflow. Hive uses deterministic, versioned
 
 State is checkpointed in `.data/hive.db` with Node 24's built-in SQLite. Large source snapshots and artifacts are content-addressed under `.data/hive/artifacts/`. The existing detached run manager remains the SSE, cancellation, and approval backbone, so a workflow can be reattached or resumed without repeating completed nodes.
 
-Default budgets are:
+Default effort budgets are:
 
-- Quick: 2 minutes, no model swaps, shallow verification.
-- Standard: 15 minutes, at most two swaps, full verification.
-- Deep: 60 minutes, at most four swaps, iterative follow-up or repair.
+- Normal: one repair cycle.
+- Thorough: three repair cycles.
+- Extra: six repair cycles.
+
+Coding workflows use a three-role core (coordinator/planner, coder/repairer,
+verifier), observable workspace mutations, fresh post-mutation checks, and an
+independent post-repair review. The Hive Workspace tab shows the live file tree,
+read-only code, decoded write drafts, plans, research, and artifacts in one view.
+Qwen3-4B specialist LoRAs can share one resident base and are selected per request;
+candidate training and promotion are documented in
+[`../docs/hive-specialist-training.md`](../docs/hive-specialist-training.md).
 
 Core endpoints:
 

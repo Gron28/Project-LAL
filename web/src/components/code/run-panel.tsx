@@ -16,6 +16,7 @@ type Status = {
   exitCode?: number | null;
   log?: string;
   localUrl?: string;
+  networkUrl?: string;
   tailnetUrl?: string | null;
   tailnetHost?: string | null;
   tailscale?: { ok: boolean; output: string } | null;
@@ -89,7 +90,7 @@ export default function RunPanel({ project }: { project: string }) {
 
   const running = !!status?.running;
   const someoneElse = running && status?.project && project && status.project !== project;
-  const openUrl = status?.tailnetUrl || status?.localUrl || "";
+  const openUrl = status?.networkUrl || status?.tailnetUrl || status?.localUrl || "";
 
   return (
     <div className="p-2 space-y-2">
@@ -107,7 +108,7 @@ export default function RunPanel({ project }: { project: string }) {
             </button>
           </div>
           {error && <div className="text-[11px] text-[var(--accent-danger)]">{error}</div>}
-          <div className="text-[10px] text-[var(--muted)]">runs in this project&apos;s folder; exposed on the tailnet at the same port while running</div>
+          <div className="text-[10px] text-[var(--muted)]">runs in this project&apos;s folder; open it from your phone at this machine&apos;s hostname and port</div>
         </div>
       )}
 

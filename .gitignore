@@ -20,3 +20,12 @@ __pycache__/
 *.pyc
 .DS_Store
 web_scaffold.log
+
+# Generated LAL release payloads are reproducible via `./start.sh --release-lal`.
+# Keeping the ~60 MB archives out of Git makes normal updates and clones fast.
+web/public/lal/releases/
+
+# build artifacts / installed deps for any nested project (hive-* sandboxes, web/, lal-cli/)
+node_modules/
+.next/
+.next-recovery*/

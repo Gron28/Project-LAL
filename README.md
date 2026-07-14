@@ -100,9 +100,12 @@ Everything below is a real page in the app (`web/src/app/`), not a roadmap item:
   task on one device, reattach to the same live run from another.
 - **Hive** (`/hive`) — *experimental.* A durable multi-agent workflow runtime
   (plan → implement → verify → repair → report) with pause/resume/replay and a full
-  provenance trail. Its own evaluation (`web/docs/hive-evaluation-2026-07-09.md`)
+  provenance trail, a live workspace/code/research view, and a gated Qwen3-4B
+  specialist-adapter training path. Its initial evaluation (`web/docs/hive-evaluation-2026-07-09.md`)
   found it doesn't yet beat a single capable model on task completion — the harness
-  is solid, the worker prompting isn't there yet. See [`CHANGELOG.md`](CHANGELOG.md).
+  is solid, while the new worker/training architecture still needs blind promotion
+  results. See [`CHANGELOG.md`](CHANGELOG.md) and
+  [`docs/hive-specialist-training.md`](docs/hive-specialist-training.md).
 - **Train** (`/train`) — LoRA/QLoRA fine-tuning (HQQ 4-bit quantized training fits an
   8B model on a single 8GB GPU) with live loss/gradient charts and data-health views.
 - **Library** (`/library`) — trained models, documents, chat history, training runs,
@@ -130,11 +133,94 @@ runs that *didn't* work) are in [`CHANGELOG.md`](CHANGELOG.md).
 ./start.sh --install-launcher  # once: adds a double-clickable "Local AI Lab" icon
 ```
 
+## Run the coding agent from a terminal
+
+Install the dependency-free CLI once, then call the same durable coding-agent loop
+used by `/code` from any directory on the lab machine:
+
+```bash
+./start.sh --install-cli
+cd ~/Desktop/some-repo
+lal                                                   # interactive terminal workspace
+lab-agent "find the bug, fix it, and run the tests"
+lab-agent -y --mode quick-edit "rename the heading"   # auto-approve tool changes
+lab-agent --new ~/Desktop/new-app -y "build the app and initialize a git repo"
+```
+
+Without `-y`, mutating tools ask for confirmation in the terminal. The current
+directory is the agent's filesystem boundary; `-C /path` selects another existing
+directory. `--new /path` creates a greenfield directory first. Runs remain visible
+and reattachable in the web UI. Run `lab-agent --help` for model, resume, detach,
+stop, and remote-host options.
+
+The dependency-free local client exposes LAL's mode, effort, approval, web, and
+voice-bridge commands. It remains a bootstrap/recovery client. The installable
+tailnet client below is now the LAL fork: its command, banner, help, prompts,
+session UI, and updater are LAL-owned. Custom Hive/deliberate-research/voice
+screens are still being integrated into that fork.
+
+### Install the full LAL terminal client on another tailnet computer
+
+First, print the pairing token on `main-pc`:
+
+```bash
+./start.sh --show-cli-token
+```
+
+On Linux or macOS:
+
+```bash
+curl -fsSL https://main-pc.tail3ba909.ts.net/lal/install.sh | bash
+```
+
+On Windows PowerShell:
+
+```powershell
+irm https://main-pc.tail3ba909.ts.net/lal/install.ps1 | iex
+```
+
+Enter the pairing token once when prompted. On Windows the installer downloads a
+checksum-pinned standalone LAL runtime from `main-pc`, so Node does not need to be
+installed separately. Open a new terminal, enter any project stored on that
+computer, and run `lal`. File, shell,
+Git, LSP, and MCP tools execute on that client computer; only model inference is
+streamed to `main-pc` over Tailscale. Chats are automatically stored per project
+under `~/.lal/projects`. The mature terminal UI, model selection, approvals,
+tooling, and resume flow work now; LAL-specific Hive, deliberate-research, effort,
+and browser-backed voice controls are the next overlay on the cloned client.
+
+Update in place at any time:
+
+```bash
+lal update
+```
+
+On `main-pc`, inspect every recorded LAL client and rejected-token attempt:
+
+```bash
+./start.sh --list-cli-devices
+```
+
+Each installation gets a stable random device ID. The security registry shows its
+computer name, platform, client version, Tailscale address, first/last activity,
+and request count. It deliberately does not store prompts, project paths, or file
+contents. Existing clients gain device heartbeats after running `lal update` once.
+
+Updates replace only managed client/runtime files. Existing settings, credentials,
+and project chats are preserved. The release channel pins the native LAL runtime
+separately from its small launcher/configuration layer. The Windows runtime is the
+first native LAL artifact; Linux/macOS packaging is transitioning through the same
+fork while their current recovery installer remains available.
+
+The earlier dependency-free `lab-agent` and SSH folder bridge remain available as
+bootstrap/recovery paths. They are no longer the recommended path for a project
+that lives on another computer.
+
 `start.sh` is self-contained: it installs web deps on first run, rebuilds only when the
 code changed (a stale bundle is a known footgun — see [[deploy-restart-required]]),
 frees the port from any old instance, exposes the app on your tailnet via
 `tailscale serve` (so your phone opens the *same* live session at
-`https://<your-tailnet-host>:8443`), then starts it and opens it. Stop with Ctrl-C.
+`https://<your-tailnet-host>`), then starts it and opens it. Stop with Ctrl-C.
 
 - **App:** Next.js in `web/`, production `next start` on **:8770** (override `PORT`).
 - **GPU serving** (llama.cpp, :8099) and **Ollama** (:11434) are launched **on demand

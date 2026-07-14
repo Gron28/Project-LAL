@@ -7,8 +7,9 @@ import { enqueueSpeech, stopSpeech, setSpeechListener } from "./voice";
 import MarkdownView from "@/components/markdown-view";
 import { StatsGlance, type Usage } from "@/components/agent/stats-hud";
 import { SignalTrace } from "@/components/ui/signal-trace";
+import CertaintyWave, { type TokenAlternatives } from "@/components/agent/certainty-wave";
 
-type Msg = { role: "user" | "assistant"; content: string; thinking?: string; status?: string; images?: string[]; visionModel?: string; truncated?: boolean };
+type Msg = { role: "user" | "assistant"; content: string; thinking?: string; status?: string; images?: string[]; visionModel?: string; truncated?: boolean; wave?: number[]; alternatives?: TokenAlternatives[] };
 type Convo = { id: string; title: string; model: string; updatedAt: string };
 
 const SUGGESTIONS = [
@@ -489,12 +490,14 @@ export default function AgentChat() {
     let visionModel = "";
     let status = "Connecting to the local agent…";
     let truncated = false;
+    const wave: number[] = [];
+    const alternatives: TokenAlternatives[] = [];
     let spokenLen = 0;
     const paint = () => {
       const c = content, t = thinking, vm = visionModel, wasTruncated = truncated;
       setMessages((p) => {
         const copy = [...p];
-        copy[idx] = { role: "assistant", content: c, thinking: t, ...(status ? { status } : {}), ...(vm ? { visionModel: vm } : {}), ...(wasTruncated ? { truncated: true } : {}) };
+        copy[idx] = { role: "assistant", content: c, thinking: t, ...(status ? { status } : {}), ...(vm ? { visionModel: vm } : {}), ...(wasTruncated ? { truncated: true } : {}), wave: [...wave], alternatives: [...alternatives] };
         return copy;
       });
     };
@@ -521,9 +524,15 @@ export default function AgentChat() {
         if ((e.v as { truncated?: boolean } | undefined)?.truncated) { truncated = true; paint(); }
       } else if (e.k === "model_loading") { status = `Loading ${(e.v as { model?: string })?.model || "local model"}…`; paint(); }
       else if (e.k === "model_ready") { status = `${(e.v as { model?: string })?.model || "Local model"} is ready`; paint(); }
-      else if (e.k === "think") { thinking += String(e.v ?? ""); paint(); }
+      else if (e.k === "think") { thinking += String(e.v ?? ""); const p = (e as { p?: unknown }).p; if (typeof p === "number") wave.push(p); paint(); }
       else if (e.k === "text") {
         content += String(e.v ?? "");
+        const p = (e as { p?: unknown }).p;
+        if (typeof p === "number") {
+          wave.push(p);
+          const rawAlts = (e as { alts?: unknown }).alts;
+          if (Array.isArray(rawAlts)) alternatives.push({ token: String(e.v ?? ""), p, alts: rawAlts.filter((x): x is [string, number] => Array.isArray(x) && typeof x[0] === "string" && typeof x[1] === "number") });
+        }
         status = "";
         paint();
         if (willSpeak) {
@@ -1120,6 +1129,7 @@ export default function AgentChat() {
                       <SignalTrace size="sm" className="ml-1 align-middle" />
                     )}
                   </div>
+                  {isLast && (streaming || m.wave?.length) && <CertaintyWave wave={m.wave ?? []} alts={m.alternatives} active={streaming} />}
                   {!streaming && m.truncated && (
                     <button
                       onClick={() => continueMessage(i)}

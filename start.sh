@@ -11,8 +11,12 @@
 # GPU serving (llama.cpp on :8099) and Ollama (:11434) are started ON DEMAND by the
 # app itself — you don't launch them here. Training likewise runs through the app.
 #
-# Ports (override with env): PORT=8770 (app), TS_PORT=8443 (tailnet https).
+# Ports (override with env): PORT=8770 (app), TS_PORT=443 (tailnet https).
 # Handy flags:  --install-launcher  write a double-clickable desktop entry
+#               --install-cli       install lab-agent for this user
+#               --show-cli-token    print the pairing token for another computer
+#               --list-cli-devices  show authenticated/rejected LAL CLI connections
+#               --release-lal       build, package, verify, and deploy the LAL client
 #               FORCE_BUILD=1        rebuild even if the code is unchanged
 #               SKIP_BUILD=1         start whatever is already built (fast)
 set -uo pipefail
@@ -20,11 +24,42 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
 WEB="$HERE/web"
 PORT="${PORT:-8770}"
-TS_PORT="${TS_PORT:-8443}"
+TS_PORT="${TS_PORT:-443}"
 
 c_ok(){ printf '\033[1;32m[lab]\033[0m %s\n' "$*"; }
 c_warn(){ printf '\033[1;33m[lab]\033[0m %s\n' "$*"; }
 c_err(){ printf '\033[1;31m[lab]\033[0m %s\n' "$*"; }
+
+if [ "${1:-}" = "--show-cli-token" ]; then
+  c_ok "Use this once when the installer on another computer asks for the LAL pairing token:"
+  "$HERE/bin/lal-token"
+  exit 0
+fi
+
+if [ "${1:-}" = "--list-cli-devices" ]; then
+  "$HERE/bin/lal-devices"
+  exit $?
+fi
+
+if [ "${1:-}" = "--release-lal" ]; then
+  "$HERE/scripts/release-lal-cli.sh"
+  c_ok "LAL release is ready; rebuilding the server that publishes it…"
+fi
+
+# --- optional: install the terminal client for this user ---------------------
+if [ "${1:-}" = "--install-cli" ]; then
+  target="$HOME/.local/bin"
+  mkdir -p "$target"
+  ln -sfn "$HERE/bin/lab-agent" "$target/lab-agent"
+  ln -sfn "$HERE/bin/lab-agent" "$target/lal"
+  ln -sfn "$HERE/bin/lab-agent" "$target/LAL"
+  c_ok "CLI installed. Run 'lal' or 'LAL' from any folder."
+  case ":$PATH:" in
+    *":$target:"*) ;;
+    *) c_warn "Add $target to PATH, then open a new terminal." ;;
+  esac
+  exit 0
+fi
 
 # --- optional: create a desktop launcher you can double-click ----------------
 if [ "${1:-}" = "--install-launcher" ]; then
@@ -52,11 +87,15 @@ if command -v tailscale >/dev/null 2>&1; then
   if tailscale serve --bg --https="$TS_PORT" "http://127.0.0.1:${PORT}" >/dev/null 2>&1; then
     host="$(tailscale status --json 2>/dev/null | grep -o '"DNSName":[^,]*' | head -1 | cut -d'"' -f4)"
     host="${host%.}"
-    [ -n "$host" ] && c_ok "On your other devices: https://${host}:${TS_PORT}" || c_ok "Tailnet serve is on (port ${TS_PORT})."
+    if [ -n "$host" ]; then
+      [ "$TS_PORT" = "443" ] && c_ok "On your other devices: https://${host}" || c_ok "On your other devices: https://${host}:${TS_PORT}"
+    else
+      c_ok "Tailnet serve is on (port ${TS_PORT})."
+    fi
   else
     c_warn "Couldn't set up tailscale serve — the app still works locally."
   fi
 fi
 
 c_ok "Safely rebuilding Local AI Lab…"
-OPEN_BROWSER=1 exec "$HOME/.local/bin/rebuild-local-ai-lab"
+OPEN_BROWSER=1 exec "$HERE/scripts/rebuild-local-ai-lab.sh"

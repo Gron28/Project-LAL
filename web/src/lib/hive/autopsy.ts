@@ -16,14 +16,15 @@ export function diagnoseHiveWorkflow(id: string) {
     if (node.result?.verification && typeof node.result.verification.passed === "boolean" && !node.result.verification.passed) {
       add(node.role === "verifier" ? "verifier_disagreement" : "verification_failure", node.result.summary, "failure", node.nodeId);
     }
-    if (["intake", "decompose", "queries", "plan", "critique"].includes(node.nodeId) && node.result && /\b(implemented|all tests passed|checks passed|successfully completed)\b/i.test(node.result.summary)) {
+    for (const code of node.result?.failureCodes || []) add(code, node.result?.summary || node.error || code, "failure", node.nodeId);
+    if (["intake", "decompose", "queries", "plan", "critique", "plan_judge"].includes(node.nodeId) && node.result && /\b(implemented|all tests passed|checks passed|successfully completed)\b/i.test(node.result.summary)) {
       add("premature_completion_claim", "A pre-implementation stage described requested outcomes as completed facts.", "failure", node.nodeId);
     }
-    if (["implement", "repair"].includes(node.nodeId) && node.attempt > 0 && node.toolCalls === 0) {
+    if (["implement", "test_contract", "core_implementation", "integration_delivery", "repair"].includes(node.nodeId) && node.attempt > 0 && node.toolCalls === 0) {
       add("worker_no_mutation", "Worker stage made no tool calls; a text-only completion claim cannot establish implementation.", "failure", node.nodeId);
     }
     if (node.nodeId === "verify" && node.result?.verification?.checks.some((c) => !c.passed)) add("unsupported_claims", "Citation checks found claims without valid fetched-source evidence.", "failure", node.nodeId);
-    if (["implement", "repair"].includes(node.nodeId) && node.result?.status === "failed") add("incomplete_implementation", node.result.summary, "failure", node.nodeId);
+    if (["implement", "test_contract", "core_implementation", "integration_delivery", "repair"].includes(node.nodeId) && node.result?.status === "failed") add("incomplete_implementation", node.result.summary, "failure", node.nodeId);
   }
   for (const [nodeId, count] of retries) if (count >= 2) add("repeated_repair_loop", `${count} retries exhausted or repeated`, "warning", nodeId);
   if (swaps > snapshot.workflow.budget.modelSwaps) add("wasted_model_swaps", `${swaps} swaps exceeded budget ${snapshot.workflow.budget.modelSwaps}`);

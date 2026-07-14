@@ -1,5 +1,7 @@
+import path from "node:path";
+import fs from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
-import { runBench, SUITES, getSuite, listBench, saveBench, deleteBench, pinBench } from "@/lib/lab";
+import { runBench, SUITES, getSuite, listBench, saveBench, deleteBench, pinBench, HIVE_ADAPTER_DIR } from "@/lib/lab";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 1800;
@@ -15,9 +17,20 @@ export async function POST(req: NextRequest) {
   const suiteName = (b.suite as string) || "fractal";
   const stored = getSuite(suiteName);                       // editable file-backed suite
   const items = stored?.items?.length ? stored.items : (SUITES[suiteName] || SUITES.fractal);
-  const opts = { grade: stored?.grade, maxTokens: stored?.maxTokens, think: stored?.think };
+  const opts: Parameters<typeof runBench>[2] = { grade: stored?.grade, maxTokens: stored?.maxTokens, think: stored?.think };
+  // Bench a base model + a specialist LoRA adapter together (e.g. is the trained
+  // adapter actually better than the raw base at this suite?) — resolves under
+  // HIVE_ADAPTER_DIR only, matching the same sanitization the train/serve paths use.
+  let modelLabel = String(b.model);
+  if (typeof b.loraAdapter === "string" && b.loraAdapter) {
+    const safe = path.basename(b.loraAdapter).replace(/[^a-zA-Z0-9_.-]/g, "");
+    const adapterPath = path.join(HIVE_ADAPTER_DIR, safe);
+    if (!fs.existsSync(adapterPath)) return NextResponse.json({ error: "lora adapter not found: " + safe }, { status: 400 });
+    opts.lora = { key: safe, path: adapterPath };
+    modelLabel = `${b.model}+${safe.replace(/\.gguf$/, "")}`; // distinct save key — never overwrite the pure base model's saved bench
+  }
   try {
-    const result = { ...(await runBench(b.model, items, opts)), suite: suiteName };
+    const result = { ...(await runBench(b.model, items, opts)), suite: suiteName, model: modelLabel };
     saveBench(suiteName, result);
     return NextResponse.json(result);
   } catch (e) {

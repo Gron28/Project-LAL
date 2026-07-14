@@ -15,6 +15,10 @@ import { recordFinding } from "./fact-store";
 export const AGENT_TOOL_DEFS: ToolDef[] = [
   ...TOOL_DEFS,
   { type: "function", function: {
+    name: "install_dependencies", description: "Install the dependencies declared in this workspace's package.json. Use only after writing or inspecting package.json; it runs npm install with network access outside the isolated shell, has a five-minute limit, and is approval-gated.",
+    parameters: { type: "object", properties: {}, required: [] },
+  } },
+  { type: "function", function: {
     name: "run_python", description: "Run a Python snippet in the workspace (fresh interpreter, 30s CPU limit, stdout+stderr returned). Use for calculations, data processing, quick scripts.",
     parameters: { type: "object", properties: { code: { type: "string", description: "python source to execute" } }, required: ["code"] },
   } },
@@ -91,6 +95,9 @@ export const AGENT_TOOL_DEFS: ToolDef[] = [
       val_frac: { type: "number", description: "validation split fraction, e.g. 0.1 (sft/hqq)" },
       block: { type: "number", description: "token block size, e.g. 1536 (sft/hqq)" },
       auto_bench: { type: "array", items: { type: "string" }, description: "suite ids to auto-bench after training (see bench_list), e.g. [\"coding\",\"planning\"]" },
+      specialist_role: { type: "string", enum: ["coordinator_planner", "coder_repairer", "verifier"], description: "optional HIVE role; requires Qwen3-4B HQQ and an immutable role dataset manifest" },
+      dataset_manifest: { type: "string", description: "manifest filename in data/ produced by build_hive_role_dataset.py" },
+      runtime_base_model: { type: "string", description: "installed GGUF shared by the adapters; defaults to qwen3-4b-stock for Qwen3-4B" },
     }, required: ["name", "base", "steps", "lr"] },
   } },
   { type: "function", function: {
@@ -114,6 +121,20 @@ export const AGENT_TOOL_DEFS: ToolDef[] = [
     }, required: ["task"] },
   } },
 ];
+
+function installDependencies(root: string): Promise<string> {
+  return new Promise((resolve) => {
+    if (!fs.existsSync(path.join(root, "package.json"))) { resolve("error: package.json is required before installing dependencies"); return; }
+    let output = ""; let settled = false;
+    const child = spawn("npm", ["install"], { cwd: root, env: { ...process.env, CI: "1", NO_COLOR: "1" } });
+    const append = (chunk: Buffer) => { if (output.length < 30_000) output += chunk.toString(); };
+    child.stdout.on("data", append); child.stderr.on("data", append);
+    const finish = (suffix = "") => { if (settled) return; settled = true; clearTimeout(timer); resolve((output + suffix).slice(-30_000)); };
+    const timer = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} finish("\n[timed out after 5m]"); }, 300_000);
+    child.on("close", (code) => finish(`\n[exit ${code}]`));
+    child.on("error", (error) => finish("\nerror: " + error.message));
+  });
+}
 
 // Training/bench control stays with the TOP-LEVEL agent only: helper sub-agents,
 // planner/implementer phases, and orchestrator mode must never fire a training run
@@ -328,15 +349,18 @@ export function makeAgentExecutor(opts: {
   depth?: number;
   approve?: ApproveFn;              // propagated to sub-agents so their writes/shell respect user approval too
   orchestratorMode?: boolean;       // true -> spawn_agent auto-records sub-agent findings (see fact-store.ts)
+  sandboxShell?: boolean;           // Hive: writable workspace only, hidden home/tmp, no network
   signal?: AbortSignal;             // run-level stop, propagated into spawn_agent's inner loop so
   // Stop kills helper agents mid-flight too (not just the top-level loop)
 }): AgentExecutor {
-  const base = makeExecutor(opts.workspaceDir);
+  const base = makeExecutor(opts.workspaceDir, { sandboxShell: opts.sandboxShell });
   const depth = opts.depth ?? 0;
   let subCount = 0;
 
   async function run(name: string, args: Record<string, unknown>): Promise<string> {
     switch (name) {
+      case "install_dependencies":
+        return installDependencies(base.root);
       case "run_python":
         return runPython(base.root, String(args.code ?? ""));
       case "web_search":
@@ -389,6 +413,9 @@ export function makeAgentExecutor(opts: {
           valFrac: args.val_frac != null ? Number(args.val_frac) : undefined,
           block: args.block != null ? Number(args.block) : undefined,
           autoBench: Array.isArray(args.auto_bench) ? (args.auto_bench as unknown[]).map(String) : undefined,
+          specialistRole: ["coordinator_planner", "coder_repairer", "verifier"].includes(String(args.specialist_role)) ? String(args.specialist_role) as "coordinator_planner" | "coder_repairer" | "verifier" : undefined,
+          datasetManifest: args.dataset_manifest ? String(args.dataset_manifest) : undefined,
+          runtimeBaseModel: args.runtime_base_model ? String(args.runtime_base_model) : undefined,
           targetLoss: 0, // the EMA gate is bs=1-flawed on this box (HANDOFF 2026-07-04); val-aware patience is the stop condition
         };
         if ((o.mode === "sft" || o.mode === "hqq") && !o.dataFile) return "error: sft/hqq mode needs data_file (see list_data_files)";
@@ -482,7 +509,7 @@ export function makeAgentExecutor(opts: {
     // Research/python/vision/memory/spawn_agent are sandboxed or read-only — auto-run.
     // Training mutations are approval-gated: they commandeer the single GPU for
     // hours (train_start) or kill an hours-long run (train_stop).
-    approve: { ...base.approve, train_start: true, train_stop: true },
+    approve: { ...base.approve, install_dependencies: true, train_start: true, train_stop: true },
     run,
     defs: depth >= 1 ? SUB_TOOL_DEFS : AGENT_TOOL_DEFS,
   };
@@ -539,7 +566,7 @@ export function makePlannerExecutor(fullExec: AgentExecutor): AgentExecutor {
 // of coding. If it's unsure of a detail, it has to make a reasonable call and keep
 // going, the same way a human implementer works from a design doc without re-opening
 // the research phase over every small uncertainty.
-export const IMPLEMENTER_TOOLS = new Set(["list_files", "read_file", "read_file_outline", "grep", "write_file", "edit_file", "run_shell", "memory_read", "memory_write"]);
+export const IMPLEMENTER_TOOLS = new Set(["list_files", "read_file", "read_file_outline", "grep", "write_file", "edit_file", "run_shell", "install_dependencies", "memory_read", "memory_write"]);
 export function makeImplementerExecutor(fullExec: AgentExecutor): AgentExecutor {
   return {
     root: fullExec.root,

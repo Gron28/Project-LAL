@@ -6,8 +6,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { getTailnetHost, serveOff, serveOn } from "@/lib/tailscale";
 
 export const dynamic = "force-dynamic";
 
@@ -56,8 +56,8 @@ function appendLog(state: PreviewState, chunk: string) {
 
 async function statusPayload() {
   const s = g.__code_preview;
-  const host = await getTailnetHost();
-  if (!s) return { running: false, tailnetHost: host };
+  if (!s) return { running: false };
+  const host = process.env.PREVIEW_HOST || os.hostname();
   return {
     running: s.running,
     project: s.project,
@@ -68,8 +68,9 @@ async function statusPayload() {
     exitCode: s.exitCode,
     log: s.log.join("\n"),
     localUrl: "http://127.0.0.1:" + s.port,
-    tailnetUrl: host ? `https://${host}:${s.port}` : null,
-    tailnetHost: host,
+    // A tailnet already routes directly to this machine. Binding a project to
+    // 0.0.0.0 lets a phone open http://main-pc:<port> without a Serve proxy.
+    networkUrl: `http://${host}:${s.port}`,
     tailscale: s.tailscale,
   };
 }
@@ -86,7 +87,6 @@ export async function POST(req: NextRequest) {
     const s = g.__code_preview;
     if (!s) return NextResponse.json({ ok: true, running: false });
     try { if (s.child.pid) process.kill(-s.child.pid, "SIGKILL"); } catch {}
-    await serveOff(s.port).catch(() => {});
     s.running = false;
     return NextResponse.json(await statusPayload());
   }
@@ -128,15 +128,11 @@ export async function POST(req: NextRequest) {
   child.on("exit", (code) => {
     state.running = false;
     state.exitCode = code;
-    serveOff(state.port).catch(() => {});
   });
   child.on("error", (e) => appendLog(state, "error: " + e.message));
 
-  // Give the command a moment to actually start listening before wiring the
-  // tailnet mount — best-effort, not a readiness probe (some dev servers take
-  // longer; the UI's "open" link just won't load until it's actually up).
+  // Give the command a moment to bind before returning its direct network URL.
   await new Promise((r) => setTimeout(r, 1500));
-  state.tailscale = await serveOn(port);
 
   return NextResponse.json(await statusPayload());
 }

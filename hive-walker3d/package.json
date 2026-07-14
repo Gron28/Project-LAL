@@ -1,0 +1,25 @@
+{
+  "name": "hive-walker3d",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 6677",
+    "build": "next build",
+    "start": "next start -p 6677",
+    "lint": "next build",
+    "test": "node test/math.js"
+  },
+  "dependencies": {
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "three": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.185.1",
+    "typescript": "^5.9.3"
+  }
+}

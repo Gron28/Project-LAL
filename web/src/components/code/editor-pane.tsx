@@ -29,13 +29,14 @@ async function languageFor(name: string) {
 
 type Notice = { kind: "conflict" | "disk-changed"; mtimeMs: number } | null;
 
-export default function EditorPane({ project, filePath, refreshTick, rawHref, onClose, onSaved }: {
+export default function EditorPane({ project, filePath, refreshTick, rawHref, onClose, onSaved, readOnly = false }: {
   project: string;
   filePath: string;
   refreshTick: number;
-  rawHref: string;
+  rawHref?: string;
   onClose: () => void;
   onSaved: () => void;
+  readOnly?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -102,7 +103,7 @@ export default function EditorPane({ project, filePath, refreshTick, rawHref, on
             EditorView.updateListener.of((u) => {
               if (u.docChanged && !dirtyRef.current) { dirtyRef.current = true; setDirty(true); }
             }),
-            ...(file.truncated ? [EditorView.editable.of(false)] : []),
+            ...(file.truncated || readOnly ? [EditorView.editable.of(false)] : []),
             ...(lang ? [lang] : []),
           ],
         });
@@ -118,7 +119,7 @@ export default function EditorPane({ project, filePath, refreshTick, rawHref, on
       viewRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, filePath]);
+  }, [project, filePath, readOnly]);
 
   const save = async (force = false) => {
     const view = viewRef.current;
@@ -176,22 +177,22 @@ export default function EditorPane({ project, filePath, refreshTick, rawHref, on
       <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-soft)] shrink-0">
         <span className="text-[11px] font-mono truncate">{filePath}</span>
         {dirty && <span className="text-[var(--accent-warn,#d29922)] text-sm leading-none" title="unsaved changes">•</span>}
-        {truncated && <span className="text-[10px] text-[var(--muted)]">read-only (file &gt;1MB)</span>}
+        {(truncated || readOnly) && <span className="text-[10px] text-[var(--muted)]">{truncated ? "read-only (file >1MB)" : "live read-only view"}</span>}
         <span className="ml-auto flex items-center gap-2 shrink-0">
-          <button onClick={() => save(false)} disabled={!dirty || saving} title="save (Ctrl+S)"
+          {!readOnly && <button onClick={() => save(false)} disabled={!dirty || saving} title="save (Ctrl+S)"
             className="flex items-center gap-1 text-[11px] border rounded px-2 py-1 disabled:opacity-30"
             style={{ borderColor: dirty ? "var(--accent-ai)" : "var(--border)", color: dirty ? "var(--accent-ai)" : "var(--muted)" }}>
             <Save size={12} /> save
-          </button>
-          {/\.html?$/i.test(filePath) && (
+          </button>}
+          {rawHref && /\.html?$/i.test(filePath) && (
             <a href={rawHref} target="_blank" rel="noreferrer" title="run this page"
               className="flex items-center gap-1 text-[11px] border rounded px-2 py-1" style={{ borderColor: "#3fb950", color: "#3fb950" }}>
               <Play size={12} /> run
             </a>
           )}
-          <a href={rawHref} target="_blank" rel="noreferrer" title="open raw" className="text-[var(--muted)] hover:text-[var(--text-2)]">
+          {rawHref && <a href={rawHref} target="_blank" rel="noreferrer" title="open raw" className="text-[var(--muted)] hover:text-[var(--text-2)]">
             <ExternalLink size={13} />
-          </a>
+          </a>}
           <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text-2)]"><X size={14} /></button>
         </span>
       </div>
@@ -210,7 +211,7 @@ export default function EditorPane({ project, filePath, refreshTick, rawHref, on
       {status === "loading" && <div className="p-4 text-xs text-[var(--muted)]">loading…</div>}
       {status === "binary" && (
         <div className="p-4 text-xs text-[var(--muted)]">
-          binary file — <a href={rawHref} target="_blank" rel="noreferrer" className="text-[var(--accent-ai)]">open raw</a>
+          binary file{rawHref ? <> — <a href={rawHref} target="_blank" rel="noreferrer" className="text-[var(--accent-ai)]">open raw</a></> : null}
         </div>
       )}
       {status === "error" && <div className="p-4 text-xs text-[var(--accent-danger)]">{errText || "failed to open file"}</div>}

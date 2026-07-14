@@ -2,6 +2,7 @@
 // and the agentic chat UI (Phase 4). Read tools are safe to auto-run; write/edit/shell
 // are flagged via `approve` so callers can gate them behind human confirmation.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import vm from "node:vm";
@@ -19,7 +20,11 @@ function verifySyntax(p: string, content: string): string | null {
   const ext = path.extname(p).toLowerCase();
   try {
     if (ext === ".js" || ext === ".mjs" || ext === ".cjs") {
-      new vm.Script(content, { filename: p });
+      // vm.Script always parses as CommonJS and therefore reports every valid
+      // ESM `import` as a syntax error.  Let Node resolve the file in its real
+      // package context (`type: module`, .mjs/.cjs) instead.
+      const r = spawnSync(process.execPath, ["--check", p], { timeout: 5000 });
+      if (r.status !== 0) return (r.stderr?.toString() || "JavaScript syntax error").trim().slice(0, 500);
       return null;
     }
     if (ext === ".json") {
@@ -57,6 +62,21 @@ function requiredString(args: Record<string, unknown>, key: string, allowEmpty =
   const value = args[key];
   if (typeof value !== "string") return `missing required string argument \"${key}\"`;
   if (!allowEmpty && !value.trim()) return `required argument \"${key}\" cannot be empty`;
+  return null;
+}
+
+const TOOL_PROTOCOL_MARKERS = ["[TOOL_CALLS]", "[ARGS]", "<tool_call>", "</tool_call>", "<function="];
+
+function safePath(args: Record<string, unknown>, key = "path", optional = false): string | null {
+  const value = args[key];
+  if (value === undefined && optional) return null;
+  const required = requiredString(args, key);
+  if (required) return required;
+  const candidate = value as string;
+  if (/\0|\r|\n/.test(candidate)) return `argument \"${key}\" contains an invalid control character`;
+  if (TOOL_PROTOCOL_MARKERS.some((marker) => candidate.includes(marker))) {
+    return `argument \"${key}\" contains leaked tool-protocol syntax; provide only the intended filesystem path`;
+  }
   return null;
 }
 
@@ -111,16 +131,18 @@ export function toolCallExample(name: string): string {
 export function validateToolArguments(name: string, args: Record<string, unknown>): string | null {
   switch (name) {
     case "list_files":
-      return args.path === undefined || typeof args.path === "string" ? null : "argument \"path\" must be a string";
+      return safePath(args, "path", true);
     case "read_file":
     case "read_file_outline":
-      return requiredString(args, "path");
+      return safePath(args);
     case "write_file":
-      return requiredString(args, "path") || requiredString(args, "content", true);
+      return safePath(args) || requiredString(args, "content", true)
+        || (typeof args.content === "string" && args.content.length > 6_000 ? "argument \"content\" exceeds the 6000-character limit; split it into smaller files or edits" : null);
     case "edit_file":
-      return requiredString(args, "path") || requiredString(args, "search") || requiredString(args, "replace", true);
+      return safePath(args) || requiredString(args, "search") || requiredString(args, "replace", true)
+        || (args.search === args.replace ? "arguments \"search\" and \"replace\" are identical; this edit would not change the file" : null);
     case "grep":
-      return requiredString(args, "pattern") || (args.path === undefined || typeof args.path === "string" ? null : "argument \"path\" must be a string");
+      return requiredString(args, "pattern") || safePath(args, "path", true);
     case "run_shell":
       return requiredString(args, "command");
     case "git":
@@ -147,7 +169,7 @@ export const TOOL_DEFS: ToolDef[] = [
     parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
   } },
   { type: "function", function: {
-    name: "write_file", description: "Create or overwrite a text file.",
+    name: "write_file", description: "Create or overwrite a text file. HARD LIMIT: content must be under 6000 characters; split large implementations into components/files or follow with bounded edit_file calls.",
     parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] },
   } },
   { type: "function", function: {
@@ -159,7 +181,7 @@ export const TOOL_DEFS: ToolDef[] = [
     parameters: { type: "object", properties: { pattern: { type: "string" }, path: { type: "string", description: "directory to search, default '.'" } }, required: ["pattern"] },
   } },
   { type: "function", function: {
-    name: "run_shell", description: "Run a bash command in the workspace (60s timeout).",
+    name: "run_shell", description: "Run a network-isolated bash command in the workspace (60s timeout). Do NOT use this for npm/pip/package installs; use the dedicated install_dependencies tool when available. Destructive recursive deletion is blocked; repair source/config instead of deleting build trees.",
     parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
   } },
   { type: "function", function: {
@@ -263,13 +285,71 @@ export function resolveSafe(root: string, rel: string): string {
   return target;
 }
 
-function runShell(root: string, command: string): Promise<string> {
+function sandboxRootParents(target: string): string[] {
+  let current = path.dirname(target);
+  const dirs: string[] = [];
+  while (current !== path.parse(current).root) { dirs.push(current); current = path.dirname(current); }
+  return dirs.reverse().flatMap((directory) => ["--dir", directory]);
+}
+
+function systemMountArgs(): string[] {
+  const args: string[] = [];
+  for (const source of ["/usr", "/etc"]) if (fs.existsSync(source)) args.push("--ro-bind", source, source);
+  for (const source of ["/bin", "/sbin", "/lib", "/lib64"]) {
+    if (!fs.existsSync(source)) continue;
+    const stat = fs.lstatSync(source);
+    if (stat.isSymbolicLink()) args.push("--symlink", fs.readlinkSync(source), source);
+    else args.push("--ro-bind", source, source);
+  }
+  return args;
+}
+
+export function workspaceSandboxCommand(root: string, command: string, commandArgs: string[]): { command: string; args: string[]; env: NodeJS.ProcessEnv } {
+  const realRoot = fs.realpathSync(root);
+  const hostHome = fs.realpathSync(os.homedir());
+  const nodeRuntime = path.dirname(path.dirname(fs.realpathSync(process.execPath)));
+  const runtimeInMaskedHome = nodeRuntime.startsWith(hostHome + path.sep);
+  return {
+    command: "bwrap",
+    args: [
+      "--die-with-parent", "--new-session", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-net",
+      "--tmpfs", "/", ...systemMountArgs(), "--tmpfs", "/tmp",
+      ...sandboxRootParents(realRoot), ...(runtimeInMaskedHome ? sandboxRootParents(nodeRuntime) : []),
+      ...(runtimeInMaskedHome ? ["--ro-bind", nodeRuntime, nodeRuntime] : []),
+      "--bind", realRoot, realRoot, "--dev", "/dev", "--proc", "/proc", "--chdir", realRoot, command, ...commandArgs,
+    ],
+    env: {
+      PATH: process.env.PATH || "/usr/local/bin:/usr/bin:/bin", HOME: realRoot,
+      LANG: process.env.LANG || "C.UTF-8", LC_ALL: process.env.LC_ALL || "C.UTF-8", CI: "1", NO_COLOR: "1",
+      // Do not leak the host Next.js dev server's NODE_ENV into agent commands.
+      // `next build` requires the standard production value; individual test
+      // scripts remain free to override it in their own command environment.
+      NODE_ENV: "production",
+    },
+  };
+}
+
+export function destructiveShellCommand(command: string): boolean {
+  return /(^|&&|\|\||[;\n])\s*(?:sudo\s+)?rm\s+[^\n;&|]*(?:-\w*r\w*|--recursive)\b/.test(command);
+}
+
+function runShell(root: string, command: string, sandboxed = false): Promise<string> {
   return new Promise((resolve) => {
+    if (sandboxed && destructiveShellCommand(command)) {
+      resolve("error: destructive recursive deletion is blocked in agent shell commands. Repair the actual source or configuration; generated build output is not completion evidence.");
+      return;
+    }
     const cap = 16384;
     let out = "";
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn("bash", ["-c", command], { cwd: root, detached: true });
+      if (sandboxed) {
+        // Minimal read-only OS runtime, ephemeral home/tmp, one persistent
+        // writable bind: the selected workspace. Network is absent. A mission that needs another folder must
+        // stop and be restarted with that folder explicitly selected as workspace.
+        const sandbox = workspaceSandboxCommand(root, "bash", ["-c", command]);
+        child = spawn(sandbox.command, sandbox.args, { cwd: root, detached: true, env: sandbox.env });
+      } else child = spawn("bash", ["-c", command], { cwd: root, detached: true });
     } catch (e) {
       resolve("error: " + (e as Error).message);
       return;
@@ -298,7 +378,7 @@ export type Executor = {
   run: (name: string, args: Record<string, unknown>) => Promise<string>;
 };
 
-export function makeExecutor(workspaceDir: string): Executor {
+export function makeExecutor(workspaceDir: string, options: { sandboxShell?: boolean } = {}): Executor {
   fs.mkdirSync(workspaceDir, { recursive: true });
   const root = fs.realpathSync(workspaceDir);
 
@@ -312,6 +392,11 @@ export function makeExecutor(workspaceDir: string): Executor {
         }
         case "read_file": {
           const p = resolveSafe(root, String(args.path ?? ""));
+          if (fs.statSync(p).isDirectory()) {
+            return fs.readdirSync(p, { withFileTypes: true })
+              .map((entry) => entry.name + (entry.isDirectory() ? "/" : ""))
+              .sort().join("\n") || "(empty directory)";
+          }
           return fs.readFileSync(p, "utf8").slice(0, 32768);
         }
         case "read_file_outline": {
@@ -332,13 +417,14 @@ export function makeExecutor(workspaceDir: string): Executor {
           const p = resolveSafe(root, String(args.path ?? ""));
           const src = fs.readFileSync(p, "utf8");
           const search = String(args.search ?? "");
+          const replacement = String(args.replace ?? "");
+          if (search === replacement) return "error: search and replacement are identical; the file was NOT changed";
           const idx = search ? src.indexOf(search) : -1;
           if (idx === -1) return "error: search string not found";
           // Splice by index rather than String.replace(search, replacement): replace()
           // special-cases "$1"/"$&"/"$$" etc. in the REPLACEMENT string even when the
           // search value is a plain string — any real code containing a literal "$"
           // (shell vars, regex, jQuery, template refs) silently corrupted the file.
-          const replacement = String(args.replace ?? "");
           const next = src.slice(0, idx) + replacement + src.slice(idx + search.length);
           fs.writeFileSync(p, next);
           // Show the model what the file ACTUALLY looks like around its edit (±3
@@ -375,7 +461,7 @@ export function makeExecutor(workspaceDir: string): Executor {
           return hits.slice(0, 200).join("\n") || "(no matches)";
         }
         case "run_shell":
-          return await runShell(root, String(args.command ?? ""));
+          return await runShell(root, String(args.command ?? ""), !!options.sandboxShell);
         case "git": {
           const command = String(args.command ?? "").trim();
           if (!command) return "error: missing command";

@@ -136,11 +136,18 @@ export async function POST(req: NextRequest) {
   if (!requestedModel) return new Response("no model available — train or install one", { status: 409 });
   convo.model = requestedModel;
 
+  const modelInfo = allModels().find((model) => model.name === requestedModel);
+  const useOllama = modelInfo?.source === "ollama" && /gemma/i.test(requestedModel);
   const meta = startRun({ kind: "chat", conversationId: cid, model: requestedModel }, async (emit, signal) => {
     // Serving happens INSIDE the run — a cold model load can take a minute, and the
     // POST reply must not wait on it (the client is already attached and watching).
     emit({ k: "model_loading", v: { model: requestedModel, ctx: s.options.num_ctx } });
-    await ensureServing(requestedModel);
+    // Gemma's Ollama manifests are not reliably executable through this pinned
+    // llama.cpp build.  Chat had missed the compatibility routing already used
+    // by Code, Hive, and vision, causing the small Gemmas to fail despite working
+    // directly in Ollama.
+    if (useOllama) stopServing();
+    else await ensureServing(requestedModel);
 
     const payload: Record<string, unknown> = {
       model: requestedModel,
@@ -153,7 +160,7 @@ export async function POST(req: NextRequest) {
       // llama-server b9835 400s on logprobs + tools + stream (the /code loop's
       // combination), so the agent path can't have this until llama.cpp lifts it.
       logprobs: true,
-      top_logprobs: 4,
+      top_logprobs: 8,
       temperature: s.options.temperature,
       top_p: s.options.top_p,
       top_k: s.options.top_k,
@@ -164,12 +171,35 @@ export async function POST(req: NextRequest) {
 
     const acc = { full: "" };
     try {
-      const upstream = await fetch(`http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
+      if (useOllama) {
+        const upstream = await fetch("http://127.0.0.1:11434/api/chat", {
+          method: "POST", headers: { "content-type": "application/json" }, signal,
+          body: JSON.stringify({ model: requestedModel, messages: system ? [{ role: "system", content: system }, ...incoming] : incoming, stream: true, think,
+            options: { temperature: s.options.temperature, top_p: s.options.top_p, top_k: s.options.top_k, num_ctx: s.options.num_ctx, num_predict: s.options.num_predict },
+          }),
+        });
+        if (!upstream.ok || !upstream.body) throw new Error("Ollama upstream error: " + upstream.status);
+        emit({ k: "model_ready", v: { model: requestedModel, ctx: s.options.num_ctx, backend: "ollama" } });
+        await pumpOllama(upstream, emit, signal, acc, s.options.num_ctx);
+        return;
+      }
+      let upstream = await fetch(`http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
         signal,
-    });
+      });
+      // Keep every configured text model usable even when its backend does not
+      // implement streamed logprobs. The client renders a clear unavailable state
+      // in that case rather than fabricating a confidence trace.
+      if (!upstream.ok && [400, 422, 501].includes(upstream.status)) {
+        const fallback = { ...payload };
+        delete fallback.logprobs;
+        delete fallback.top_logprobs;
+        upstream = await fetch(`http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(fallback), signal,
+        });
+      }
     if (!upstream.ok || !upstream.body) throw new Error("upstream error: " + upstream.status);
       emit({ k: "model_ready", v: { model: requestedModel, ctx: s.options.num_ctx, backend: "llama.cpp" } });
       await pumpOpenAI(upstream, emit, acc, s.options.num_ctx);
@@ -257,10 +287,10 @@ async function pumpOpenAI(upstream: Response, emit: EmitFn, acc: { full: string 
             if (pe < 0.5) confLow++;
           }
           p = Math.round((sum / lpArr.length) * 1000) / 1000;
-          if (p < 0.6 && lpArr[0]?.top_logprobs?.length) {
+          if (p < 0.8 && lpArr[0]?.top_logprobs?.length) {
             alts = lpArr[0].top_logprobs
               .filter((t) => t.token !== lpArr[0].token)
-              .slice(0, 3)
+              .slice(0, 5)
               .map((t) => [t.token, Math.round(Math.exp(t.logprob) * 1000) / 1000]);
           }
         }

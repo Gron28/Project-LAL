@@ -1,0 +1,11 @@
+{
+  "name": "hive-gemma-config-merge",
+  "version": "1.0.0",
+  "description": "A dependency-free CLI to deep-merge two JSON configuration files.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "author": "",
+  "license": "MIT"
+}
