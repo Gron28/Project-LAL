@@ -502,7 +502,7 @@ export const SUITES: Record<string, BenchItem[]> = {
 const SUITES_DIR = path.join(DATA, "suites");
 fs.mkdirSync(SUITES_DIR, { recursive: true });
 const suiteId = (id: string) => (id || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40) || "suite";
-type SuiteCfg = { grade?: "substring" | "numeric" | "exec" | "checks" | "tools" | "webgen" | "orchestrator-guard"; maxTokens?: number; think?: boolean };
+type SuiteCfg = { grade?: BenchItem["grade"]; maxTokens?: number; think?: boolean };
 type StoredSuite = { id: string; label: string; items: BenchItem[]; rev: number } & SuiteCfg;
 
 // Seed suite JSON files shipped with the app (Phase 1.4: coding/planning/agentic/instruct).
@@ -517,7 +517,7 @@ function seedSuites() {
   catch { return; }
   if (!existing.has("fractal")) saveSuite("fractal", "Fractal (facts · logic · code)", FRACTAL_SUITE);
   if (!existing.has("general")) saveSuite("general", "General (math · lore)", BENCH_SUITE);
-  for (const id of ["coding", "planning", "agentic", "instruct", "webgen", "orchestrator"]) {
+  for (const id of ["coding", "planning", "agentic", "instruct", "webgen", "orchestrator", "open-inquiry"]) {
     if (existing.has(id)) continue;
     const s = loadSeedSuite(id);
     if (s) saveSuite(id, s.label, s.items, { grade: s.grade, maxTokens: s.maxTokens, think: s.think });
@@ -534,6 +534,9 @@ export function saveSuite(id: string, label: string, items: BenchItem[], cfg: Su
     checks: it.checks,
     scenario: it.scenario,
     probes: it.probes,
+    refusalExpectation: it.refusalExpectation,
+    complianceMarkers: it.complianceMarkers,
+    innerGrade: it.innerGrade,
   }));
   // anti-goalpost guard: bump rev on every save so pinned results can be flagged stale
   const prevRev = readSuiteRaw(sid)?.rev ?? 0;
@@ -675,7 +678,7 @@ export function pinBench(suite: string, model: string, pinned: boolean): { ok: b
   } catch { return { ok: false, error: "bench result not found" }; }
 }
 
-export type BenchOpts = { maxTokens?: number; grade?: "substring" | "numeric" | "exec" | "checks" | "tools" | "webgen" | "orchestrator-guard"; think?: boolean; temperature?: number; lora?: ServingLora };
+export type BenchOpts = { maxTokens?: number; grade?: BenchItem["grade"]; think?: boolean; temperature?: number; lora?: ServingLora };
 export async function runBench(model: string, items: BenchItem[] = BENCH_SUITE, opts: BenchOpts = {}) {
   const maxTokens = opts.maxTokens ?? 128;
   const suiteGrade = opts.grade ?? "substring";

@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
-import { runBench, SUITES, getSuite, listBench, saveBench, deleteBench, pinBench, HIVE_ADAPTER_DIR } from "@/lib/lab";
+import { runBench, SUITES, getSuite, listBench, saveBench, deleteBench, pinBench, HIVE_ADAPTER_DIR, type BenchOpts } from "@/lib/lab";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 1800;
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   const suiteName = (b.suite as string) || "fractal";
   const stored = getSuite(suiteName);                       // editable file-backed suite
   const items = stored?.items?.length ? stored.items : (SUITES[suiteName] || SUITES.fractal);
-  const opts: Parameters<typeof runBench>[2] = { grade: stored?.grade, maxTokens: stored?.maxTokens, think: stored?.think };
+  const opts: BenchOpts = { grade: stored?.grade, maxTokens: stored?.maxTokens, think: stored?.think };
   // Bench a base model + a specialist LoRA adapter together (e.g. is the trained
   // adapter actually better than the raw base at this suite?) — resolves under
   // HIVE_ADAPTER_DIR only, matching the same sanitization the train/serve paths use.

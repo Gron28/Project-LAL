@@ -61,6 +61,41 @@ class RoleDatasetTests(unittest.TestCase):
         edit = next(tool for tool in rows[0]["tools"] if tool["function"]["name"] == "edit_file")
         self.assertEqual(["path", "search", "replace"], edit["function"]["parameters"]["required"])
 
+    def test_open_inquirer_valid_row_passes(self):
+        value = row("Research whether local air quality affects sleep quality", answer="Evidence suggests a link; CONFIDENCE: 62 — moderate observational support.", tool="web_search")
+        value["messages"][1]["tool_calls"][0]["function"]["arguments"] = json.dumps({"q": "air quality sleep quality studies"})
+        rows, manifest = self.build("open_inquirer", [value])
+        self.assertEqual(1, len(rows))
+        arguments = json.loads(rows[0]["messages"][1]["tool_calls"][0]["function"]["arguments"])
+        self.assertEqual({"query": "air quality sleep quality studies"}, arguments)
+        tool_names = {tool["function"]["name"] for tool in rows[0]["tools"]}
+        self.assertEqual({"web_search", "web_fetch"}, tool_names)
+        self.assertEqual({}, manifest["drops"])
+
+    def test_open_inquirer_rejects_think_formatted_row(self):
+        values = [row("Research a benign but sensitive topic", answer="<think>reasoning here</think>Final answer.")]
+        rows, manifest = self.build("open_inquirer", values)
+        self.assertEqual(0, len(rows))
+        self.assertEqual(1, manifest["drops"]["think_format"])
+
+    def test_open_inquirer_rejects_deliberately_long_trace(self):
+        long_answer = "x" * 6001
+        values = [
+            row("Research a question with a short trace", answer="short and within cap"),
+            row("Research a question with a very long trace", answer=long_answer),
+        ]
+        rows, manifest = self.build("open_inquirer", values)
+        self.assertEqual(1, len(rows))
+        self.assertEqual(1, manifest["drops"]["trace_too_long"])
+
+    def test_trace_char_cap_does_not_apply_to_other_roles(self):
+        # The learnability-gap cap is open_inquirer-specific; a long coder_repairer
+        # trace (e.g. a large diff) must not be rejected by it.
+        long_answer = "x" * 6001
+        rows, manifest = self.build("coder_repairer", [row("Repair a large file", answer=long_answer)])
+        self.assertEqual(1, len(rows))
+        self.assertNotIn("trace_too_long", manifest["drops"])
+
 
 if __name__ == "__main__":
     unittest.main()

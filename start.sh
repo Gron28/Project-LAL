@@ -11,7 +11,9 @@
 # GPU serving (llama.cpp on :8099) and Ollama (:11434) are started ON DEMAND by the
 # app itself — you don't launch them here. Training likewise runs through the app.
 #
-# Ports (override with env): PORT=8770 (app), TS_PORT=443 (tailnet https).
+# Ports (override with env): PORT=8770 (app), TS_PORT=8443 (tailnet https).
+# TS_PORT must stay off 443: the bare-hostname mount (443) is reserved for the
+# inbox app on :3000 — defaulting to 443 here is what kept hijacking it.
 # Handy flags:  --install-launcher  write a double-clickable desktop entry
 #               --install-cli       install lab-agent for this user
 #               --show-cli-token    print the pairing token for another computer
@@ -24,7 +26,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
 WEB="$HERE/web"
 PORT="${PORT:-8770}"
-TS_PORT="${TS_PORT:-443}"
+TS_PORT="${TS_PORT:-8443}"
 
 c_ok(){ printf '\033[1;32m[lab]\033[0m %s\n' "$*"; }
 c_warn(){ printf '\033[1;33m[lab]\033[0m %s\n' "$*"; }

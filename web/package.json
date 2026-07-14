@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "npm run lint && tsc --noEmit"
+    "test": "npm run lint && tsc --noEmit",
+    "test:protocol": "node --test src/lib/protocol/protocol.conformance.test.ts",
+    "check:protocol-drift": "node ../scripts/check_protocol_drift.mjs"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",

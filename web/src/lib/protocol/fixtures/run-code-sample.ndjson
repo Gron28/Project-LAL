@@ -1,0 +1,11 @@
+{"seq":1,"ts":1783990228644,"k":"project","v":{"root":"/home/gron/Desktop/local-ai-lab","instructionFiles":[]}}
+{"seq":2,"ts":1783990228645,"k":"turn","v":{"base":1}}
+{"seq":3,"ts":1783990228645,"k":"model_loading","v":{"model":"gemma4:12b","ctx":8192}}
+{"seq":4,"ts":1783990228678,"k":"model_ready","v":{"model":"gemma4:12b","ctx":8192,"backend":"ollama"}}
+{"seq":5,"ts":1783990228679,"k":"round"}
+{"seq":6,"ts":1783990256290,"k":"text","v":"CLI","p":1}
+{"seq":7,"ts":1783990256380,"k":"text","v":"_","p":1}
+{"seq":8,"ts":1783990256472,"k":"text","v":"OK","p":1}
+{"seq":9,"ts":1783990256563,"k":"usage","v":{"promptTokens":3652,"completionTokens":31,"totalTokens":3683,"tokPerSec":null,"ctx":8192,"conf":{"avg":0.851,"min":0.201,"low":4}}}
+{"seq":10,"ts":1783990256564,"k":"done","v":{"conversationId":"code-mrjxpy90r7tr"}}
+{"seq":11,"ts":1783990256565,"k":"status","v":"done"}

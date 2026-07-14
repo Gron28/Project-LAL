@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { getRun, isRunLive, openRunStream } from "@/lib/runs";
+import { PROTOCOL_VERSION } from "@/lib/protocol";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
@@ -37,6 +38,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         const idLine = seq ? `id: ${seq}\n` : "";
         try { controller.enqueue(enc.encode(idLine + "data: " + payload + "\n\n")); } catch { finish(); }
       };
+
+      // Protocol handshake, stamped first on every attach — see web/src/lib/protocol
+      // for the versioning rule. Every existing client (code/agent-chat/hive) dispatches
+      // on `k` with a safe fallthrough for kinds it doesn't recognize, so an older,
+      // unaware client just ignores this frame; it costs nothing and lets a future
+      // client refuse to attach on a version it can't render. Synthesized per-connection,
+      // like the `run` preamble below — never written to the on-disk ledger.
+      send(JSON.stringify({ k: "protocol", v: PROTOCOL_VERSION }));
 
       // Current meta first, so a client knows the run's status before any replay —
       // an already-finished run replays and closes without ever "looking live".

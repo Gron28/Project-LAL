@@ -31,7 +31,7 @@ import time
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-ROLES = {"coordinator_planner", "coder_repairer", "verifier"}
+ROLES = {"coordinator_planner", "coder_repairer", "verifier", "open_inquirer"}
 SOURCE_KINDS = {"public", "verified_local", "generated"}
 BLIND_PATTERNS = [
     re.compile(r"\broguelike\s+snake\b|\bsnake\s+game\b", re.I),
@@ -42,6 +42,21 @@ ROLE_TOOL_POLICY = {
     "coordinator_planner": set(),
     "coder_repairer": {"list_files", "read_file", "read_file_outline", "grep", "write_file", "edit_file", "run_shell"},
     "verifier": {"list_files", "read_file", "read_file_outline", "grep", "run_shell"},
+    # open_inquirer (open-inquiry-protocol.md Layer B): research-only, no mutation tools —
+    # matches AGENT_TOOL_DEFS' web_search/web_fetch in web/src/lib/agent-tools.ts.
+    "open_inquirer": {"web_search", "web_fetch"},
+}
+
+# open-inquiry-protocol.md Section 4, check 1 — trace length/complexity cap. The
+# "small model learnability gap" (arXiv 2502.12143) and SCoTD (arXiv 2306.14050) findings
+# cited in the design doc show sub-3B models need short, distilled, complexity-matched
+# traces, never verbatim long teacher rationales — this is a token-free char-length proxy
+# so it holds even when no tokenizer is loaded (unlike the existing --block/token_length
+# check below, which only runs when a tokenizer is passed in). Scoped to open_inquirer
+# only: the other roles' traces (tool-call transcripts, diffs) are already bounded by that
+# tokenizer-based check and have no learnability-gap rationale for a second, tighter cap.
+ROLE_TRACE_CHAR_CAP = {
+    "open_inquirer": 6000,
 }
 
 CANONICAL_TOOLS = {
@@ -52,6 +67,9 @@ CANONICAL_TOOLS = {
     "write_file": {"type": "function", "function": {"name": "write_file", "description": "Create or overwrite a workspace text file.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
     "edit_file": {"type": "function", "function": {"name": "edit_file", "description": "Replace the first exact occurrence in a workspace file.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "search": {"type": "string"}, "replace": {"type": "string"}}, "required": ["path", "search", "replace"]}}},
     "run_shell": {"type": "function", "function": {"name": "run_shell", "description": "Run a command in the workspace sandbox.", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}},
+    # Mirrors AGENT_TOOL_DEFS in web/src/lib/agent-tools.ts verbatim (name + required args).
+    "web_search": {"type": "function", "function": {"name": "web_search", "description": "Search the web (DuckDuckGo). Returns the top results with titles, snippets and URLs.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+    "web_fetch": {"type": "function", "function": {"name": "web_fetch", "description": "Fetch a URL and return its readable text content (HTML stripped, capped).", "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}}},
 }
 REQUIRED_ARGS = {name: set(tool["function"]["parameters"].get("required", [])) for name, tool in CANONICAL_TOOLS.items()}
 
@@ -117,6 +135,8 @@ def normalize_production_tools(row: dict[str, Any], role: str) -> bool:
         "search": ["find", "old", "old_string"],
         "replace": ["replacement", "new", "new_string"],
         "command": ["cmd", "shell_command", "script"],
+        "query": ["q", "search_query", "term"],
+        "url": ["link", "href", "uri"],
     }
     for message in row.get("messages") or []:
         for call in message.get("tool_calls") or []:
@@ -175,6 +195,33 @@ def checks_pass(checks: Any) -> tuple[bool, list[str]]:
         else:
             return False, []
     return True, labels
+
+
+# open-inquiry-protocol.md Section 4, check 2 — no-think format enforcement. Qwen3
+# think-displacement lesson (memory: SFT without think blocks lobotomizes reasoning, but
+# training a "no-think" specialist ON think-formatted traces teaches the wrong format
+# outright) — a hard compiler check, not a training-time flag, so a bad row can never
+# silently slip through.
+THINK_BLOCK_PATTERN = re.compile(r"<think>|</think>", re.I)
+
+
+def has_think_block(row: dict[str, Any]) -> bool:
+    for message in row.get("messages") or []:
+        content = message.get("content")
+        if isinstance(content, str) and THINK_BLOCK_PATTERN.search(content):
+            return True
+    return False
+
+
+def trace_char_length(row: dict[str, Any]) -> int:
+    total = 0
+    for message in row.get("messages") or []:
+        content = message.get("content")
+        if isinstance(content, str):
+            total += len(content)
+        for call in message.get("tool_calls") or []:
+            total += len(str(((call or {}).get("function") or {}).get("arguments") or ""))
+    return total
 
 
 def token_length(tokenizer: Any, row: dict[str, Any]) -> int:
@@ -239,6 +286,13 @@ def build_dataset(
                 continue
             if not normalize_production_tools(row, role):
                 drop("malformed_tool_call")
+                continue
+            if has_think_block(row):
+                drop("think_format")
+                continue
+            trace_cap = ROLE_TRACE_CHAR_CAP.get(role)
+            if trace_cap and trace_char_length(row) > trace_cap:
+                drop("trace_too_long")
                 continue
             prompt = first_user(row)
             normalized_prompt = norm(prompt)

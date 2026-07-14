@@ -10,6 +10,11 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
+    // Lets test/tooling files import sibling .ts files with an explicit extension (as
+    // web/src/lib/protocol/protocol.conformance.test.ts does), so they can also be run
+    // directly by Node's native TypeScript support (`node --test`), which requires
+    // fully-specified module paths. Safe only because noEmit is true above.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
