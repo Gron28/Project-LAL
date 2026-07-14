@@ -13,6 +13,7 @@ const CONTEXT_WINDOW_SIZE = 32768;
 function inferFamily(name: string): string {
   const lower = name.toLowerCase();
   if (lower.includes("ministral")) return "Ministral-3";
+  if (lower.includes("gemma")) return "Gemma";
   if (lower.includes("qwen3")) return "Qwen3";
   if (lower.includes("qwen")) return "Qwen";
   return "custom";
@@ -36,8 +37,12 @@ export function GET(request: Request) {
   const origin = `${protocol}://${host}`;
   const customHeaders = cliDeviceCustomHeaders(request);
   const resident = servingModel();
+  // Both GGUF models served directly ("local") and Ollama-served models
+  // (Gemma, etc.) belong in the CLI's catalog — excluding Ollama entirely
+  // here hid every Gemma model from the picker even though they're legitimate,
+  // selectable chat models. The web /chat route's silent image-attachment
+  // auto-routing to a Gemma vision model is a separate, unrelated concern.
   const models = allModels()
-    .filter((model) => model.source === "local")
     .map((model) => {
       const family = inferFamily(model.name);
       const role = inferRole(model.name);
