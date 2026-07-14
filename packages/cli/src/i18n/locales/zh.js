@@ -294,7 +294,7 @@ export default {
   // ============================================================================
   // System Information Fields
   // ============================================================================
-  'LAL': 'LAL',
+  LAL: 'LAL',
   Runtime: '运行环境',
   OS: '操作系统',
   Auth: '认证',
@@ -1689,10 +1689,8 @@ export default {
   Workspace: '工作区',
   "LAL won't ask before using allowed tools.":
     'LAL 使用已允许的工具前不会询问。',
-  'LAL will ask before using these tools.':
-    'LAL 使用这些工具前会先询问。',
-  'LAL is not allowed to use denied tools.':
-    'LAL 不允许使用被拒绝的工具。',
+  'LAL will ask before using these tools.': 'LAL 使用这些工具前会先询问。',
+  'LAL is not allowed to use denied tools.': 'LAL 不允许使用被拒绝的工具。',
   'Manage trusted directories for this workspace.':
     '管理此工作区的受信任目录。',
   'Any use of the {{tool}} tool': '{{tool}} 工具的任何使用',

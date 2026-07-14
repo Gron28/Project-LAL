@@ -305,7 +305,7 @@ export default {
   // ============================================================================
   // System Information Fields
   // ============================================================================
-  'LAL': 'LAL',
+  LAL: 'LAL',
   Runtime: 'Runtime',
   OS: 'OS',
   Auth: 'Auth',
@@ -587,8 +587,7 @@ export default {
   'Step {{n}}: Choose Location': 'Step {{n}}: Choose Location',
   'Step {{n}}: Choose Generation Method':
     'Step {{n}}: Choose Generation Method',
-  'Generate with LAL (Recommended)':
-    'Generate with LAL (Recommended)',
+  'Generate with LAL (Recommended)': 'Generate with LAL (Recommended)',
   'Manual Creation': 'Manual Creation',
   'Describe what this subagent should do and when it should be used. (Be comprehensive for best results)':
     'Describe what this subagent should do and when it should be used. (Be comprehensive for best results)',
@@ -2595,8 +2594,7 @@ export default {
     'LAL update available! {{current}} → {{latest}}',
   'A new version of LAL is available! {{current}} → {{latest}}':
     'A new version of LAL is available! {{current}} → {{latest}}',
-  'LAL {{version}} is up to date!':
-    'LAL {{version}} is up to date!',
+  'LAL {{version}} is up to date!': 'LAL {{version}} is up to date!',
   'Failed to check for updates. Please check your network or registry configuration.':
     'Failed to check for updates. Please check your network or registry configuration.',
   'Unable to check for updates: {{reason}}':

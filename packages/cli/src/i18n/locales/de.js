@@ -73,7 +73,7 @@ export default {
   // ============================================================================
   // System Information Fields
   // ============================================================================
-  'LAL': 'LAL',
+  LAL: 'LAL',
   Runtime: 'Laufzeit',
   OS: 'Betriebssystem',
   Auth: 'Authentifizierung',
@@ -327,8 +327,7 @@ export default {
   'Step {{n}}: Choose Location': 'Schritt {{n}}: Speicherort wählen',
   'Step {{n}}: Choose Generation Method':
     'Schritt {{n}}: Generierungsmethode wählen',
-  'Generate with LAL (Recommended)':
-    'Mit LAL generieren (Empfohlen)',
+  'Generate with LAL (Recommended)': 'Mit LAL generieren (Empfohlen)',
   'Manual Creation': 'Manuelle Erstellung',
   'Describe what this subagent should do and when it should be used. (Be comprehensive for best results)':
     'Beschreiben Sie, was dieser Unteragent tun soll und wann er verwendet werden soll. (Ausführliche Beschreibung für beste Ergebnisse)',
@@ -390,8 +389,7 @@ export default {
   // ============================================================================
   // Commands - General (continued)
   // ============================================================================
-  'View and edit LAL settings':
-    'LAL Einstellungen anzeigen und bearbeiten',
+  'View and edit LAL settings': 'LAL Einstellungen anzeigen und bearbeiten',
   Settings: 'Einstellungen',
   'To see changes, LAL must be restarted. Press r to exit and apply changes now.':
     'Um Änderungen zu sehen, muss LAL neu gestartet werden. Drücken Sie r, um jetzt zu beenden und Änderungen anzuwenden.',

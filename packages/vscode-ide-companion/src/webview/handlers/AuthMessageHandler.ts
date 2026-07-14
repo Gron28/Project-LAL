@@ -238,8 +238,7 @@ export class AuthMessageHandler extends BaseMessageHandler {
   // ---------------------------------------------------------------------------
 
   private async runProviderSetupFlow(provider: ProviderConfig): Promise<void> {
-    const flowTitle =
-      provider.uiLabels?.flowTitle ?? `LAL: ${provider.label}`;
+    const flowTitle = provider.uiLabels?.flowTitle ?? `LAL: ${provider.label}`;
 
     // Step 0: Protocol (only for providers offering multiple, e.g. custom)
     let protocol: AuthType | undefined;

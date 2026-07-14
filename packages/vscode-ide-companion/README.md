@@ -39,9 +39,9 @@ Seamlessly integrate [LAL](https://github.com/QwenLM/qwen-code) into Visual Stud
 
 ## Commands
 
-| Command                          | Description                                            |
-| -------------------------------- | ------------------------------------------------------ |
-| `LAL: Open`                | Open the LAL Chat panel                          |
+| Command                    | Description                                            |
+| -------------------------- | ------------------------------------------------------ |
+| `LAL: Open`                | Open the LAL Chat panel                                |
 | `LAL: Run`                 | Launch a classic terminal session with the bundled CLI |
 | `LAL: Accept Current Diff` | Accept the currently displayed diff                    |
 | `LAL: Close Diff Editor`   | Close/reject the current diff                          |

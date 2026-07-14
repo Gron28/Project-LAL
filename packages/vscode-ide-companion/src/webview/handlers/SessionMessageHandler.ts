@@ -795,9 +795,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
       console.warn('[SessionMessageHandler] Agent not connected');
 
       // Show non-modal notification with Configure button
-      await this.promptAuth(
-        'You need to configure your provider to use LAL.',
-      );
+      await this.promptAuth('You need to configure your provider to use LAL.');
       return;
     }
 

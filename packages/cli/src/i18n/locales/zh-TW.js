@@ -285,7 +285,7 @@ export default {
   'show paths for current session files and logs': '顯示目前會話檔案和日誌路徑',
   'submit a bug report': '提交錯誤報告',
   Status: '狀態',
-  'LAL': 'LAL',
+  LAL: 'LAL',
   Runtime: '運行環境',
   OS: '操作系統',
   Auth: '認證',
@@ -1544,10 +1544,8 @@ export default {
   Workspace: '工作區',
   "LAL won't ask before using allowed tools.":
     'LAL 使用已允許的工具前不會詢問。',
-  'LAL will ask before using these tools.':
-    'LAL 使用這些工具前會先詢問。',
-  'LAL is not allowed to use denied tools.':
-    'LAL 不允許使用被拒絕的工具。',
+  'LAL will ask before using these tools.': 'LAL 使用這些工具前會先詢問。',
+  'LAL is not allowed to use denied tools.': 'LAL 不允許使用被拒絕的工具。',
   'Manage trusted directories for this workspace.':
     '管理此工作區的受信任目錄。',
   'Any use of the {{tool}} tool': '{{tool}} 工具的任何使用',

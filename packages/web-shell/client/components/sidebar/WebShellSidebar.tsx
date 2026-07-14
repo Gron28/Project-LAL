@@ -2971,9 +2971,7 @@ export function WebShellSidebar({
                 <span className={styles.brandLogo} aria-hidden="true">
                   <IconQwenLogo />
                 </span>
-                {!collapsed && (
-                  <span className={styles.brandName}>LAL</span>
-                )}
+                {!collapsed && <span className={styles.brandName}>LAL</span>}
               </>
             )}
           </div>

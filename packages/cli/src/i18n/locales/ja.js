@@ -563,8 +563,7 @@ export default {
   'When a slash command expands into a prompt':
     'スラッシュコマンドがプロンプトに展開された時',
   'When a new session is started': '新しいセッションが開始された時',
-  'Right before LAL concludes its response':
-    'LAL が応答を終了する直前',
+  'Right before LAL concludes its response': 'LAL が応答を終了する直前',
   'When a subagent (Agent tool call) is started':
     'サブエージェント（Agent ツール呼び出し）が開始された時',
   'Right before a subagent concludes its response':
@@ -1616,7 +1615,7 @@ export default {
 
   // === Missing key backfill ===
   Status: 'ステータス',
-  'LAL': 'LAL',
+  LAL: 'LAL',
   Runtime: 'ランタイム',
   OS: 'OS',
   Auth: '認証',

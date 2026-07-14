@@ -101,8 +101,7 @@ export const tipRegistry: ContextualTip[] = [
   },
   {
     id: 'shell-commands',
-    content:
-      'You can run any shell commands from LAL using ! (e.g. !ls).',
+    content: 'You can run any shell commands from LAL using ! (e.g. !ls).',
     trigger: 'startup',
     isRelevant: (ctx) => ctx.sessionCount < 15,
     cooldownPrompts: 0,

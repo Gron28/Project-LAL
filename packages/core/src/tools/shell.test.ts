@@ -4858,9 +4858,7 @@ describe('ShellTool', () => {
         expect(observed).toContain("don'\\''t break me");
         // The attribution lands AFTER the original body, not in the
         // middle of it.
-        expect(observed).toMatch(
-          /don'\\''t break me[\s\S]*Generated with LAL/,
-        );
+        expect(observed).toMatch(/don'\\''t break me[\s\S]*Generated with LAL/);
       });
     });
 

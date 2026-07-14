@@ -85,7 +85,7 @@ export default {
   // ============================================================================
   // System Information Fields
   // ============================================================================
-  'LAL': 'LAL',
+  LAL: 'LAL',
   OS: 'SO',
   Auth: 'Autenticação',
   Model: 'Modelo',
@@ -2130,8 +2130,7 @@ export default {
     'Atualização do LAL disponível! {{current}} → {{latest}}',
   'A new version of LAL is available! {{current}} → {{latest}}':
     'Uma nova versão do LAL está disponível! {{current}} → {{latest}}',
-  'LAL {{version}} is up to date!':
-    'LAL {{version}} está atualizado!',
+  'LAL {{version}} is up to date!': 'LAL {{version}} está atualizado!',
   'Failed to check for updates. Please check your network or registry configuration.':
     'Falha ao verificar atualizações. Verifique sua rede ou configuração do registro.',
   'Unable to check for updates: {{reason}}':

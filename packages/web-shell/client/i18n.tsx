@@ -60,8 +60,7 @@ const EN: Messages = {
   'agent.create.method': 'Choose Generation Method',
   'agent.create.method.manual': 'Manual Creation',
   'agent.create.method.qwen': 'Generate with LAL',
-  'agent.create.method.qwen.recommended':
-    'Generate with LAL (Recommended)',
+  'agent.create.method.qwen.recommended': 'Generate with LAL (Recommended)',
   'agent.create.method.qwen.desc':
     'LLM generates name, prompt, and description',
   'agent.create.name': 'Name',
@@ -1049,8 +1048,7 @@ const EN: Messages = {
   'local.workflows': 'List active and completed workflow runs',
   'skilldesc.batch': 'Run batch operations across many files in parallel',
   'skilldesc.dataviz': 'Design guidance for charts and data visualizations',
-  'skilldesc.extensionCreator':
-    'Create, test, and customize LAL extensions',
+  'skilldesc.extensionCreator': 'Create, test, and customize LAL extensions',
   'skilldesc.loop': 'Run a prompt on a schedule or self-paced wakeups',
   'skilldesc.newApp': 'Workflow for building a new app from scratch',
   'skilldesc.qcHelper': 'Answer questions about using LAL',
@@ -2840,8 +2838,7 @@ const ZH: Messages = {
   'help.empty': '当前没有可用命令。',
   'help.emptyCustom': '当前没有可用的自定义命令。',
   'help.footer': 'Tab/Shift+Tab 切换标签 · ↑/↓ 或 PgUp/PgDn 滚动 · Esc 关闭',
-  'help.intro':
-    'LAL 可以理解代码库，在你的许可下修改文件，并直接执行命令。',
+  'help.intro': 'LAL 可以理解代码库，在你的许可下修改文件，并直接执行命令。',
   'help.section.shortcuts': '快捷键',
   'help.search': '搜索命令',
   'help.shortcut.addContext': '添加文件或目录作为上下文',

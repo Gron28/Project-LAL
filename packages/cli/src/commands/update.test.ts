@@ -220,9 +220,7 @@ describe('update command', () => {
 
     await updateCommand.handler(updateArgs);
 
-    expect(writeStdoutLine).toHaveBeenCalledWith(
-      'LAL 1.0.0 is up to date!',
-    );
+    expect(writeStdoutLine).toHaveBeenCalledWith('LAL 1.0.0 is up to date!');
     expect(getInstallationInfo).not.toHaveBeenCalled();
   });
 

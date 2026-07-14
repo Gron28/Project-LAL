@@ -19,11 +19,7 @@ import { t } from '../../i18n/index.js';
 const LAL_BRAND_CYAN = '#22D3C5';
 const LAL_BRAND_GREEN = '#55E06F';
 const LAL_BRAND_YELLOW = '#E6D85C';
-const LAL_BRAND_GRADIENT = [
-  LAL_BRAND_CYAN,
-  LAL_BRAND_GREEN,
-  LAL_BRAND_YELLOW,
-];
+const LAL_BRAND_GRADIENT = [LAL_BRAND_CYAN, LAL_BRAND_GREEN, LAL_BRAND_YELLOW];
 
 /**
  * Auth display type for the Header component.

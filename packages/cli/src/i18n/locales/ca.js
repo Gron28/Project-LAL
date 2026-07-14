@@ -91,7 +91,7 @@ export default {
   // ============================================================================
   // Informació del sistema
   // ============================================================================
-  'LAL': 'LAL',
+  LAL: 'LAL',
   Runtime: "Entorn d'execució",
   OS: 'SO',
   Auth: 'Autenticació',
@@ -460,8 +460,7 @@ export default {
   // ============================================================================
   // Ordres - General (continuació)
   // ============================================================================
-  'View and edit LAL settings':
-    'Veure i editar la configuració de LAL',
+  'View and edit LAL settings': 'Veure i editar la configuració de LAL',
   Settings: 'Configuració',
   'To see changes, LAL must be restarted. Press r to exit and apply changes now.':
     'Per veure els canvis, cal reiniciar LAL. Premeu r per sortir i aplicar els canvis ara.',
@@ -2099,8 +2098,7 @@ export default {
     'Actualització de LAL disponible! {{current}} → {{latest}}',
   'A new version of LAL is available! {{current}} → {{latest}}':
     'Hi ha una versió nova de LAL disponible! {{current}} → {{latest}}',
-  'LAL {{version}} is up to date!':
-    'LAL {{version}} està actualitzat!',
+  'LAL {{version}} is up to date!': 'LAL {{version}} està actualitzat!',
   'Failed to check for updates. Please check your network or registry configuration.':
     "No s'han pogut comprovar les actualitzacions. Comproveu la xarxa o la configuració del registre.",
   'Unable to check for updates: {{reason}}':

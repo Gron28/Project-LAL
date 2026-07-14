@@ -90,7 +90,7 @@ export default {
   // ============================================================================
   // Informations système
   // ============================================================================
-  'LAL': 'LAL',
+  LAL: 'LAL',
   Runtime: 'Environnement',
   OS: 'OS',
   Model: 'Modèle',
@@ -351,8 +351,7 @@ export default {
   'Step {{n}}: Choose Location': "Étape {{n}} : Choisir l'emplacement",
   'Step {{n}}: Choose Generation Method':
     'Étape {{n}} : Choisir la méthode de génération',
-  'Generate with LAL (Recommended)':
-    'Générer avec LAL (Recommandé)',
+  'Generate with LAL (Recommended)': 'Générer avec LAL (Recommandé)',
   'Manual Creation': 'Création manuelle',
   'Describe what this subagent should do and when it should be used. (Be comprehensive for best results)':
     'Décrivez ce que ce sous-agent doit faire et quand il doit être utilisé. (Soyez complet pour de meilleurs résultats)',
@@ -464,8 +463,7 @@ export default {
   // ============================================================================
   // Commandes - Général (suite)
   // ============================================================================
-  'View and edit LAL settings':
-    'Voir et modifier les paramètres de LAL',
+  'View and edit LAL settings': 'Voir et modifier les paramètres de LAL',
   Settings: 'Paramètres',
   'To see changes, LAL must be restarted. Press r to exit and apply changes now.':
     'Pour voir les changements, LAL doit être redémarré. Appuyez sur r pour quitter et appliquer les changements maintenant.',
