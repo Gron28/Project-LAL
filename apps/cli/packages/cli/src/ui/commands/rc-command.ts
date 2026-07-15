@@ -6,26 +6,16 @@
 
 import type { MessageActionReturn, SlashCommand } from './types.js';
 import { CommandKind } from './types.js';
-import { createRequire } from 'node:module';
+import qrcode from 'qrcode-terminal';
 import { RemoteRunMirror } from '../../lal/remote-run/remote-run-mirror.js';
 import { GatewayClient } from '../../lal/attach/gateway-client.js';
 
 let activeMirror: RemoteRunMirror | null = null;
 let activeRemoteUrl: string | null = null;
-const require = createRequire(import.meta.url);
-
-type TerminalQr = {
-  generate(
-    value: string,
-    options: { small: boolean },
-    callback: (qr: string) => void,
-  ): void;
-};
-
 function terminalQr(value: string): string | null {
   try {
     let output = '';
-    (require('qrcode-terminal') as TerminalQr).generate(
+    qrcode.generate(
       value,
       { small: true },
       (qr) => {
