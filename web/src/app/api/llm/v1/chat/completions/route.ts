@@ -7,6 +7,12 @@ export const maxDuration = 3600;
 
 type Usage = { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown };
 type Logprob = { logprob?: unknown; token?: unknown; top_logprobs?: Array<{ token?: unknown; logprob?: unknown }> };
+const LAL_TERMINAL_TOOLS = new Set([
+  "read_file",
+  "edit",
+  "write_file",
+  "run_shell_command",
+]);
 
 function asCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
@@ -30,13 +36,17 @@ function compactToolSchema(value: unknown): unknown {
 
 function compactTools(value: unknown): unknown {
   if (!Array.isArray(value)) return value;
-  return value.map((tool) => {
+  return value.flatMap((tool) => {
     if (!tool || typeof tool !== "object") return tool;
     const entry = tool as Record<string, unknown>;
     const fn = entry.function;
     if (!fn || typeof fn !== "object") return tool;
     const functionDef = fn as Record<string, unknown>;
     const name = typeof functionDef.name === "string" ? functionDef.name : "tool";
+    // This is the product boundary, not merely a client preference: old
+    // managed settings cannot quietly reintroduce agent teams, generic
+    // clarification dialogs, MCP, or workflow tools into a small-model turn.
+    if (!LAL_TERMINAL_TOOLS.has(name)) return [];
     return {
       ...entry,
       function: {
