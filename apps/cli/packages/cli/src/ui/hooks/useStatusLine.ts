@@ -732,6 +732,10 @@ export function useStatusLine(): {
     respectUserColors:
       statusLineConfig?.type === 'command' &&
       statusLineConfig.respectUserColors === true,
-    hideContextIndicator: statusLineConfig?.hideContextIndicator === true,
+    hideContextIndicator:
+      statusLineConfig?.hideContextIndicator === true ||
+      (statusLinePreset?.hideContextIndicator === true) ||
+      statusLinePreset?.items.includes('context-used') === true ||
+      statusLinePreset?.items.includes('context-remaining') === true,
   };
 }
