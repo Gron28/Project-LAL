@@ -83,11 +83,18 @@ export class RemoteRunMirror {
   private readonly onStreamText = (event: {
     text: string;
     thought?: boolean;
+    p?: number;
+    alts?: [string, number][];
   }) => {
     const next = event.thought
       ? this.streamDelta(event.text, 'thought')
       : this.streamDelta(event.text, 'text');
-    if (next) this.enqueue({ k: event.thought ? 'think' : 'text', v: next });
+    if (next) this.enqueue({
+      k: event.thought ? 'think' : 'text',
+      v: next,
+      ...(typeof event.p === 'number' ? { p: event.p } : {}),
+      ...(!event.thought && event.alts?.length ? { alts: event.alts } : {}),
+    });
   };
   private readonly onRoundText = (event: { text: string; thoughtText: string }) => {
     const thought = event.thoughtText && this.streamDelta(event.thoughtText, 'thought');

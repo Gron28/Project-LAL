@@ -122,6 +122,8 @@ export interface UIState {
   showEscapePrompt: boolean;
   elapsedTime: number;
   currentLoadingPhrase: string;
+  /** Recent token probabilities for the live J-space certainty trace. */
+  certaintyWave: number[];
   historyRemountKey: number;
   messageQueue: string[];
   showAutoAcceptIndicator: ApprovalMode;

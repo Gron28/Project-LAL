@@ -90,6 +90,9 @@ export interface AgentStreamTextEvent {
   text: string;
   /** Whether this text is reasoning/thinking content (as opposed to regular output) */
   thought?: boolean;
+  /** Probability metadata for the J-space certainty trace, when the provider exposes it. */
+  p?: number;
+  alts?: [string, number][];
   timestamp: number;
 }
 

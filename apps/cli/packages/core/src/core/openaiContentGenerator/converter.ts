@@ -1341,6 +1341,41 @@ export function convertOpenAIChunkToGemini(
     }
     parts.push(...contentParts);
 
+    // Preserve OpenAI-compatible logprobs on the generated Part so the LAL
+    // terminal can render the same live J-space certainty trace as the web UI.
+    // Providers differ on whether `logprobs.content` is present, so this is
+    // intentionally best-effort and never changes normal text handling.
+    const logprobItem = (
+      choice as unknown as {
+        logprobs?: {
+          content?: Array<{
+            token?: unknown;
+            logprob?: unknown;
+            top_logprobs?: Array<{ token?: unknown; logprob?: unknown }>;
+          }>;
+        };
+      }
+    ).logprobs?.content?.[0];
+    const chosenLogprob = Number(logprobItem?.logprob);
+    if (Number.isFinite(chosenLogprob)) {
+      const p = Math.max(0, Math.min(1, Math.exp(chosenLogprob)));
+      const alts = (logprobItem?.top_logprobs ?? []).flatMap((candidate) => {
+        const token = typeof candidate.token === 'string' ? candidate.token : null;
+        const logprob = Number(candidate.logprob);
+        return token && Number.isFinite(logprob)
+          ? [[token, Math.max(0, Math.min(1, Math.exp(logprob)))]] as [string, number][]
+          : [];
+      });
+      for (const part of parts) {
+        if (typeof part.text === 'string' && part.text.length > 0) {
+          const signal = part as Part & { p?: number; alts?: [string, number][] };
+          signal.p = p;
+          if (alts.length > 0) signal.alts = alts;
+          break;
+        }
+      }
+    }
+
     // Handle tool calls using the stream-local parser
     if (choice.delta?.tool_calls) {
       for (const toolCall of choice.delta.tool_calls) {

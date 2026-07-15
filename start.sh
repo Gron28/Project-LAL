@@ -81,6 +81,20 @@ Categories=Development;Utility;"
   exit 0
 fi
 
+# Make the launcher self-contained on a fresh Linux user. The rebuild script
+# restarts this unit, so configure it before building without starting an old
+# or nonexistent production bundle first.
+if command -v systemctl >/dev/null 2>&1; then
+  unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  mkdir -p "$unit_dir"
+  ln -sfn "$HERE/deploy/systemd/project-lal.service" "$unit_dir/project-lal.service"
+  systemctl --user daemon-reload
+  systemctl --user enable project-lal.service >/dev/null
+else
+  c_err "systemctl is required to start the managed Project-LAL service."
+  exit 1
+fi
+
 # --- expose on the tailnet (best-effort; local access works regardless) ------
 if command -v tailscale >/dev/null 2>&1; then
   if tailscale serve --bg --https="$TS_PORT" "http://127.0.0.1:${PORT}" >/dev/null 2>&1; then
@@ -97,4 +111,12 @@ if command -v tailscale >/dev/null 2>&1; then
 fi
 
 c_ok "Safely rebuilding Local AI Lab…"
-OPEN_BROWSER=1 exec "$HERE/scripts/rebuild-local-ai-lab.sh"
+OPEN_BROWSER=1 "$HERE/scripts/rebuild-local-ai-lab.sh"
+
+# Keep the owner machine's terminal client on the same source and pairing
+# settings as the freshly deployed host. Remote Windows clients use the
+# checksum-pinned release published by the UI; this local install is the Linux
+# recovery/development path.
+if [ -f "$WEB/.data/cli-token" ]; then
+  "$HERE/scripts/install-local-lal.sh"
+fi

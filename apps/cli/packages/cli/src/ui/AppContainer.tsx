@@ -38,6 +38,8 @@ import {
 import {
   type EditorType,
   AgentEventEmitter,
+  AgentEventType,
+  type AgentStreamTextEvent,
   type Config,
   type IdeInfo,
   type IdeContext,
@@ -546,6 +548,18 @@ export const AppContainer = (props: AppContainerProps) => {
   const activeAgentEventEmitter = agentViewState.activeView === 'main'
     ? mainAgentEventEmitterRef.current
     : agentViewState.agents.get(agentViewState.activeView)?.interactiveAgent.getEventEmitter();
+  const [certaintyWave, setCertaintyWave] = useState<number[]>([]);
+  useEffect(() => {
+    const emitter = mainAgentEventEmitterRef.current;
+    if (!emitter) return;
+    const onStreamText = (event: AgentStreamTextEvent) => {
+      const p = (event as AgentStreamTextEvent & { p?: number }).p;
+      if (typeof p !== 'number') return;
+      setCertaintyWave((previous) => [...previous.slice(-47), p]);
+    };
+    emitter.on(AgentEventType.STREAM_TEXT, onStreamText);
+    return () => emitter.off(AgentEventType.STREAM_TEXT, onStreamText);
+  }, []);
   const remoteSubmitRef = useRef<
     ((text: string) => Promise<boolean> | boolean) | null
   >(null);
@@ -4098,6 +4112,7 @@ export const AppContainer = (props: AppContainerProps) => {
       isFocused,
       elapsedTime,
       currentLoadingPhrase,
+      certaintyWave,
       historyRemountKey,
       messageQueue,
       showAutoAcceptIndicator,
@@ -4241,6 +4256,7 @@ export const AppContainer = (props: AppContainerProps) => {
       isFocused,
       elapsedTime,
       currentLoadingPhrase,
+      certaintyWave,
       historyRemountKey,
       messageQueue,
       showAutoAcceptIndicator,

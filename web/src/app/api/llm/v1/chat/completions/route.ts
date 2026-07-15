@@ -1,4 +1,4 @@
-import { allModels, ensureServing, SERVE_PORT, touchServing } from "@/lib/lab";
+import { allModels, ensureServing, SERVE_PORT, stopServing, touchServing } from "@/lib/lab";
 import { appendHostObservationForClientDevice } from "@/lib/runs";
 import { acquireCliGpuLease, cliAuthenticatedDeviceId, cliAuthorized, recordCliAccess, streamWithRelease, unauthorizedResponse } from "@/lib/lal-cli";
 
@@ -67,7 +67,8 @@ export async function POST(request: Request) {
 
   const model = typeof payload.model === "string" ? payload.model : "";
   const deviceId = cliAuthenticatedDeviceId(request);
-  const available = allModels().some((item) => item.source === "local" && item.name === model);
+  const modelInfo = allModels().find((item) => item.name === model);
+  const available = Boolean(modelInfo);
   if (!available) {
     return Response.json(
       { error: { message: `Unknown or unsupported CLI model: ${model}`, type: "invalid_request_error" } },
@@ -117,12 +118,20 @@ export async function POST(request: Request) {
     });
   };
 
-  appendHostObservationForClientDevice(deviceId, { k: "model_loading", v: { model, ctx: 32768 } });
+  appendHostObservationForClientDevice(deviceId, { k: "model_loading", v: { model, ctx: modelInfo?.source === "ollama" ? 16384 : 32768 } });
   const release = await acquireCliGpuLease();
   try {
-    await ensureServing(model, 32768);
+    const isOllama = modelInfo?.source === "ollama";
+    if (isOllama) {
+      // Gemma and other Ollama-only architectures must never be handed to the
+      // pinned llama.cpp build. Stop our server so Ollama owns the GPU, then
+      // use Ollama's OpenAI-compatible endpoint below.
+      stopServing();
+    } else {
+      await ensureServing(model, 32768);
+    }
     touchServing();
-    appendHostObservationForClientDevice(deviceId, { k: "model_ready", v: { model, ctx: 32768, backend: "llama.cpp" } });
+    appendHostObservationForClientDevice(deviceId, { k: "model_ready", v: { model, ctx: isOllama ? 16384 : 32768, backend: isOllama ? "ollama" : "llama.cpp" } });
     // llama.cpp rejects logprobs together with streamed tool definitions. Keep
     // the terminal agent's tool loop working first; request token confidence
     // only for plain streamed turns where this backend supports it.
@@ -136,14 +145,16 @@ export async function POST(request: Request) {
       ? {
           ...payloadWithoutLogprobs,
           ...(hasTools ? { tools: compactTools(payload.tools) } : {}),
-          ...(!hasTools ? { logprobs: true, top_logprobs: 3 } : {}),
+          // Ollama's OpenAI compatibility layer does not reliably accept or
+          // return logprobs; only ask llama.cpp for the J-space signal.
+          ...(!hasTools && !isOllama ? { logprobs: true, top_logprobs: 3 } : {}),
           stream_options: {
             ...(typeof payload.stream_options === "object" && payload.stream_options ? payload.stream_options as Record<string, unknown> : {}),
             include_usage: true,
           },
         }
       : payloadWithoutLogprobs;
-    const upstream = await fetch(`http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
+    const upstream = await fetch(`${isOllama ? "http://127.0.0.1:11434" : `http://127.0.0.1:${SERVE_PORT}`}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: request.headers.get("accept") ?? "application/json" },
       body: JSON.stringify(upstreamPayload),

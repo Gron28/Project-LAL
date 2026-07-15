@@ -46,6 +46,13 @@ export const Footer: React.FC = () => {
 
   const { columns: terminalWidth } = useTerminalSize();
   const isNarrow = isNarrowWidth(terminalWidth);
+  const certainty = uiState.certaintyWave;
+  const certaintyAverage = certainty.length
+    ? certainty.reduce((sum, value) => sum + value, 0) / certainty.length
+    : null;
+  const certaintyGraph = certainty
+    .map((value) => (value >= 0.8 ? '▂' : value >= 0.55 ? '▅' : '▇'))
+    .join('');
 
   // Determine sandbox info from environment
   const sandboxEnv = process.env['SANDBOX'];
@@ -202,6 +209,11 @@ export const Footer: React.FC = () => {
               </Text>
             </Box>
           )}
+        {(certainty.length > 0 || uiState.streamingState !== 'idle') && (
+          <Text color={theme.text.secondary} wrap="truncate">
+            {`J-space ${certaintyGraph || '···'}${certaintyAverage == null ? ' waiting' : ` ${Math.round(certaintyAverage * 100)}%`}`}
+          </Text>
+        )}
         {/* Built-in worktree indicator. Shown by default whenever a
             worktree is active so the user always has a UI affordance,
             even when a custom statusline is configured — their script

@@ -910,6 +910,12 @@ export class AgentCore {
                   round: turnCounter,
                   text: txt,
                   thought: isThought,
+                  ...(() => {
+                    const signal = p as typeof p & { p?: number; alts?: [string, number][] };
+                    return typeof signal.p === 'number'
+                      ? { p: signal.p, ...(signal.alts?.length ? { alts: signal.alts } : {}) }
+                      : {};
+                  })(),
                   timestamp: Date.now(),
                 });
             }
