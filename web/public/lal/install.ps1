@@ -33,7 +33,14 @@ $Headers = @{
 }
 $SettingsText = (Invoke-WebRequest -UseBasicParsing -Headers $Headers "$HostUrl/api/lal/client-settings").Content
 $SystemPromptPath = Join-Path $LalHome 'system.md'
-Invoke-WebRequest -UseBasicParsing -OutFile $SystemPromptPath "$HostUrl/lal/system.md"
+$SystemBasePromptPath = Join-Path $LalHome 'system.base.md'
+$SystemLocalPromptPath = Join-Path $LalHome 'system.local.md'
+Invoke-WebRequest -UseBasicParsing -OutFile $SystemBasePromptPath "$HostUrl/lal/system.md"
+if (-not (Test-Path $SystemLocalPromptPath)) {
+  [IO.File]::WriteAllText($SystemLocalPromptPath, '# Your local LAL prompt additions. This file is preserved by lal update.' + "`r`n", [Text.Encoding]::UTF8)
+}
+$SystemPrompt = (Get-Content -LiteralPath $SystemBasePromptPath -Raw) + "`r`n`r`n---`r`n`r`n# Owner additions (system.local.md)`r`n`r`n" + (Get-Content -LiteralPath $SystemLocalPromptPath -Raw)
+[IO.File]::WriteAllText($SystemPromptPath, $SystemPrompt, [Text.Encoding]::UTF8)
 
 $RuntimeFile = Join-Path $LalHome 'runtime-version'
 $InstalledRuntime = if (Test-Path $RuntimeFile) { (Get-Content $RuntimeFile -Raw).Trim() } else { '' }
@@ -104,6 +111,7 @@ Set-LalSettingProperty $CurrentSettings '$version' $ManagedSettings.'$version'
 Set-LalSettingProperty $CurrentSettings 'general' $CurrentGeneral
 Set-LalSettingProperty $CurrentSettings 'privacy' $ManagedSettings.privacy
 Set-LalSettingProperty $CurrentSettings 'telemetry' $ManagedSettings.telemetry
+Set-LalSettingProperty $CurrentSettings 'tools' $ManagedSettings.tools
 Set-LalSettingProperty $CurrentSettings 'context' $ManagedSettings.context
 Set-LalSettingProperty $CurrentSettings 'security' $ManagedSettings.security
 Set-LalSettingProperty $CurrentSettings 'model' $ManagedSettings.model
