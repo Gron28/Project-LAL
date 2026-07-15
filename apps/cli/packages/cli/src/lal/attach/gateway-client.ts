@@ -20,14 +20,16 @@
 // a future gate) but never refuses to call `/api/agent/*` just because no
 // token is configured.
 import { PROTOCOL_VERSION } from '@qwen-code/qwen-code-core';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 
 /** Default origin for the gateway when nothing else is configured — the box
  * this fork is developed against runs the Next.js app on :8770 (see
  * HANDOFF/memory notes: "app is port 8770 not 3000"). */
 export const DEFAULT_GATEWAY_ORIGIN = 'http://localhost:8770';
 
-export const CLI_CLIENT_VERSION = '0.1.0-lal.8';
+export const CLI_CLIENT_VERSION = '0.1.0-lal.9';
 
 export interface GatewayRunMeta {
   id: string;
@@ -105,6 +107,8 @@ export function resolveGatewayOrigin(
 ): string {
   const fromEnv = env['LAL_GATEWAY_URL']?.trim();
   if (fromEnv) return fromEnv.replace(/\/+$/, '');
+  const pairedHost = readLalFile('client-host');
+  if (pairedHost) return pairedHost.replace(/\/+$/, '');
   return DEFAULT_GATEWAY_ORIGIN;
 }
 
@@ -117,8 +121,36 @@ export function resolveGatewayToken(
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   return (
-    env['LAL_API_KEY']?.trim() || env['LAL_CLI_TOKEN']?.trim() || undefined
+    env['LAL_API_KEY']?.trim() ||
+    env['LAL_CLI_TOKEN']?.trim() ||
+    readLalEnvToken() ||
+    undefined
   );
+}
+
+/** The Windows installer persists the paired host and token in ~/.lal so a
+ * newly opened terminal works without manually exporting environment values.
+ * Environment variables remain the explicit override for development and
+ * recovery. */
+function readLalFile(name: string): string | undefined {
+  try {
+    const value = fs
+      .readFileSync(path.join(os.homedir(), '.lal', name), 'utf8')
+      .trim();
+    return value || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readLalEnvToken(): string | undefined {
+  const contents = readLalFile('.env');
+  if (!contents) return undefined;
+  const line = contents
+    .split(/\r?\n/)
+    .find((entry) => entry.startsWith('LAL_API_KEY='));
+  const token = line?.slice('LAL_API_KEY='.length).trim();
+  return token || undefined;
 }
 
 let cachedDeviceId: string | undefined;
@@ -260,9 +292,7 @@ export class GatewayClient {
   }
 
   /** `POST /api/agent/runs/{id}/stop`. */
-  async stopRun(
-    id: string,
-  ): Promise<{
+  async stopRun(id: string): Promise<{
     ok: boolean;
     stopping?: boolean;
     status?: string;
