@@ -12,6 +12,42 @@ function asCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
 }
 
+/** Keep the executable tool contract while removing inherited prose that can
+ * consume thousands of prompt tokens on a small local model. Tool names,
+ * parameter names, types, required fields, enums, and structural constraints
+ * are preserved; only documentation-only JSON Schema annotations are removed. */
+function compactToolSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(compactToolSchema);
+  if (!value || typeof value !== "object") return value;
+  const source = value as Record<string, unknown>;
+  const compact: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(source)) {
+    if (key === "description" || key === "title" || key === "examples" || key === "$schema") continue;
+    compact[key] = compactToolSchema(child);
+  }
+  return compact;
+}
+
+function compactTools(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((tool) => {
+    if (!tool || typeof tool !== "object") return tool;
+    const entry = tool as Record<string, unknown>;
+    const fn = entry.function;
+    if (!fn || typeof fn !== "object") return tool;
+    const functionDef = fn as Record<string, unknown>;
+    const name = typeof functionDef.name === "string" ? functionDef.name : "tool";
+    return {
+      ...entry,
+      function: {
+        ...functionDef,
+        description: `Use ${name} when needed.`,
+        ...(Object.hasOwn(functionDef, "parameters") ? { parameters: compactToolSchema(functionDef.parameters) } : {}),
+      },
+    };
+  });
+}
+
 export async function POST(request: Request) {
   const authorized = cliAuthorized(request);
   recordCliAccess(request, "chat completion", authorized);
@@ -89,6 +125,7 @@ export async function POST(request: Request) {
     const upstreamPayload = payload.stream === true
       ? {
           ...payloadWithoutLogprobs,
+          ...(hasTools ? { tools: compactTools(payload.tools) } : {}),
           ...(!hasTools ? { logprobs: true, top_logprobs: 3 } : {}),
           stream_options: {
             ...(typeof payload.stream_options === "object" && payload.stream_options ? payload.stream_options as Record<string, unknown> : {}),
