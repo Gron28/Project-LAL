@@ -103,15 +103,28 @@ export function GET(request: Request) {
       // capability an explicit future product decision.
       tools: {
         core: [
-          "list_directory",
           "read_file",
-          "grep_search",
-          "glob",
           "edit",
           "write_file",
           "run_shell_command",
-          "todo_write",
+        ],
+        // Some inherited synthetic tools intentionally bypass `tools.core`.
+        // Exclude them explicitly so their schemas cannot consume most of a
+        // 32k local-model turn before the user's first token is processed.
+        exclude: [
+          "agent",
+          "task_stop",
+          "send_message",
+          "skill",
           "ask_user_question",
+          "enter_plan_mode",
+          "exit_plan_mode",
+          "enter_worktree",
+          "exit_worktree",
+          "workflow",
+          "artifact",
+          "record_artifact",
+          "read_mcp_resource",
         ],
       },
       context: { fileName: ["LAL.md", "AGENTS.md", "QWEN.md"] },
