@@ -77,9 +77,25 @@ export async function POST(request: Request) {
     await ensureServing(model, 32768);
     touchServing();
     appendHostObservationForClientDevice(deviceId, { k: "model_ready", v: { model, ctx: 32768, backend: "llama.cpp" } });
+    // llama.cpp rejects logprobs together with streamed tool definitions. Keep
+    // the terminal agent's tool loop working first; request token confidence
+    // only for plain streamed turns where this backend supports it.
+    const hasTools = Array.isArray(payload.tools) && payload.tools.length > 0;
+    const payloadWithoutLogprobs = { ...payload };
+    // Do not pass through a client-provided flag either: tool-capable streams
+    // must remain valid even if an older managed config requested it.
+    delete payloadWithoutLogprobs.logprobs;
+    delete payloadWithoutLogprobs.top_logprobs;
     const upstreamPayload = payload.stream === true
-      ? { ...payload, logprobs: true, top_logprobs: 3, stream_options: { ...(typeof payload.stream_options === "object" && payload.stream_options ? payload.stream_options as Record<string, unknown> : {}), include_usage: true } }
-      : payload;
+      ? {
+          ...payloadWithoutLogprobs,
+          ...(!hasTools ? { logprobs: true, top_logprobs: 3 } : {}),
+          stream_options: {
+            ...(typeof payload.stream_options === "object" && payload.stream_options ? payload.stream_options as Record<string, unknown> : {}),
+            include_usage: true,
+          },
+        }
+      : payloadWithoutLogprobs;
     const upstream = await fetch(`http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: request.headers.get("accept") ?? "application/json" },
