@@ -9,6 +9,7 @@
     "cli:test": "npm --prefix apps/cli run test --workspace=packages/cli",
     "smoke": "./scripts/smoke-project-lal.sh",
     "smoke:attach": "./scripts/smoke-attach-replay.sh",
+    "smoke:terminal": "node scripts/smoke-terminal-lifecycle.mjs",
     "release:lal": "./scripts/release-lal-cli.sh"
   }
 }

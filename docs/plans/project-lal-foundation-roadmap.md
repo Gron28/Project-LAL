@@ -150,10 +150,11 @@ summarize—not a reason to spend more GPU or disk.
   verifies the host returns idle.
 - Attach/replay foundation: proven by the guarded attach smoke, including the
   `Last-Event-ID` reconnect cursor and cleanup path.
-- Terminal-linked model lifecycle: host model-loading, ready, and backend-error
-  events now enter the same durable ledger the phone UI reads. It still needs a
-  real Windows-terminal acceptance run before it can be called daily-use
-  parity.
+- Terminal-linked model lifecycle: proven by the guarded terminal-lifecycle
+  smoke against the real host. Host model-loading and ready events enter the
+  same durable ledger the phone UI reads, then the test confirms run/model
+  cleanup. It still needs a real Windows-terminal acceptance run before it can
+  be called daily-use parity.
 - Hive, training, benchmarking, Lens, and new fine-tuning remain gated. Their
   routes exist for inspection and recovery, but they are not restored or
   represented as dependable daily workflows.

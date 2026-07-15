@@ -64,6 +64,7 @@ From the repository root, the supported checks are intentionally few:
 npm run test          # web, protocol, and Windows-release contracts
 npm run smoke          # guarded real-model host smoke; idle host only
 npm run smoke:attach   # durable attach/replay contract
+npm run smoke:terminal # terminal-run host lifecycle bridge; idle host only
 ```
 
 The terminal client remains its own npm workspace under `apps/cli/` while its
