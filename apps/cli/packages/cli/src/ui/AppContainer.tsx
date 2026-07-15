@@ -606,8 +606,10 @@ export const AppContainer = (props: AppContainerProps) => {
     setTranscriptFreeze(null);
   }, []);
 
-  // Alt+T inline expansion toggle for thinking blocks (expands all at once).
-  const [thoughtExpanded, setThoughtExpanded] = useState(false);
+  // LAL is an owner-visible local agent: model-emitted reasoning is shown by
+  // default instead of being concealed behind Alt+T. Alt+T remains available
+  // when the owner wants to collapse it for a denser terminal transcript.
+  const [thoughtExpanded, setThoughtExpanded] = useState(true);
   // Per-thought inline expansion: head ids the user expanded by clicking the
   // collapsed thinking line (VP mode). Replaces the old full-screen viewer —
   // the thought expands in place and scrolls with the conversation.
