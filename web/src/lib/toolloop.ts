@@ -261,7 +261,7 @@ export async function runToolLoop(opts: {
   const { baseUrl, model, exec, onEvent } = opts;
   const tools = opts.tools ?? TOOL_DEFS;
   const maxRounds = opts.maxRounds ?? 15;
-  const maxTokens = opts.maxTokens ?? 1024;
+  const maxTokens = opts.maxTokens ?? 8192;
   const messages = opts.messages.slice();
   // Silence detector: if the whole run produces neither visible text nor one
   // successful tool call, ending "done" would be a lie the user experiences as
@@ -348,7 +348,10 @@ export async function runToolLoop(opts: {
     // so an unavailable visualization never prevents the agent from running.
     if (opts.ctx) {
       let estimatedTokens = estimateRequestTokens(body);
-      const reserveTokens = Math.min(maxTokens, Math.max(512, Math.floor(opts.ctx * 0.3))) + 1024;
+      // Reserve only the minimum viable completion here. The actual request is
+      // clamped below to the room left after the current prompt; reserving a
+      // fixed 30% of the context rejected otherwise-valid tool turns early.
+      const reserveTokens = 512 + 1024;
       if (estimatedTokens + reserveTokens >= opts.ctx) {
         // Try shrinking before failing: old tool outputs are the bulk of a long
         // transcript and the least valuable part of it.
@@ -362,6 +365,10 @@ export async function runToolLoop(opts: {
         onEvent({ k: "context_limit", v: { estimatedTokens, reserveTokens, ctx: opts.ctx } });
         throw new Error(`context budget exhausted before round ${round + 1} (estimated ${estimatedTokens} input + ${reserveTokens} reserved > ${opts.ctx} context tokens)`);
       }
+      // Fit the actual request to the remaining context after tool schemas and
+      // transcript content. A fixed reservation can otherwise pass preflight
+      // while the backend rejects the request as "too many tokens".
+      body.max_tokens = Math.min(maxTokens, Math.max(512, opts.ctx - estimatedTokens - 1024));
     }
     // llama-server occasionally returns a transient 5xx immediately after a
     // long/truncated tool-call turn. Retrying the exact idempotent inference

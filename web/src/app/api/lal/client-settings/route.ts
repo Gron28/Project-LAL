@@ -3,7 +3,8 @@ import { cliAuthorized, cliDeviceCustomHeaders, recordCliAccess, unauthorizedRes
 
 export const dynamic = "force-dynamic";
 
-const CONTEXT_WINDOW_SIZE = 32768;
+const LOCAL_CONTEXT_WINDOW_SIZE = 32768;
+const OLLAMA_CONTEXT_WINDOW_SIZE = 16384;
 
 // Cheap, local-only heuristics so the CLI's model picker can show
 // "name · family/role · loaded · context request" without a second round trip.
@@ -51,9 +52,10 @@ export function GET(request: Request) {
       const role = inferRole(model.name);
       const loaded = model.name === resident;
       const activeContext = loaded ? runtime.context : null;
+      const contextWindowSize = model.source === "ollama" ? OLLAMA_CONTEXT_WINDOW_SIZE : LOCAL_CONTEXT_WINDOW_SIZE;
       const contextLabel = activeContext
         ? `${Math.round(activeContext / 1024)}k active context`
-        : `requests ${Math.round(CONTEXT_WINDOW_SIZE / 1024)}k context`;
+        : `requests ${Math.round(contextWindowSize / 1024)}k context`;
       const descriptionParts = [family, ...(role ? [role] : []), loaded ? "loaded" : "not loaded", contextLabel];
       return {
         id: model.name,
@@ -74,12 +76,11 @@ export function GET(request: Request) {
         generationConfig: {
           timeout: 600000,
           maxRetries: 1,
-          contextWindowSize: CONTEXT_WINDOW_SIZE,
+          contextWindowSize,
           ...(Object.keys(customHeaders).length ? { customHeaders } : {}),
-          // Local agents should act in short, observable turns. A 4k-token
-          // default lets a small model spend minutes narrating instead of
-          // making its first tool call; longer work continues across turns.
-          samplingParams: { temperature: 0.2, max_tokens: 1024 },
+          // Thinking and tool arguments share this budget. 1K was too small
+          // for even a modest write_file call and caused truncated-tool loops.
+          samplingParams: { temperature: 0.2, max_tokens: 8192 },
           // Native /rc turns mirror visible model reasoning into the owner's
           // local run ledger. This is model-provided reasoning output, not a
           // claim to expose hidden provider internals.
