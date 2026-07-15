@@ -143,6 +143,21 @@ Open-inquiry fine-tuning and new dataset generation are deferred. Existing
 experiments have not yet produced significant results, so they are evidence to
 summarize—not a reason to spend more GPU or disk.
 
+### Verified capability gate — 2026-07-15
+
+- Host Chat/Code foundation: proven by the guarded real-model smoke. It creates
+  a durable run, verifies its replayed output, stops/unloads the model, and
+  verifies the host returns idle.
+- Attach/replay foundation: proven by the guarded attach smoke, including the
+  `Last-Event-ID` reconnect cursor and cleanup path.
+- Terminal-linked model lifecycle: host model-loading, ready, and backend-error
+  events now enter the same durable ledger the phone UI reads. It still needs a
+  real Windows-terminal acceptance run before it can be called daily-use
+  parity.
+- Hive, training, benchmarking, Lens, and new fine-tuning remain gated. Their
+  routes exist for inspection and recovery, but they are not restored or
+  represented as dependable daily workflows.
+
 ## Later portability work
 
 1. Run the host stack on Windows for a same-machine fallback.
