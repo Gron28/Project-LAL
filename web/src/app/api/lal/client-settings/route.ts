@@ -89,6 +89,11 @@ export function GET(request: Request) {
     {
       $version: 4,
       general: { enableAutoUpdate: false },
+      // LAL's observability stays on the owner's host and in the local run
+      // ledger. Never opt a paired terminal into upstream usage collection or
+      // outbound telemetry as part of managed setup.
+      privacy: { usageStatisticsEnabled: false },
+      telemetry: { enabled: false },
       context: { fileName: ["LAL.md", "AGENTS.md", "QWEN.md"] },
       security: { auth: { selectedType: "openai" } },
       model: { name: preferred },

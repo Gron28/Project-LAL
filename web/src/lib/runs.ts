@@ -287,6 +287,32 @@ export function appendClientEvents(meta: RunMeta, events: ClientEventInput[]): {
   return { ok: true, accepted, lastSeq: meta.seq };
 }
 
+/**
+ * Record a host-observed lifecycle event beside a terminal-owned run.
+ *
+ * The terminal remains the only writer for its text and tool activity. The
+ * host owns model loading, GPU queuing, and backend failures, so those facts
+ * are appended here instead of being guessed by the CLI. One paired device has
+ * one practical active terminal run today; if that changes this lookup must be
+ * replaced with an explicit per-request run id, not broadened silently.
+ */
+export function appendHostObservationForClientDevice(ownerDeviceId: string | null, event: RunEvent): void {
+  if (!ownerDeviceId || !isKnownEventKind(event.k) || SERVER_ENVELOPE_KINDS.has(event.k)) return;
+  sweepOnce(); sweepClientRuns();
+  let candidates: RunMeta[] = [];
+  try {
+    candidates = fs.readdirSync(RUNS_DIR).filter(isMetaFile).flatMap((file) => {
+      try { return [JSON.parse(fs.readFileSync(path.join(RUNS_DIR, file), "utf8")) as RunMeta]; } catch { return []; }
+    }).filter((meta) => meta.executionLocation === "client" && meta.status === "running" && meta.ownerDeviceId === ownerDeviceId);
+  } catch { return; }
+  const meta = candidates.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  if (!meta) return;
+  const line = appendLog(meta, event);
+  meta.updatedAt = Date.now();
+  writeMeta(meta);
+  notifyClientRun(meta, line);
+}
+
 export function heartbeatClientRun(meta: RunMeta, ack?: { id?: unknown; leaseId?: unknown }): { cancelRequested: boolean; command?: { id: string; type: "submit"; text: string; leaseId: string } } {
   const now = Date.now();
   meta.lastHeartbeatAt = now; meta.updatedAt = now;

@@ -65,6 +65,8 @@ class LalWindowsReleaseTest(unittest.TestCase):
         self.assertIn("[System.Text.UTF8Encoding]::new($false)", installer)
         self.assertIn("WriteAllText($SettingsPath, $MergedSettingsText, $Utf8NoBom)", installer)
         self.assertIn("Set-LalSettingProperty $CurrentSettings 'security'", installer)
+        self.assertIn("Set-LalSettingProperty $CurrentSettings 'privacy'", installer)
+        self.assertIn("Set-LalSettingProperty $CurrentSettings 'telemetry'", installer)
         self.assertIn("Set-LalSettingProperty $CurrentSettings 'modelProviders'", installer)
         self.assertIn('"$HostUrl/lal/system.md"', installer)
         self.assertIn('QWEN_SYSTEM_MD=%LAL_HOME%\\system.md', wrapper)

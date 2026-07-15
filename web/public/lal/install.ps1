@@ -102,6 +102,8 @@ if ($null -eq $CurrentGeneral -or $CurrentGeneral -isnot [pscustomobject]) { $Cu
 Set-LalSettingProperty $CurrentGeneral 'enableAutoUpdate' $false
 Set-LalSettingProperty $CurrentSettings '$version' $ManagedSettings.'$version'
 Set-LalSettingProperty $CurrentSettings 'general' $CurrentGeneral
+Set-LalSettingProperty $CurrentSettings 'privacy' $ManagedSettings.privacy
+Set-LalSettingProperty $CurrentSettings 'telemetry' $ManagedSettings.telemetry
 Set-LalSettingProperty $CurrentSettings 'context' $ManagedSettings.context
 Set-LalSettingProperty $CurrentSettings 'security' $ManagedSettings.security
 Set-LalSettingProperty $CurrentSettings 'model' $ManagedSettings.model

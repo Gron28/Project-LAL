@@ -1,5 +1,6 @@
 import { allModels, ensureServing, SERVE_PORT, touchServing } from "@/lib/lab";
-import { acquireCliGpuLease, cliAuthorized, recordCliAccess, streamWithRelease, unauthorizedResponse } from "@/lib/lal-cli";
+import { appendHostObservationForClientDevice } from "@/lib/runs";
+import { acquireCliGpuLease, cliAuthenticatedDeviceId, cliAuthorized, recordCliAccess, streamWithRelease, unauthorizedResponse } from "@/lib/lal-cli";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
@@ -12,6 +13,7 @@ export async function POST(request: Request) {
   if (!payload) return Response.json({ error: { message: "Invalid JSON body", type: "invalid_request_error" } }, { status: 400 });
 
   const model = typeof payload.model === "string" ? payload.model : "";
+  const deviceId = cliAuthenticatedDeviceId(request);
   const available = allModels().some((item) => item.source === "local" && item.name === model);
   if (!available) {
     return Response.json(
@@ -20,10 +22,12 @@ export async function POST(request: Request) {
     );
   }
 
+  appendHostObservationForClientDevice(deviceId, { k: "model_loading", v: { model, ctx: 32768 } });
   const release = await acquireCliGpuLease();
   try {
     await ensureServing(model, 32768);
     touchServing();
+    appendHostObservationForClientDevice(deviceId, { k: "model_ready", v: { model, ctx: 32768, backend: "llama.cpp" } });
     const upstream = await fetch(`http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: request.headers.get("accept") ?? "application/json" },
@@ -40,6 +44,7 @@ export async function POST(request: Request) {
   } catch (error) {
     release();
     const message = error instanceof Error ? error.message : String(error);
+    appendHostObservationForClientDevice(deviceId, { k: "error", v: message });
     return Response.json({ error: { message, type: "server_error" } }, { status: 503 });
   }
 }
