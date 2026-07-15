@@ -1,7 +1,7 @@
 # Project-LAL foundation roadmap
 
-Status: current delivery order. Milestone 0 is complete; Milestone 1 is next.
-Last updated: 2026-07-14.
+Status: Milestones 0 and 1 are complete; Milestone 2 is active.
+Last updated: 2026-07-15.
 
 ## Rule of the roadmap
 
@@ -65,10 +65,8 @@ host, so its unavailable-model and idle-stop states were verified without
 starting GPU work; training's idle-stop state is likewise verified. The guarded
 `scripts/smoke-project-lal.sh` command automates the idle-host vertical check.
 
-Milestone 1 now needs repeated real use from Windows LAL and phone attach mode,
-including a deliberately interrupted connection, before it can be marked
-complete. `scripts/smoke-attach-replay.sh` now proves the host-side durable SSE
-replay and `Last-Event-ID` cursor contract without requiring a second device.
+`scripts/smoke-attach-replay.sh` proves the host-side durable SSE replay and
+`Last-Event-ID` cursor contract without requiring a second device.
 
 ## Milestone 1 — one dependable personal workflow
 
@@ -83,6 +81,14 @@ Make the essential end-to-end path work repeatedly:
 
 Exit criterion: this flow passes repeatedly with a deliberately interrupted
 network connection and a deliberate model/backend failure.
+
+Status: complete for the current single-user topology. The Windows terminal,
+Linux host, and phone UI now share a durable terminal-linked run; remote text
+submission is bounded and capability-gated; stale terminal records settle as
+interrupted rather than becoming ghosts; the active-run notice can be opened
+or dismissed; and clean stop/restart behavior is covered by the foundation
+smokes. The next work is no longer connection plumbing—it is truthful native
+runtime telemetry and the removal of inherited surface.
 
 ## Milestone 2 — make state trustworthy
 
@@ -99,8 +105,11 @@ network connection and a deliberate model/backend failure.
 Current implementation slice: protocol mirror drift and ledger conformance are
 checked, unknown event kinds are rejected before persistence, and terminal run
 ledgers are retained as paired metadata/log files for 30 days and capped at
-256 MiB without ever deleting live work. The physical shared package and the
-remaining storage categories stay deferred until the root workspace boundary is
+256 MiB without ever deleting live work. Native LAL `.12` now installs a small
+LAL-owned system prompt, caps default turns at 1,024 output tokens, identifies
+active versus requested context honestly, and avoids duplicating cumulative
+terminal output in the phone UI. The physical shared package and the remaining
+storage categories stay deferred until the root workspace boundary is
 established.
 
 Exit criterion: every user-visible status item has a real data source and an
