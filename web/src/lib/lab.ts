@@ -209,6 +209,21 @@ export function servingInfo(): { model: string | null; idleSec: number | null; i
   };
 }
 
+// Read-only lifecycle snapshot for the host status API.  This deliberately
+// exposes what this Node process actually owns without claiming ownership of a
+// matching process discovered elsewhere on the machine.
+export function servingRuntimeStatus() {
+  return {
+    pid: srv.proc?.pid ?? null,
+    alive: !!srv.proc && srv.proc.exitCode === null,
+    model: srv.model,
+    context: srv.ctx || null,
+    loras: srv.loras.map((adapter) => adapter.key),
+    lastUsedAt: srv.lastUsedAt ?? null,
+    logPath: path.join(ROOT, "out", "llama-server.log"),
+  };
+}
+
 // Idle reaper: unload llama-server after serveIdleMinutes of genuine quiet — no
 // run live, nothing training, nothing recently served. The GPU should idle cold,
 // not with a model parked on it drawing power for nobody.
@@ -998,6 +1013,17 @@ export function trainStatus(name: string) {
   return { running: train.running ?? externalTrainRun(), rows };
 }
 
+export function trainingRuntimeStatus() {
+  const running = train.running;
+  return {
+    pid: train.proc?.pid ?? null,
+    alive: !!train.proc && train.proc.exitCode === null,
+    name: running,
+    stopping: train.stopping,
+    logPath: running ? path.join(OUT_DIR, running + ".train.log") : null,
+  };
+}
+
 export function listTrainRuns() {
   const out: { name: string; status: string; finalLoss: number | null; lastStep: number; ts: number }[] = [];
   const ext = externalTrainRun();
@@ -1112,11 +1138,20 @@ export async function adapterEvolution(name: string): Promise<{ ok: true; result
 // is single-tenant with BOTH serving and training: refuses if a trainer is running,
 // parks whatever's currently serving before it runs, and restores it afterward.
 const LENS_SCRIPT = path.join(ROOT, "scripts", "lens.py");
-type LensState = { running: boolean };
+type LensState = { running: boolean; proc?: ChildProcess | null; startedAt?: number; model?: string | null };
 const lgg = globalThis as unknown as { __lab_lens?: LensState };
 if (!lgg.__lab_lens) lgg.__lab_lens = { running: false };
 const lensState = lgg.__lab_lens;
+if (!("proc" in lensState)) lensState.proc = null;
 export function lensRunning() { return lensState.running; }
+export function lensRuntimeStatus() {
+  return {
+    pid: lensState.proc?.pid ?? null,
+    alive: !!lensState.proc && lensState.proc.exitCode === null,
+    model: lensState.model ?? null,
+    startedAt: lensState.startedAt ?? null,
+  };
+}
 
 export type LensCell = { token: string; prob: number };
 export type LensResult = { inputTokens: string[]; numLayers: number; grid: LensCell[][][] };
@@ -1147,6 +1182,8 @@ export async function runLensScript(model: string, messages: { role: string; con
   const modelPath = isLocal ? path.join(OUT_DIR, model) : model;
 
   lensState.running = true;
+  lensState.startedAt = Date.now();
+  lensState.model = model;
   const parked = servingModel();
   try {
     if (parked) stopServing();
@@ -1157,6 +1194,7 @@ export async function runLensScript(model: string, messages: { role: string; con
 
     return await new Promise((resolve) => {
       const proc = spawn(VENV_PY, [LENS_SCRIPT, ...args], { cwd: ROOT, env });
+      lensState.proc = proc;
       let stdout = "", stderr = "", timedOut = false;
       // A cold HQQ load of an 8B (shard streaming + quantizing) plus a single forward
       // pass over up to 512 tokens across every layer — generous relative to the
@@ -1182,6 +1220,9 @@ export async function runLensScript(model: string, messages: { role: string; con
     });
   } finally {
     lensState.running = false;
+    lensState.proc = null;
+    lensState.startedAt = undefined;
+    lensState.model = null;
     if (parked) { try { await ensureServing(parked); } catch { /* next request surfaces it */ } }
   }
 }

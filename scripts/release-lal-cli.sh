@@ -2,11 +2,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/.." && pwd)"
-FORK="$ROOT/lal-cli"
+FORK="$ROOT/apps/cli"
 MANIFEST="$ROOT/web/public/lal/manifest.json"
 
 if [ ! -f "$FORK/package.json" ]; then
-  echo "LAL fork is missing. Clone submodules first: git submodule update --init --recursive" >&2
+  echo "LAL CLI source is missing from apps/cli." >&2
   exit 1
 fi
 

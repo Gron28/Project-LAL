@@ -1,5 +1,9 @@
 # HIVE specialist training
 
+> Status: deferred experiment design. Current training datasets and candidates
+> have not demonstrated a significant practical result; Project-LAL's
+> reliability-first roadmap takes precedence.
+
 HIVE's first trained cohort shares the installed `qwen3-4b-stock` GGUF and uses
 three independently trained Qwen3-4B LoRA adapters:
 

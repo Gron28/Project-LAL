@@ -1,15 +1,17 @@
 # LAL CLI product plan
 
-Status: approved planning baseline, rewritten 2026-07-14 after a full audit of the
-web UI feature set and the fork's actual state. Organizing principle: **the CLI is
-the Local AI Lab web experience — chat, code, hive, research, lab — delivered in a
-terminal**, not a renamed upstream CLI with LAL colors.
+Status: detailed capability inventory and technical reference. The current delivery
+authority is `docs/plans/project-lal-foundation-roadmap.md`; this document must not
+be used to start feature expansion ahead of reliability, process ownership, and the
+single-repository migration. Organizing principle: **the CLI is the Project-LAL web
+experience — chat, code, hive, research, lab — delivered in a terminal**, not a
+renamed upstream CLI with LAL colors.
 Last updated: 2026-07-14
 
 ## Product goal
 
-`lal` must feel like Local AI Lab in a terminal. From any folder on any
-Tailscale-connected computer, the user launches one command, selects a Local AI Lab
+`lal` must feel like Project-LAL in a terminal. From any folder on any
+Tailscale-connected computer, the user launches one command, selects a Project-LAL
 model and operating mode, sees reasoning and work stream in real time, and lets the
 client modify the project on that computer while inference runs on `main-pc`.
 
@@ -23,7 +25,7 @@ and identify every connected device.
 
 ### The fork is near-vanilla
 
-`lal-cli/` is qwen-code with only the LAL monogram/palette landed
+`apps/cli/` is qwen-code with only the LAL monogram/palette landed
 (`packages/cli/src/ui/components/Header.tsx`, `AsciiArt.ts`, `README-LAL.md`,
 `NOTICE-LAL.md`). Alibaba/ModelStudio onboarding is intact
 (`packages/core/src/providers/presets/alibaba-*.ts`), the model picker is upstream
@@ -236,7 +238,7 @@ resume, context accounting, headless operation, accessibility primitives.
 
 | Command | Purpose |
 | --- | --- |
-| `/model` | Pick/manage Local AI Lab models (name · family/role · status · ctx); unload. |
+| `/model` | Pick/manage Project-LAL models (name · family/role · status · ctx); unload. |
 | `/mode` | Default, Code, Hive, Research, Chat, or Lab. Mode switch keeps the session. |
 | `/effort` | Reasoning/tool budget. Fork ships upstream tiers (`low..max`) today; renaming to fast/balanced/high/maximum is Step 2 work, mapped onto the server mode presets' budgets. |
 | `/thinking` | Toggle/collapse the live thinking panel. |
@@ -288,7 +290,7 @@ removed.
    requires a version bump. No new event kinds anywhere without going through this
    module.
 3. Publish the types to the CLI as a generated/mirrored TS file in
-   `lal-cli/packages/core/src/lal/protocol.ts` with a drift test (CI compares
+   `apps/cli/packages/core/src/lal/protocol.ts` with a drift test (CI compares
    hashes).
 4. Conformance fixture: record one real code run and one hive run as `.ndjson`;
    replaying them through any client renderer must produce a stable snapshot.
@@ -482,6 +484,91 @@ and small local specialists are promoted only through blind deterministic gates.
   content.
 - The battery of parity features marked P0 in this document works end to end
   before any P1 work starts.
+
+## Phase 1 audit findings (2026-07-14, research only — not yet implemented)
+
+Two read-only audits investigated what a genuine identity overhaul needs before
+any of it was built. Captured here as foundation for whenever this resumes;
+nothing below has been acted on.
+
+### Transparency checklist — current state vs. the "never a black box" bar
+
+The owner's standing requirement (see the transparency-principle memory): system
+prompt, thinking, J-space, GPU, context %, run/idle+model state, and cold-start
+must always be visible. Audited against the fork as it stands today:
+
+| # | Item | State today | Default-visible | Key files |
+| - | ---- | ------------ | ---------------- | --------- |
+| 1 | System prompt text | token count only, never the literal text | no (opt-in `/context`) | `contextCommand.ts`, `views/ContextUsage.tsx`, `core/prompts.ts` |
+| 2 | Thinking stream | real and wired for native turns | no (collapsed, Alt+T) | `HistoryItemDisplay.tsx`, `ThoughtExpandedContext.tsx`, `taggedThinkingParser.ts` |
+| 3 | J-space (conf/p/alts) | only via `/attach`, aggregate only, per-token alts dropped | no | `lal/attach/renderer.ts`, `core/src/lal/protocol.ts` |
+| 4 | GPU usage | missing entirely — no event kind exists | — | none (compare `web/src/components/agent/stats-hud.tsx`) |
+| 5 | Context-window % | live and default-visible in Footer + status line | yes | `ContextUsageDisplay.tsx`, `Footer.tsx`, `statusLinePresets.ts` — but the size itself is a static model-name lookup table (`core/tokenLimits.ts`), not LAL's real gateway ctx, so the percentage can be wrong for a locally-served model |
+| 6 | Run active / model serving | native: yes, default-visible; `/attach`: no persistent badge once scrollback moves on | partial | `use-runtime-state.ts`, `LoadingIndicator.tsx`, `statusLinePresets.ts`, `attach-command.ts` |
+| 7 | Cold-start visibility | unwired for native turns (reads as generic "Queuing…"); real signal exists only via `/attach` | no | `use-runtime-state.ts` (explicit TODO in its own comment), `lal/attach/renderer.ts` |
+
+Root structural point: the CLI's own native turn loop and the `/attach`
+cross-device feature are two separate data planes. Native turns go through a
+generic OpenAI-compatible content generator with no LAL-specific fields at all;
+LAL's rich protocol (thinking confidence, model-load state) only reaches the UI
+through `/attach`, which requires a run already started elsewhere. Closing this
+gap for real (not just prettying up `/attach`) means giving native chat a path
+through the gateway's run API, per item 3 and item 7's recommendations above.
+
+### Prune candidates — qwen-code surface vs. LAL's actual mission
+
+Full detail lives in this session's audit transcript; the load-bearing
+conclusions:
+
+- **Cut — cloud/enterprise provider presets**: `alibaba-standard`,
+  `alibaba-coding-plan`, `alibaba-token-plan`, `deepseek`, `minimax`, `zai`,
+  `modelscope`, `idealab`, `openrouter`, `requesty` (`packages/core/src/providers/presets/`).
+  None is reachable/needed from a single-gateway home architecture. Keep
+  `custom-provider.ts` and build a first-class "LAL Gateway" preset from it.
+- **Cut — enterprise-IM channel adapters**: `channels/{telegram,dingtalk,wecom,
+  feishu,qqbot,weixin}` — Chinese enterprise-IM/consumer-bot integrations, zero
+  relevance to a single home user.
+- **Cut — out-of-scope subsystems**: `cua-driver` (native computer-use,
+  enabled by default — the concrete "computer-use" feature the product plan
+  already says to keep off until explicitly adopted), `desktop` (a whole
+  vendored Electron app, already excluded from the workspace build), `mobile-mcp`
+  (fully unwired, zero references anywhere in the CLI), `docs-site` (upstream's
+  public marketing site).
+- **Fix, don't cut — phone-home infrastructure wired to the wrong owner**:
+  - Alibaba RUM telemetry (`qwen-logger.ts`) is **on by default**
+    (`usageStatisticsEnabled` defaults `true`) and reports to an
+    Alibaba-owned endpoint — must default off or repoint to nothing.
+  - `/update` and the standalone-update path (`standalone-update.ts`) fetch
+    from Alibaba OSS + upstream GitHub releases, not `main-pc` — must repoint
+    to LAL's own channel (`web/public/lal/manifest.json`), same fix pattern as
+    this session's `install.ps1`/`install.sh`/`lal.sh` host correction.
+  - A startup npm-registry version check (`updateCheck.ts`) fires on every
+    launch under the upstream package name — duplicate of `lal update`,
+    should be cut.
+  - Computer-use's native binary downloads from Alibaba OSS by default —
+    tied to the `cua-driver` cut above.
+  - The sandbox container image is pulled from upstream's GHCR
+    (`ghcr.io/qwenlm/qwen-code`) — sandboxing itself stays (explicit keep),
+    only the image source needs to move to something LAL-controlled.
+- **Cut — locale bloat**: 8 bundled UI locales (zh/zh-TW/ja/de/fr/ca/pt/ru) with
+  a translation-completeness CI gate, notably **no Spanish** despite the actual
+  owner being a Spanish speaker — concrete evidence this locale set was never
+  actually chosen for LAL, just inherited. Collapse to English (+ Spanish if
+  wanted).
+- **Needs a product decision, not an automatic cut**: `arenaCommand.ts` (spawns
+  up to 5 concurrent local sub-agents — real GPU-contention risk on a
+  single-card box, and may duplicate what Hive is supposed to own),
+  `insightCommand.ts` (large local-only chat-analytics feature not on the
+  chat/code/hive/research/lab mode list), `languageCommand.ts` (the underlying
+  "force output language" setting is fine; the full multi-locale UI machinery
+  is what's in question), `bugCommand.ts`/`setupGithubCommand.ts` (currently
+  point at the upstream OSS repo/workflows — fix destination or cut).
+- **Explicitly reconfirmed as keep** (matches the plan's existing "keep and
+  harden" list, audited to be certain none of it is secretly cloud-tied): Ink
+  rendering, the streaming tool loop, file/shell/git/LSP/MCP tools, folder
+  trust, approval modes, sandbox hooks (mechanism, not image source), session
+  resume, context accounting, headless/non-interactive modes, and the
+  managed-memory commands (`dreamCommand`/`rememberCommand`/`forgetCommand`).
 
 ## Related documents
 

@@ -1,5 +1,9 @@
 # LAL CLI distribution and update channel
 
+> Status: internal bootstrap reference, deferred until the foundation roadmap's
+> reliable core workflow is complete. Host-specific `main-pc` addresses are
+> current-machine configuration, not a portable product contract.
+
 ## Goal
 
 Install `lal` once on another tailnet computer, run it from any local folder, and update the managed client in place without touching project chats or repeating provider setup.
@@ -65,4 +69,8 @@ The default profile is `qwen3-4b-stock` at 32k because the live compatibility te
 
 ## Native fork releases
 
-`lal-cli/` now builds LAL-branded standalone archives from the maintained fork. Windows downloads the `main-pc`-hosted artifact, verifies its SHA-256 digest, stages it, and swaps it with rollback protection. This changed neither the `lal` command nor `~/.lal` sessions. Linux/macOS will move to the same artifact channel after their platform archives are built and verified.
+`apps/cli/` now builds LAL-branded standalone archives from the maintained
+source tree. Windows downloads the `main-pc`-hosted artifact, verifies its
+SHA-256 digest, stages it, and swaps it with rollback protection. This changed
+neither the `lal` command nor `~/.lal` sessions. Linux/macOS will move to the
+same artifact channel after their platform archives are built and verified.

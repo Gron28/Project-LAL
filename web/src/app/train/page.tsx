@@ -165,7 +165,7 @@ export default function TrainPage() {
   const [valSplit, setValSplit] = useState(true);        // 10% held-out; best-val adapter is merged
   const [autoBench, setAutoBench] = useState(false);     // run the battery suites right after training
   const [text, setText] = useState("");
-  const [dataFile, setDataFile] = useState("sovereign_sft.jsonl");   // selected .jsonl for SFT
+  const [dataFile, setDataFile] = useState("");   // selected .jsonl for SFT
   const [dataFiles, setDataFiles] = useState<DataFile[]>([]);
   const [rows, setRows] = useState<Row[]>([]);
   const [running, setRunning] = useState<string | null>(null);
@@ -225,9 +225,11 @@ export default function TrainPage() {
     fetch("/api/train/data").then((r) => r.json()).then((j) => {
       const files: DataFile[] = j.files || [];
       setDataFiles(files);
-      // default SFT dataset = sovereign, else first .jsonl
-      const sft = files.find((f) => f.name === "sovereign_sft.jsonl") || files.find((f) => f.kind === "sft");
-      if (sft) setDataFile(sft.name);
+      // A clean checkout intentionally has no bundled training corpus. Pick the
+      // first local upload when one exists; otherwise leave the form visibly
+      // unconfigured rather than submitting a removed historical filename.
+      const sft = files.find((f) => f.kind === "sft");
+      setDataFile(sft?.name || "");
     }).catch(() => {});
     fetch("/api/compare").then((r) => r.json()).then((j) => setCheckpoints(j.checkpoints || [])).catch(() => {});
   }, [loadCorpus]);

@@ -1,230 +1,59 @@
-# Local AI Lab
+# Project-LAL
 
-Train and run your own local models on your own machine — no cloud, no shared daemon.
+Project-LAL is a private, local-first AI system for running, training, and using
+your own models on hardware you control. **LAL** is its terminal command and
+short product name.
 
-## The stack (decided + proven 2026-06-28)
-- **Train:** `transformers` + `peft` LoRA on the GPU (`.venv`). Proven: Qwen2.5-0.5B
-  learned new facts in 57s.
-- **Convert:** `llama.cpp/convert_hf_to_gguf.py` → GGUF.
-- **Serve:** **`llama.cpp` + Vulkan** (`llama/llama-b9835/llama-server`). Vulkan talks to
-  the GPU directly, vendor-agnostic (AMD/NVIDIA/Intel all work through the same driver
-  layer) — no CUDA/ROCm toolkit needed just to serve. OpenAI-compatible API.
+The point is ownership: your models, data, tools, projects, and long-running
+work remain under your control. The interface should show the real state of the
+system—runs, model loading, context, GPU use, storage, and failures—instead of
+hiding it behind decorative status.
 
-### Why not Ollama
-If you already run Ollama for something else (a scheduled job, another app), sharing its
-daemon with this project causes GPU collisions/hangs. This project uses a **separate
-engine (llama.cpp/Vulkan) on a dedicated port (8099)**, run **on-demand**, so it never
-fights anything else on the box for the GPU.
+## Current status
 
-### ⚠️ One-GPU discipline
-If you have one GPU, don't run training and serving (and anything else that touches the
-GPU) at the same time — that's what wedges a single card. Train in a burst → stop →
-serve → stop. Keep it single-tenant. The app enforces this itself when it drives
-training/serving; it only matters if you're running pieces by hand.
+This is an internal early-stage project, not a public release. The immediate
+work is reliability: slow inference, failed workflows, orphaned processes,
+incomplete telemetry, and fragile session recovery must be fixed before adding
+new product surface or publishing the project.
 
-## Hardware & OS assumptions — read this before assuming it "just works" elsewhere
+The currently supported working topology is:
 
-This was built and only ever tested on **one specific machine**: Linux, one 8GB AMD
-RX 6650 XT (RDNA2 / `gfx1032`), a single discrete GPU. Concretely, that means:
-
-- **Serving (llama.cpp + Vulkan)** is already GPU-vendor-agnostic — it should run as-is
-  on NVIDIA/Intel GPUs and on Windows/macOS, given a matching llama.cpp build (the
-  `llama/llama-b9835/` binary here is a Linux build; grab the right one for your OS/GPU
-  from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) or build it
-  yourself, and point `LLAMA_DIR`/`LLAMA_SERVER` in `web/src/lib/lab.ts` at it).
-- **Training** sets three ROCm/HIP-specific env vars (`HSA_OVERRIDE_GFX_VERSION`,
-  `HSA_ENABLE_SDMA`, `PYTORCH_HIP_ALLOC_CONF`) for this exact card, in one place —
-  `gpuTrainEnv()` in `web/src/lib/lab.ts`. On NVIDIA/CPU torch these vars are simply
-  ignored (harmless), so training should work unmodified; on a *different* AMD card you
-  may need a different `HSA_OVERRIDE_GFX_VERSION`. Override any of them per-machine
-  without touching code: `GPU_TRAIN_ENV='{"HSA_OVERRIDE_GFX_VERSION":"11.0.0"}'` in the
-  environment the app runs in, merged over the defaults.
-- **System Monitor / dashboard hardware stats** (`web/src/lib/sysinfo.ts`) read Linux
-  `/proc` and `/sys/class/drm|hwmon` directly (VRAM/GPU% via AMD's `amdgpu` sysfs
-  entries specifically). This already degrades gracefully — every reader is wrapped so a
-  failure returns `null`/`—` instead of crashing the endpoint — but on non-Linux or
-  non-AMD it'll just show blanks for GPU/VRAM/GPU-temp. Swapping in `nvidia-smi` or a
-  cross-platform stats crate is the natural next step for other GPUs; it's isolated to
-  that one file.
-- **`start.sh`, `web/run_web.sh`, `gpu.sh`-style launchers** are bash — Linux/macOS only.
-  A Windows port means writing PowerShell/batch equivalents (or running under WSL2,
-  which needs no porting at all since it's still Linux underneath).
-- **Ports/paths**: app on `:8770`, llama.cpp on `:8099`, tailnet https on `:8443` — all
-  overridable via env vars already (see `start.sh`); nothing else is hardcoded to this
-  machine's filesystem layout except the training env vars above.
-
-None of this needs a rewrite to try elsewhere — Vulkan serving, the benchmark, chat, and
-the coding agent don't touch any of the AMD-specific code at all. Training and the
-hardware monitor are the two places with real assumptions, and both are now isolated to
-one function/file each so they're fast to adapt.
-
-**Setting this up on a different machine (especially with an NVIDIA GPU)?** Point your
-coding agent at [`PORTING.md`](PORTING.md) — it's written for an AI agent to read
-directly: exact specs of the machine this was built on, every hardcoded assumption by
-file/line, and a probe-your-hardware-first checklist so it adapts to *your* GPU and RAM
-instead of copying an old 8GB AMD card's limits.
-
-## Manual pipeline (for reference — the app automates all of this)
-```bash
-# 1) TRAIN (LoRA on your data; --merge writes a standalone model)
-# on AMD/ROCm Linux, set the same env vars gpuTrainEnv() uses (see above):
-HSA_OVERRIDE_GFX_VERSION=10.3.0 HSA_ENABLE_SDMA=0 \
-  python scripts/finetune.py --base Qwen/Qwen2.5-0.5B-Instruct --data data/yourfile.txt \
-  --out out/mymodel --steps 150 --merge
-
-# 2) CONVERT to GGUF
-source .venv/bin/activate
-python llama/src/convert_hf_to_gguf.py out/mymodel \
-  --outfile models/mymodel-f16.gguf --outtype f16
-
-# 3) SERVE on Vulkan (dedicated port; first run compiles shaders once)
-cd llama/llama-b9835 && LD_LIBRARY_PATH=$PWD ./llama-server \
-  -m ../../models/mymodel-f16.gguf -ngl 99 --host 127.0.0.1 --port 8099
-
-# 4) CHAT (OpenAI-compatible)
-curl -s http://127.0.0.1:8099/v1/chat/completions \
-  -d '{"messages":[{"role":"user","content":"hi"}],"max_tokens":80}'
+```text
+Windows laptop: lal in a local project
+          │
+          │ Tailscale / local network
+          ▼
+Linux main-pc: Project-LAL web app, models, GPU, runs, training
+          │
+          └── Phone browser: observe or continue the same server-side session
 ```
 
-## What's here
+Project-LAL must later be portable enough to run entirely on a Windows machine
+when that is the available host. That is a portability requirement, not a
+second system being built today.
 
-Everything below is a real page in the app (`web/src/app/`), not a roadmap item:
+## Design commitments
 
-- **Dashboard** (`/`) — live system stats, quick-chat/quick-train/quick-bench widgets,
-  a per-suite capability radar, and training-run history in one drag/resize grid.
-- **Chat** (`/chat`) — conversational chat over any served model, with web/document
-  grounding toggles.
-- **Code** (`/code`) — an agentic coding assistant with real tools (files, shell, a
-  Python REPL, web research, image understanding, sub-agents), live telemetry
-  (context fill, tok/s, GPU/VRAM/temps), and server-side persistent runs — start a
-  task on one device, reattach to the same live run from another.
-- **Hive** (`/hive`) — *experimental.* A durable multi-agent workflow runtime
-  (plan → implement → verify → repair → report) with pause/resume/replay and a full
-  provenance trail, a live workspace/code/research view, and a gated Qwen3-4B
-  specialist-adapter training path. Its initial evaluation (`web/docs/hive-evaluation-2026-07-09.md`)
-  found it doesn't yet beat a single capable model on task completion — the harness
-  is solid, while the new worker/training architecture still needs blind promotion
-  results. See [`CHANGELOG.md`](CHANGELOG.md) and
-  [`docs/hive-specialist-training.md`](docs/hive-specialist-training.md).
-- **Train** (`/train`) — LoRA/QLoRA fine-tuning (HQQ 4-bit quantized training fits an
-  8B model on a single 8GB GPU) with live loss/gradient charts and data-health views.
-- **Library** (`/library`) — trained models, documents, chat history, training runs,
-  experiments, and project folders in one place.
-- **Bench** (`/benchmark`, `/lens`) — an auto-graded, multi-suite capability battery
-  (coding, planning, agentic tool-use, math, instruction-following, web-app
-  generation) that exercises the same production code paths the app itself uses, plus
-  a logit-lens view into a checkpoint's internal token predictions.
-- **Monitor** (`/monitor`) — live CPU/GPU/RAM/VRAM/temps, updated every 2s.
+- Local ownership and graceful operation without cloud dependencies.
+- Tools execute on the computer that owns the project.
+- Cross-device sessions are first-class: start on a laptop, inspect or continue
+  from a phone, and resume without losing the run.
+- Real observability by default; no fake progress or hidden background work.
+- Small, maintainable product surface before integrations, SDKs, or marketing.
+- Security research is defensive and authorized; Project-LAL does not collect
+  user project content or depend on external model-provider telemetry.
 
-Full build history, real bugs found, and honest experiment results (including the
-runs that *didn't* work) are in [`CHANGELOG.md`](CHANGELOG.md).
+## Documentation
 
-## Layout
-- `web/` — the app itself (Next.js)
-- `scripts/finetune.py` — LoRA trainer (emits JSON progress for a dashboard)
-- `data/` — training inputs  ·  `out/` — merged HF models  ·  `models/` — GGUFs
-- `llama/llama-b9835/` — llama.cpp Vulkan binaries  ·  `llama/src/` — converter
-- `gpu.sh` — runs a command on the GPU venv with the gfx override
+- [Architecture](docs/design/project-lal-architecture.md)
+- [Reliability-first roadmap](docs/plans/project-lal-foundation-roadmap.md)
+- [Single-repository migration plan](docs/plans/project-lal-repository-migration.md)
+- [Documentation map](docs/README.md)
 
-## Run the app (one click)
+## Current local use
 
-```bash
-./start.sh                     # builds if needed, serves on :8770, opens the browser
-./start.sh --install-launcher  # once: adds a double-clickable "Local AI Lab" icon
-```
+On the present Linux host, `./start.sh` rebuilds and starts the web app. It is
+an internal launcher for the current machine, not a general installer yet.
 
-## Run the coding agent from a terminal
-
-Install the dependency-free CLI once, then call the same durable coding-agent loop
-used by `/code` from any directory on the lab machine:
-
-```bash
-./start.sh --install-cli
-cd ~/Desktop/some-repo
-lal                                                   # interactive terminal workspace
-lab-agent "find the bug, fix it, and run the tests"
-lab-agent -y --mode quick-edit "rename the heading"   # auto-approve tool changes
-lab-agent --new ~/Desktop/new-app -y "build the app and initialize a git repo"
-```
-
-Without `-y`, mutating tools ask for confirmation in the terminal. The current
-directory is the agent's filesystem boundary; `-C /path` selects another existing
-directory. `--new /path` creates a greenfield directory first. Runs remain visible
-and reattachable in the web UI. Run `lab-agent --help` for model, resume, detach,
-stop, and remote-host options.
-
-The dependency-free local client exposes LAL's mode, effort, approval, web, and
-voice-bridge commands. It remains a bootstrap/recovery client. The installable
-tailnet client below is now the LAL fork: its command, banner, help, prompts,
-session UI, and updater are LAL-owned. Custom Hive/deliberate-research/voice
-screens are still being integrated into that fork.
-
-### Install the full LAL terminal client on another tailnet computer
-
-First, print the pairing token on `main-pc`:
-
-```bash
-./start.sh --show-cli-token
-```
-
-On Linux or macOS:
-
-```bash
-curl -fsSL https://main-pc.tail3ba909.ts.net/lal/install.sh | bash
-```
-
-On Windows PowerShell:
-
-```powershell
-irm https://main-pc.tail3ba909.ts.net/lal/install.ps1 | iex
-```
-
-Enter the pairing token once when prompted. On Windows the installer downloads a
-checksum-pinned standalone LAL runtime from `main-pc`, so Node does not need to be
-installed separately. Open a new terminal, enter any project stored on that
-computer, and run `lal`. File, shell,
-Git, LSP, and MCP tools execute on that client computer; only model inference is
-streamed to `main-pc` over Tailscale. Chats are automatically stored per project
-under `~/.lal/projects`. The mature terminal UI, model selection, approvals,
-tooling, and resume flow work now; LAL-specific Hive, deliberate-research, effort,
-and browser-backed voice controls are the next overlay on the cloned client.
-
-Update in place at any time:
-
-```bash
-lal update
-```
-
-On `main-pc`, inspect every recorded LAL client and rejected-token attempt:
-
-```bash
-./start.sh --list-cli-devices
-```
-
-Each installation gets a stable random device ID. The security registry shows its
-computer name, platform, client version, Tailscale address, first/last activity,
-and request count. It deliberately does not store prompts, project paths, or file
-contents. Existing clients gain device heartbeats after running `lal update` once.
-
-Updates replace only managed client/runtime files. Existing settings, credentials,
-and project chats are preserved. The release channel pins the native LAL runtime
-separately from its small launcher/configuration layer. The Windows runtime is the
-first native LAL artifact; Linux/macOS packaging is transitioning through the same
-fork while their current recovery installer remains available.
-
-The earlier dependency-free `lab-agent` and SSH folder bridge remain available as
-bootstrap/recovery paths. They are no longer the recommended path for a project
-that lives on another computer.
-
-`start.sh` is self-contained: it installs web deps on first run, rebuilds only when the
-code changed (a stale bundle is a known footgun — see [[deploy-restart-required]]),
-frees the port from any old instance, exposes the app on your tailnet via
-`tailscale serve` (so your phone opens the *same* live session at
-`https://<your-tailnet-host>`), then starts it and opens it. Stop with Ctrl-C.
-
-- **App:** Next.js in `web/`, production `next start` on **:8770** (override `PORT`).
-- **GPU serving** (llama.cpp, :8099) and **Ollama** (:11434) are launched **on demand
-  by the app**, not by the script — and llama-server auto-unloads when idle.
-- **Training, benchmarking, chat, and the coding agent** all live in the UI; the agent
-  can even drive training itself. The `## Commands` block above is the same pipeline the
-  app automates, kept for reference / manual runs.
+The old `lab-agent` client is transitional. The intended client is `lal`; the
+recovery client will be retired once the full LAL flow is reliable.

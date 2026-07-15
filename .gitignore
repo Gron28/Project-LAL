@@ -25,7 +25,12 @@ web_scaffold.log
 # Keeping the ~60 MB archives out of Git makes normal updates and clones fast.
 web/public/lal/releases/
 
-# build artifacts / installed deps for any nested project (hive-* sandboxes, web/, lal-cli/)
+# build artifacts / installed deps for Project-LAL apps and temporary workspaces
 node_modules/
 .next/
 .next-recovery*/
+
+# Runtime datasets are intentionally local. Commit only explicit small fixtures.
+/data/*.jsonl
+/data/*.json
+/data/sovereign_batches/

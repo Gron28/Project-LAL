@@ -1,5 +1,9 @@
 # LAL CLI foundation research
 
+> Status: historical foundation research. Its separate-repository decision is
+> superseded by `docs/plans/project-lal-repository-migration.md`; retain this
+> document for the Qwen Code evaluation and local-tool execution proof.
+
 Date: 2026-07-13
 
 ## Decision
@@ -8,7 +12,9 @@ Use [Qwen Code](https://github.com/QwenLM/qwen-code) as the upstream foundation 
 
 Qwen Code is Apache-2.0, TypeScript/Node 22+, and already contains nearly every difficult terminal feature LAL needs: a rich interactive TUI, local file and shell tools, OpenAI-compatible providers, automatic project-scoped sessions, resume/search/branch/rewind/restore/export, model and effort selectors, approval modes, voice dictation, subagents, workflows, goals, memory, MCP, LSP, skills, hooks, worktrees, a daemon, and SDKs.
 
-The selected upstream is cloned as the separate repository `lal-cli/`. The clone is deliberately separate from the parent Local AI Lab repository so its history and future upstream merges remain manageable.
+The selected upstream was cloned as the separate repository `lal-cli/`. That
+separate-repository choice is superseded by the Project-LAL migration plan; this
+record remains for the foundation evaluation and compatibility proof.
 
 ## Required execution model
 

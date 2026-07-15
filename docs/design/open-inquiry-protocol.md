@@ -1,10 +1,12 @@
 # Open-Inquiry Protocol
 
-Status: approved design, 2026-07-14. Companion to
+Status: deferred research design, 2026-07-14. No new dataset generation or GPU
+training begins until Project-LAL's reliability, retention, and core workflow
+milestones are complete. Companion to
 `docs/design/lal-cli-product-plan.md` (Research mode, Step 6) and structured like
 `docs/hive-specialist-training.md`.
 
-Goal: make Local AI Lab's research capability **epistemically open during
+Goal: make Project-LAL's research capability **epistemically open during
 generation and strict during verification** — first as prompts in the existing
 deliberate engine (free), then as a trained sub-3B specialist (`open_inquirer`),
 gated by deterministic, blind, two-axis evaluation.

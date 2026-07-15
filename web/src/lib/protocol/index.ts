@@ -11,7 +11,7 @@
 //     all are if/else-if chains with no exhaustive default, so an unmatched `k` is
 //     silently ignored, never thrown). Adding a kind never breaks an old client. It DOES
 //     require adding that kind to the unions below (and to the mirrored copy at
-//     lal-cli/packages/core/src/lal/protocol.ts, kept in sync by
+//     apps/cli/packages/core/src/lal/protocol.ts, kept in sync by
 //     scripts/check_protocol_drift.mjs) in the same change.
 //   - Changing the SHAPE of an EXISTING kind's `v` payload in a way an existing client
 //     reads (renaming/removing/retyping a field, changing its meaning) is a BREAKING

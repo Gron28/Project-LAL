@@ -1,4 +1,0 @@
-[submodule "lal-cli"]
-	path = lal-cli
-	url = https://github.com/Gron28/Project-LALF.git
-	branch = lal-cli

@@ -1,1 +1,0 @@
-{"name":"config-merge","version":"1.0.0","type":"module","main":"index.js","scripts":{"test":"node test.js"},"license":"MIT","dependencies":{"json5":"^2.2.3"}}

@@ -2,6 +2,7 @@
 // instead of N widgets each polling their own endpoint on their own interval.
 import { readSysInfo } from "@/lib/sysinfo";
 import { servingModel, trainStatus, listTrainRuns, listBench, getBattery, allModels } from "@/lib/lab";
+import { readRuntimeStatus } from "@/lib/runtime-status";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,7 @@ async function snapshot() {
     sys, serving: servingModel(),
     train: { running, tail },
     runs, benchSummaries, battery,
-    models: allModels(),
+    models: allModels(), runtime: readRuntimeStatus(),
   };
 }
 

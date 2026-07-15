@@ -21,11 +21,12 @@ if [ ! -d node_modules ]; then
   npm install --no-audit --no-fund
 fi
 
-# Never replace the server bundle while a training job or agent run is live.
+# Never replace the server bundle while LAL-owned work is live.  The runtime
+# inventory also catches a lens run, which used to be invisible to this guard.
 if curl -fsS "http://127.0.0.1:${PORT}/api/sysinfo" 2>/dev/null \
-  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.exit(JSON.parse(s).runLive?0:1))'
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s),r=x.runtime||{},runs=r.activeRuns||[],lens=r.lens||{};if(x.runLive||runs.length||lens.alive){console.error(`Active work: ${[...runs.map(v=>v.id),lens.alive?`lens:${lens.model||"unknown"}`:""] .filter(Boolean).join(", ")}`);process.exit(0)}process.exit(1)})'
 then
-  echo "Local AI Lab has an active agent/benchmark run. Rebuild deferred."
+  echo "Project-LAL has active agent or lens work. Rebuild deferred."
   exit 1
 fi
 

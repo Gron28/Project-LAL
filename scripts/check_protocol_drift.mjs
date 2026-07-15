@@ -3,7 +3,7 @@
 //
 // web/src/lib/protocol/index.ts is the source of truth for every event kind that can
 // appear on an agent run's SSE stream (see that file's header for the compatibility
-// rule). lal-cli/packages/core/src/lal/protocol.ts is a self-contained mirror of it (no
+// rule). apps/cli/packages/core/src/lal/protocol.ts is a self-contained mirror of it (no
 // imports from web/) so the CLI fork can typecheck against the same shapes without
 // depending on the Next.js app.
 //
@@ -28,7 +28,7 @@ const TOOLLOOP_PATH = path.join(ROOT, "web/src/lib/toolloop.ts");
 const DELIBERATE_PATH = path.join(ROOT, "web/src/lib/deliberate.ts");
 const RUNS_PATH = path.join(ROOT, "web/src/lib/runs.ts");
 const PROTOCOL_PATH = path.join(ROOT, "web/src/lib/protocol/index.ts");
-const MIRROR_PATH = path.join(ROOT, "lal-cli/packages/core/src/lal/protocol.ts");
+const MIRROR_PATH = path.join(ROOT, "apps/cli/packages/core/src/lal/protocol.ts");
 
 function read(p) {
   return fs.readFileSync(p, "utf8");
