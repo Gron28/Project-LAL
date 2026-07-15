@@ -80,7 +80,10 @@ const metaPath = (id: string) => path.join(RUNS_DIR, id + ".json");
 const logPath = (id: string) => path.join(RUNS_DIR, id + ".ndjson");
 const capabilityPath = (id: string) => path.join(RUNS_DIR, id + ".client.json");
 const isMetaFile = (file: string) => file.endsWith(".json") && !file.endsWith(".client.json");
-const CLIENT_RUN_STALE_MS = 2 * 60 * 1000;
+// The terminal heartbeats every 30 seconds.  Two missed heartbeats plus a
+// small margin clears a closed/crashed terminal promptly without treating one
+// transient network delay as a stopped session.
+const CLIENT_RUN_STALE_MS = 75 * 1000;
 const MAX_CLIENT_EVENTS_PER_BATCH = 32;
 const MAX_CLIENT_EVENT_BYTES = 16 * 1024;
 const SERVER_ENVELOPE_KINDS = new Set(["protocol", "run", "status", "approval_needed", "approval_result"]);
@@ -440,18 +443,25 @@ export function getRun(id: string): RunMeta | null {
 }
 
 export function isRunLive(id: string): boolean {
+  // Client-owned terminals can disappear without a final HTTP request. Refresh
+  // their heartbeat expiry before reporting a live state to the UI or guards.
+  sweepClientRuns();
   if (live.has(id) || clientLive.has(id)) return true;
   const meta = getRun(id);
   return meta?.status === "running";
 }
 
 export function anyRunLive(): boolean {
+  // Do this before consulting the in-memory map: a stale remote terminal may
+  // still have a relay entry until its heartbeat expiry is processed.
+  sweepClientRuns();
   if (live.size > 0 || clientLive.size > 0) return true;
   return listRuns(500).some((run) => run.status === "running");
 }
 
 export function listRuns(limit = 50): RunMeta[] {
   sweepOnce();
+  sweepClientRuns();
   const out = new Map<string, RunMeta>();
   for (const lr of live.values()) out.set(lr.meta.id, lr.meta);
   let files: string[] = [];
