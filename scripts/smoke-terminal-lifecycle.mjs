@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Guarded vertical smoke for the host-to-terminal lifecycle bridge. It creates
-// a short-lived client-owned run, asks the real local model one tiny question,
-// and proves that the host wrote model_loading + model_ready into that run's
-// durable ledger. Tokens never leave this process or appear in output.
+// a short-lived client-owned run, asks the real local model one tiny question
+// with native-agent tool definitions, and proves that the host wrote
+// model_loading + model_ready into that run's durable ledger. The tool schema
+// guards llama.cpp's stream-with-tools compatibility; tokens never leave this
+// process or appear in output.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -55,7 +57,15 @@ try {
       model,
       stream: true,
       max_tokens: 12,
-      messages: [{ role: "user", content: "Reply with exactly: lifecycle smoke passed" }],
+      messages: [{ role: "user", content: "Reply with exactly: lifecycle smoke passed. Do not call tools." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "smoke_noop",
+          description: "A smoke-test-only placeholder. Do not call it.",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
     }),
   });
   await completion.text();
