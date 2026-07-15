@@ -20,11 +20,15 @@ injection is a defect.
 
 ## Host workflows
 
-The next prompt-registry slice must expose, with source links and editable
-overrides, the system prompts used by Chat/Code (`web/src/lib/toolloop.ts` and
-its routes), deliberate research (`web/src/lib/deliberate.ts`), Hive role
-profiles (already editable in the Hive role UI), training/evaluation, and any
-automatic nudge/repair/compression prompt. A run ledger must identify the
-prompt revision used, without storing a duplicate secret or project contents.
+The Library → Prompts registry exposes separate editable entries for the Code
+agent base instruction, helper-agent instruction, each automatic action /
+verification / research-depth intervention, and every Hive role profile. These
+are distinct controls: editing one never changes another. An override applies
+to the next matching run and can be restored to its managed base individually.
+
+Still to register: deliberate-research templates, training/evaluation prompts,
+mode addenda, repair/compression templates, and prompt revision IDs in the run
+ledger. They must remain visibly separate rather than becoming one opaque
+"system prompt" field.
 
 No prompt is considered product-ready merely because it lives in source code.

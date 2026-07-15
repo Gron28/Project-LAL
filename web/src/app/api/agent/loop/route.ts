@@ -6,6 +6,7 @@ import { runToolLoop, type ToolLoopMsg } from "@/lib/toolloop";
 import { makeAgentExecutor, makeOrchestratorExecutor, makePlannerExecutor, makeImplementerExecutor } from "@/lib/agent-tools";
 import { recordSessionCard, maybeRollupDaily } from "@/lib/memory-pipeline";
 import { startRun, requestApproval, resolveApproval } from "@/lib/runs";
+import { managedPrompt } from "@/lib/lal-prompts";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
@@ -269,14 +270,7 @@ export async function POST(req: NextRequest) {
         : toolset === "implementer" ? makeImplementerExecutor(fullExec)
         : toolset === "full" ? fullExec
         : modeId !== "orchestrator" ? fullExec : makeOrchestratorExecutor(fullExec);
-      const base =
-        "You are a coding agent working in the user's project directory. " +
-        "Use your tools to actually do the work — read before you edit, verify after you change. " +
-        "To modify an existing file, prefer edit_file with a small exact search/replace — " +
-        "rewrite a whole file with write_file only when creating it or changing most of it. " +
-        "For research: web_search first, then web_fetch any result whose snippet looks relevant — a snippet tells you WHERE to look, not the answer itself; don't answer a specific question from search snippets alone. Use describe_image for images, spawn_agent for isolated subtasks. " +
-        "You have standing project memory across sessions via memory_read/memory_write (project conventions, known gotchas, current task state) — check it if unsure what's already known about this project, and update it when you learn something worth remembering. " +
-        "Keep replies focused on what you did and found. ";
+      const base = managedPrompt("agent-core") + " ";
       const toolsetAddendum =
         toolset === "planner" ? "You are in a PLANNING-ONLY phase: you have no write_file/edit_file/run_shell/spawn_agent this turn (by design, not by mistake) — produce your plan as your final text reply, not a file. " + CHUNKED_PLAN_INSTRUCTION + " " :
         toolset === "implementer" ? "You are in an IMPLEMENTATION-ONLY phase: you have no web_search/web_fetch/spawn_agent this turn (by design, not by mistake) — act directly on the plan you were given instead of researching further. " :

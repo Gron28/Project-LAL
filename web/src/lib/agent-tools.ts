@@ -7,6 +7,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { makeExecutor, TOOL_DEFS, type Executor, type ToolDef } from "./tools";
 import { runToolLoop, type ApproveFn, type ToolLoopEvent, type ToolLoopMsg } from "./toolloop";
+import { managedPrompt } from "./lal-prompts";
 import { webSearch, servingModel, stopServing, ensureServing, allModels, SERVE_PORT, runsAreLive, startTrain, stopTrain, trainStatus, listTrainRuns, listDataFiles, listSuites, listBench, TRAIN_BASES } from "./lab";
 import { projectMemoryDir } from "./memory-paths";
 import { searchMemory } from "./memory-pipeline";
@@ -461,7 +462,7 @@ export function makeAgentExecutor(opts: {
         const agentId = "helper-" + (++subCount);
         const tagged = (e: ToolLoopEvent) => opts.onEvent({ ...e, agent: agentId });
         const messages: ToolLoopMsg[] = [
-          { role: "system", content: "You are a focused helper agent inside a larger coding session. Complete ONLY the task you are given, using your tools, then reply with a concise final report of findings/changes. Do not ask questions — make reasonable assumptions and state them." },
+          { role: "system", content: managedPrompt("helper-agent") },
           { role: "user", content: task },
         ];
         const runSub = async (baseUrl: string, model: string): Promise<string> => {

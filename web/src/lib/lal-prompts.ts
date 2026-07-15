@@ -1,0 +1,26 @@
+import fs from "node:fs";
+import path from "node:path";
+
+export type PromptOverrideFile = { version: 1; prompts: Record<string, string> };
+export type ManagedPrompt = { id: string; name: string; scope: string; source: string; base: string; activation: string };
+
+const OVERRIDES = path.join(process.cwd(), ".data", "lal-prompts.json");
+const terminalBase = () => fs.readFileSync(path.join(process.cwd(), "public", "lal", "system.md"), "utf8");
+
+export const PROMPTS: ManagedPrompt[] = [
+  { id: "terminal-system", name: "LAL terminal system prompt", scope: "Every managed terminal turn", source: "Host-managed", base: terminalBase(), activation: "Run lal update on each terminal, then start a new session." },
+  { id: "agent-core", name: "Code agent base instruction", scope: "Every Code-page agent run", source: "Host-managed", base: "You are a coding agent working in the user's project directory. Use your tools to actually do the work — read before you edit, verify after you change. To modify an existing file, prefer edit_file with a small exact search/replace — rewrite a whole file with write_file only when creating it or changing most of it. For research: web_search first, then web_fetch any result whose snippet looks relevant — a snippet tells you WHERE to look, not the answer itself; don't answer a specific question from search snippets alone. Use describe_image for images, spawn_agent for isolated subtasks. You have standing project memory across sessions via memory_read/memory_write (project conventions, known gotchas, current task state) — check it if unsure what's already known about this project, and update it when you learn something worth remembering. Keep replies focused on what you did and found.", activation: "Applies to the next new Code-page run." },
+  { id: "helper-agent", name: "Helper agent instruction", scope: "Each spawned Code-page helper", source: "Host-managed", base: "You are a focused helper agent inside a larger coding session. Complete ONLY the task you are given, using your tools, then reply with a concise final report of findings/changes. Do not ask questions — make reasonable assumptions and state them.", activation: "Applies to the next spawned helper." },
+  { id: "nudge-forced-verify", name: "Automatic verification nudge", scope: "After a file-changing Code-page run", source: "Host-managed automatic intervention", base: "Before you finish: run the project's mechanical check now (tests/lint/build as appropriate). Use its exact output to inspect the failing files plus the key entrypoint you changed; do not spend one round rereading every file. Confirm actual code rather than your memory. Fix anything missing or incorrect, then rerun the check after the final edit. If everything passes, reply with one short confirmation line only.", activation: "Applies to the next matching run." },
+  { id: "nudge-stall", name: "Automatic action nudge", scope: "When a writable agent stalls in read-only rounds", source: "Host-managed automatic intervention", base: "You've spent several rounds only reading or listing files without writing or editing anything. You already have enough context — make your first write_file or edit_file call this turn instead of reading further.", activation: "Applies to the next matching run." },
+  { id: "nudge-promised-action", name: "Automatic follow-through nudge", scope: "When an agent promises action then stops", source: "Host-managed automatic intervention", base: "Your reply announced what you were GOING to do, then stopped without doing any of it. Do not narrate future actions — execute them NOW with tool calls (write_file, edit_file, run_shell…). Keep working until the task itself is complete, then report what you actually did.", activation: "Applies to the next matching run." },
+  { id: "nudge-research-depth", name: "Deep-research depth nudge", scope: "When deep research finishes too early", source: "Host-managed automatic intervention", base: "Deep research means broad, iterative coverage — you've made {{count}} web_search/web_fetch call(s) so far, well short of the ~{{min}} a question like this warrants. Identify what's still unclear, unconfirmed, or unexplored from what you've found, generate new follow-up sub-questions, and keep researching before finalizing your answer.", activation: "Applies to the next matching run. {{count}} and {{min}} are filled live." },
+];
+
+export function readPromptOverrides(): PromptOverrideFile {
+  try { const parsed = JSON.parse(fs.readFileSync(OVERRIDES, "utf8")) as Partial<PromptOverrideFile>; if (parsed.version === 1 && parsed.prompts && typeof parsed.prompts === "object") return { version: 1, prompts: parsed.prompts }; } catch {}
+  return { version: 1, prompts: {} };
+}
+export function writePromptOverrides(value: PromptOverrideFile): void { fs.mkdirSync(path.dirname(OVERRIDES), { recursive: true }); const temporary = `${OVERRIDES}.${process.pid}.tmp`; fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 }); fs.renameSync(temporary, OVERRIDES); }
+export function managedPrompt(id: string, fallback?: string): string { const base = PROMPTS.find((p) => p.id === id)?.base ?? fallback; return readPromptOverrides().prompts[id]?.trim() || base || ""; }
+export function terminalPrompt(): string { return managedPrompt("terminal-system"); }

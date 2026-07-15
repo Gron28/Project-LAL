@@ -1,5 +1,5 @@
 import { cliAuthorized, recordCliAccess, unauthorizedResponse } from "@/lib/lal-cli";
-import { terminalPrompt } from "@/app/api/lal/prompts/route";
+import { terminalPrompt } from "@/lib/lal-prompts";
 
 export const dynamic = "force-dynamic";
 

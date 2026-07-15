@@ -4,6 +4,7 @@
 // spike) — no prompted-JSON fallback needed.
 import type { Executor } from "./tools";
 import { TOOL_DEFS, normalizeToolArgs, toolCallExample, validateToolArguments, type ToolDef } from "./tools";
+import { managedPrompt } from "./lal-prompts";
 
 export type ToolLoopMsg = {
   role: "system" | "user" | "assistant" | "tool";
@@ -134,7 +135,7 @@ function mechanicalFailureHint(output: string): string {
 // ever re-checking its output against what it claimed. This fires exactly once per
 // session, only if the session actually wrote/edited a file, so a trivial no-write
 // Q&A turn never pays the extra round.
-const FORCED_VERIFY_NUDGE = "Before you finish: run the project's mechanical check now (tests/lint/build as appropriate). Use its exact output to inspect the failing files plus the key entrypoint you changed; do not spend one round rereading every file. Confirm actual code rather than your memory. Fix anything missing or incorrect, then rerun the check after the final edit. If everything passes, reply with one short confirmation line only.";
+const forcedVerifyNudge = () => managedPrompt("nudge-forced-verify");
 
 // Companion to FORCED_VERIFY_NUDGE, at the opposite end of the same session: a real
 // run (2026-07-07, same eval) looped list_files/read_file for 8-16 rounds straight
@@ -143,7 +144,7 @@ const FORCED_VERIFY_NUDGE = "Before you finish: run the project's mechanical che
 // when write_file/edit_file are actually available tools (a read-only planning
 // session should never see this).
 const STALL_ROUND_THRESHOLD = 3;
-const STALL_NUDGE = "You've spent several rounds only reading or listing files without writing or editing anything. You already have enough context — make your first write_file or edit_file call this turn instead of reading further.";
+const stallNudge = () => managedPrompt("nudge-stall");
 
 // Third failure in the same family, observed live 2026-07-09 (victory6-8b,
 // orchestrator mode): the model ANNOUNCES its next actions ("I'll start by
@@ -152,7 +153,7 @@ const STALL_NUDGE = "You've spent several rounds only reading or listing files w
 // built nothing. Fires once, only when the session could write but never did
 // and the reply's ending reads as a promise of future work.
 const PROMISES_ACTION_RE = /\b(i(?:'|’)ll|i will|let(?:'|’)s|we(?:'|’)ll|we will|proceed to|start by|next,? (?:i|we)\b|i(?:'|’)m going to)\b/i;
-const ACT_NUDGE = "Your reply announced what you were GOING to do, then stopped without doing any of it. Do not narrate future actions — execute them NOW with tool calls (write_file, edit_file, run_shell…). Keep working until the task itself is complete, then report what you actually did.";
+const actNudge = () => managedPrompt("nudge-promised-action");
 
 // Deep-research mode's actual complaint (2026-07-07): the model answers after 1-2
 // web_search calls, the same shallow depth as a normal chat turn, when the point of
@@ -163,7 +164,7 @@ const ACT_NUDGE = "Your reply announced what you were GOING to do, then stopped 
 // infinite research loop.
 const RESEARCH_DEPTH_NUDGE_CAP = 3;
 function researchDepthNudge(count: number, min: number): string {
-  return `Deep research means broad, iterative coverage — you've made ${count} web_search/web_fetch call(s) so far, well short of the ~${min} a question like this warrants. Identify what's still unclear, unconfirmed, or unexplored from what you've found, generate new follow-up sub-questions, and keep researching before finalizing your answer.`;
+  return managedPrompt("nudge-research-depth").replaceAll("{{count}}", String(count)).replaceAll("{{min}}", String(min));
 }
 
 // Opposite failure, same day: a planning task (basic REST API layout) burned all 12
@@ -500,7 +501,7 @@ export async function runToolLoop(opts: {
       if (wroteFiles && !forcedVerifyDone) {
         forcedVerifyDone = true;
         messages.push({ role: "assistant", content });
-        messages.push({ role: "user", content: FORCED_VERIFY_NUDGE, name: "nudge" });
+        messages.push({ role: "user", content: forcedVerifyNudge(), name: "nudge" });
         onEvent({ k: "forced_verify" });
         continue;
       }
@@ -515,7 +516,7 @@ export async function runToolLoop(opts: {
       if (canWrite && !wroteFiles && !actNudgeDone && PROMISES_ACTION_RE.test(content.slice(-400))) {
         actNudgeDone = true;
         messages.push({ role: "assistant", content });
-        messages.push({ role: "user", content: ACT_NUDGE, name: "nudge" });
+        messages.push({ role: "user", content: actNudge(), name: "nudge" });
         onEvent({ k: "act_nudge" });
         continue;
       }
@@ -667,8 +668,8 @@ export async function runToolLoop(opts: {
       // its alternation counter.  The fallback remains for a defensive path
       // where no tool result was recorded.
       const nudge = stallNudgeCount > 1
-        ? `${STALL_NUDGE} This is escalation ${stallNudgeCount}: your next tool call MUST be write_file or edit_file; do not make another read/list call.`
-        : STALL_NUDGE;
+        ? `${stallNudge()} This is escalation ${stallNudgeCount}: your next tool call MUST be write_file or edit_file; do not make another read/list call.`
+        : stallNudge();
       if (!appendToolResultNudge(messages, nudge)) {
         messages.push({ role: "user", content: nudge, name: "nudge" });
       }
