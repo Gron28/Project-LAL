@@ -68,7 +68,10 @@ class LalWindowsReleaseTest(unittest.TestCase):
         self.assertIn("Set-LalSettingProperty $CurrentSettings 'privacy'", installer)
         self.assertIn("Set-LalSettingProperty $CurrentSettings 'telemetry'", installer)
         self.assertIn("Set-LalSettingProperty $CurrentSettings 'modelProviders'", installer)
-        self.assertIn('"$HostUrl/lal/system.md"', installer)
+        self.assertIn('"$HostUrl/api/lal/prompt/terminal"', installer)
+        self.assertIn("-Headers $Headers -OutFile $SystemBasePromptPath", installer)
+        self.assertIn("system.local.md", installer)
+        self.assertIn("Set-LalSettingProperty $CurrentSettings 'tools'", installer)
         self.assertIn('QWEN_SYSTEM_MD=%LAL_HOME%\\system.md', wrapper)
         self.assertNotIn("if (-not (Test-Path $SettingsPath))", installer)
 

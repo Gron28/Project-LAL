@@ -22,7 +22,7 @@ mkdir -p "$LAL_HOME" "$TARGET"
 
 headers=( -H "Authorization: Bearer $TOKEN" -H "X-LAL-Device-Id: $DEVICE_ID" -H "X-LAL-Device-Name: $DEVICE_NAME" -H "X-LAL-Platform: $PLATFORM" -H "X-LAL-Client-Version: local-source" )
 curl --fail --silent --show-error "${headers[@]}" "$HOST/api/lal/client-settings" -o "$LAL_HOME/settings.json"
-curl --fail --silent --show-error "$HOST/lal/system.md" -o "$LAL_HOME/system.base.md"
+curl --fail --silent --show-error "${headers[@]}" "$HOST/api/lal/prompt/terminal" -o "$LAL_HOME/system.base.md"
 if [ ! -f "$LAL_HOME/system.local.md" ]; then
   printf '%s\n' '# Your local LAL prompt additions. This file is preserved by lal update.' > "$LAL_HOME/system.local.md"
 fi

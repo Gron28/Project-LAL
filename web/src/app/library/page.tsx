@@ -536,8 +536,53 @@ function Projects() {
   );
 }
 
+type PromptRow = { id: string; name: string; scope: string; source: string; prompt: string; inherited: boolean; activation: string };
+
+function Prompts() {
+  const [prompts, setPrompts] = useState<PromptRow[]>([]);
+  const [selected, setSelected] = useState<PromptRow | null>(null);
+  const [draft, setDraft] = useState("");
+  const [status, setStatus] = useState("");
+  const load = () => fetch("/api/lal/prompts").then((r) => r.json()).then((j) => {
+    const rows = (j.prompts || []) as PromptRow[];
+    setPrompts(rows);
+    setSelected((current) => rows.find((row) => row.id === current?.id) ?? rows[0] ?? null);
+    setDraft((current) => current || rows[0]?.prompt || "");
+  }).catch(() => setStatus("Could not load prompt registry."));
+  useEffect(() => { load(); }, []);
+  const save = async () => {
+    if (!selected) return;
+    setStatus("saving…");
+    const result = await fetch("/api/lal/prompts", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: selected.id, prompt: draft }) }).then((r) => r.json()).catch(() => ({ error: "request failed" }));
+    setStatus(result.ok ? "Saved. Run lal update on each terminal, then start a new session." : result.error || "Save failed.");
+    if (result.ok) load();
+  };
+  const reset = async () => {
+    if (!selected || !confirm("Restore the LAL-managed base prompt? Your saved override will be removed.")) return;
+    const result = await fetch(`/api/lal/prompts?id=${encodeURIComponent(selected.id)}`, { method: "DELETE" }).then((r) => r.json()).catch(() => ({ error: "request failed" }));
+    setStatus(result.ok ? "Restored the managed base prompt." : result.error || "Restore failed.");
+    if (result.ok) load();
+  };
+  return <div className="grid gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+    <Panel padding="none">
+      <div className={head}><Terminal size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> PROMPT REGISTRY</div>
+      {prompts.map((prompt) => <button key={prompt.id} onClick={() => { setSelected(prompt); setDraft(prompt.prompt); }} className="w-full text-left px-4 py-3 border-b border-[var(--border-soft)] hover:bg-[var(--surface-2)]" style={{ background: selected?.id === prompt.id ? "var(--surface-2)" : undefined }}>
+        <div className="text-sm">{prompt.name}</div><div className="mt-1 text-[10px] text-[var(--muted)]">{prompt.inherited ? "managed base" : "owner override"}</div>
+      </button>)}
+    </Panel>
+    <Panel padding="none">
+      {selected ? <>
+        <div className={head}><span className="text-[var(--accent-ai)]">◆</span> {selected.name.toUpperCase()} <span className="ml-auto normal-case tracking-normal text-[var(--muted)]">{selected.scope}</span></div>
+        <div className="px-4 py-2 text-[11px] text-[var(--muted)] border-b border-[var(--border-soft)]">{selected.source}. {selected.activation}</div>
+        <textarea value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} className="w-full min-h-[420px] p-4 bg-[var(--surface-1)] text-[12px] leading-5 font-mono text-[var(--text)] outline-none resize-y" />
+        <div className="flex gap-2 items-center px-4 py-3 border-t border-[var(--border-soft)]"><button className={btn} onClick={save}>Save prompt</button><button className={btn} onClick={reset}>Restore base</button>{status && <span className="text-[11px] text-[var(--muted)]">{status}</span>}</div>
+      </> : <div className="p-6 text-xs text-[var(--muted)]">No prompts registered.</div>}
+    </Panel>
+  </div>;
+}
+
 export default function Library() {
-  const [tab, setTab] = useState<"models" | "docs" | "chats" | "runs" | "experiments" | "projects">("models");
+  const [tab, setTab] = useState<"models" | "docs" | "chats" | "runs" | "experiments" | "projects" | "prompts">("models");
   const tabBtn = (id: typeof tab, label: string) => (
     <button onClick={() => setTab(id)} className="px-4 py-2 text-[11px] tracking-widest uppercase rounded-[var(--r-md)] border"
       style={{ color: tab === id ? "#05090c" : "var(--text-2)", background: tab === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)", fontWeight: tab === id ? 700 : 400 }}>{label}</button>
@@ -545,8 +590,8 @@ export default function Library() {
   return (
     <div className="min-h-dvh bg-[var(--bg)] text-[var(--text)] px-3 py-4 pb-16">
       <div className="max-w-7xl mx-auto flex flex-col gap-4">
-        <div className="flex gap-2 flex-wrap">{tabBtn("models", "▤ Models")}{tabBtn("docs", "▦ Documents")}{tabBtn("chats", "▥ Chats")}{tabBtn("runs", "Runs")}{tabBtn("experiments", "Experiments")}{tabBtn("projects", "▧ Projects")}</div>
-        {tab === "models" ? <Models /> : tab === "docs" ? <Documents /> : tab === "chats" ? <Chats /> : tab === "runs" ? <Runs /> : tab === "experiments" ? <Experiments /> : <Projects />}
+        <div className="flex gap-2 flex-wrap">{tabBtn("models", "▤ Models")}{tabBtn("docs", "▦ Documents")}{tabBtn("chats", "▥ Chats")}{tabBtn("runs", "Runs")}{tabBtn("experiments", "Experiments")}{tabBtn("projects", "▧ Projects")}{tabBtn("prompts", "Prompts")}</div>
+        {tab === "models" ? <Models /> : tab === "docs" ? <Documents /> : tab === "chats" ? <Chats /> : tab === "runs" ? <Runs /> : tab === "experiments" ? <Experiments /> : tab === "projects" ? <Projects /> : <Prompts />}
       </div>
     </div>
   );

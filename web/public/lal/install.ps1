@@ -35,7 +35,7 @@ $SettingsText = (Invoke-WebRequest -UseBasicParsing -Headers $Headers "$HostUrl/
 $SystemPromptPath = Join-Path $LalHome 'system.md'
 $SystemBasePromptPath = Join-Path $LalHome 'system.base.md'
 $SystemLocalPromptPath = Join-Path $LalHome 'system.local.md'
-Invoke-WebRequest -UseBasicParsing -OutFile $SystemBasePromptPath "$HostUrl/lal/system.md"
+Invoke-WebRequest -UseBasicParsing -Headers $Headers -OutFile $SystemBasePromptPath "$HostUrl/api/lal/prompt/terminal"
 if (-not (Test-Path $SystemLocalPromptPath)) {
   [IO.File]::WriteAllText($SystemLocalPromptPath, '# Your local LAL prompt additions. This file is preserved by lal update.' + "`r`n", [Text.Encoding]::UTF8)
 }
