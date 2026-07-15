@@ -7,6 +7,10 @@ ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 LAL_HOME="${LAL_HOME:-$HOME/.lal}"
 export QWEN_HOME="$LAL_HOME"
 export LAL_MANAGED=1
+# The inherited CLI falls back to its upstream package metadata for --version.
+# The Linux source launcher is owned by this repository, so report the LAL
+# release version instead (Windows standalone carries this at package time).
+export CLI_VERSION="${LAL_CLI_VERSION:-$(node -p "require('$ROOT/apps/cli/package.json').version")}" # LAL release identity
 
 if [ -f "$LAL_HOME/.env" ]; then
   # The managed env file contains only the local pairing token. Do not source
@@ -28,4 +32,4 @@ for item in client-host device-id device-name platform client-version; do
 done
 [ -f "$LAL_HOME/system.md" ] && export QWEN_SYSTEM_MD="$LAL_HOME/system.md"
 
-exec node "$ROOT/apps/cli/packages/cli/dist/index.js" "$@"
+exec node "$ROOT/apps/cli/dist/cli-entry.js" "$@"

@@ -1,6 +1,6 @@
 {
   "name": "@qwen-code/qwen-code",
-  "version": "0.19.9",
+  "version": "0.1.0-lal.14",
   "description": "LAL terminal agent",
   "repository": {
     "type": "git",
