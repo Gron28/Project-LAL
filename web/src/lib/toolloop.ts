@@ -297,6 +297,10 @@ export async function runToolLoop(opts: {
   // running it can never produce new information. Refuse the repeat with a
   // corrective error instead, exactly like duplicate research calls above.
   const seenMutationCalls = new Set<string>();
+  // A truncated mutation is not recoverable by replaying the same malformed
+  // JSON. Stop after two failed attempts so a small-output model cannot spend
+  // the rest of the run looping on its own rejection.
+  const truncatedMutationRetries = new Map<string, number>();
   // Exact read/list repeats before any intervening mutation provide no new
   // information and are a common local-model rut. Clear after a successful
   // write/edit so rereading the changed file remains valid verification.
@@ -579,6 +583,13 @@ export async function runToolLoop(opts: {
       const isReadCall = ["read_file", "read_file_outline", "list_files", "grep"].includes(c.name);
       const isDuplicateReadCall = isReadCall && seenReadCalls.has(callSig);
       const isMutationCall = c.name === "write_file" || c.name === "edit_file";
+      if (parseError && isMutationCall && finishReason === "length") {
+        const retries = (truncatedMutationRetries.get(c.name) ?? 0) + 1;
+        truncatedMutationRetries.set(c.name, retries);
+        if (retries >= 2) {
+          throw new Error(`repeated_truncated_tool_call: ${c.name} was cut off twice by max_tokens. Increase /tokens or split the file into smaller writes before retrying.`);
+        }
+      }
       const mutationCallSig = isMutationCall ? `${c.name}:${JSON.stringify(args)}` : null;
       const isDuplicateMutationCall = !!mutationCallSig && seenMutationCalls.has(mutationCallSig);
       let output: string;

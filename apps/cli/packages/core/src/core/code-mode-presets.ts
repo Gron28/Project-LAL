@@ -81,7 +81,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   default: {
     label: 'default',
     maxRounds: 24,
-    maxTokens: 4096,
+    maxTokens: 8192,
     ctx: 16384,
     think: true,
     temperature: 0,
@@ -90,7 +90,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   'quick-edit': {
     label: 'quick-edit',
     maxRounds: 8,
-    maxTokens: 2048,
+    maxTokens: 8192,
     ctx: 8192,
     think: false,
     temperature: 0,
@@ -111,7 +111,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   'deep-research': {
     label: 'deep-research',
     maxRounds: 64,
-    maxTokens: 4096,
+    maxTokens: 8192,
     ctx: 16384,
     think: true,
     temperature: 0.3,
@@ -121,7 +121,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   orchestrator: {
     label: 'orchestrator',
     maxRounds: 120,
-    maxTokens: 4096,
+    maxTokens: 8192,
     ctx: 16384,
     think: true,
     temperature: 0.2,

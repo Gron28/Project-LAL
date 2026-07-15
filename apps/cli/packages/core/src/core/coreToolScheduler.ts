@@ -2057,10 +2057,13 @@ export class CoreToolScheduler {
             reqInfo.name,
             TRUNCATION_EDIT_REJECTION,
           );
+          if (count >= VALIDATION_RETRY_LOOP_THRESHOLD) {
+            throw new Error(
+              `${TRUNCATION_EDIT_REJECTION}${TRUNCATION_RETRY_LOOP_DIRECTIVE} Increase the response token ceiling with /tokens, then retry with a smaller write/edit.`,
+            );
+          }
           const truncationError = new Error(
-            count >= VALIDATION_RETRY_LOOP_THRESHOLD
-              ? `${TRUNCATION_EDIT_REJECTION}${TRUNCATION_RETRY_LOOP_DIRECTIVE}`
-              : TRUNCATION_EDIT_REJECTION,
+            TRUNCATION_EDIT_REJECTION,
           );
           newToolCalls.push({
             status: 'error',
@@ -2099,10 +2102,9 @@ export class CoreToolScheduler {
 
           const finalError =
             count >= VALIDATION_RETRY_LOOP_THRESHOLD
-              ? new Error(
-                  `${invocationOrError.message}${RETRY_LOOP_STOP_DIRECTIVE}`,
-                )
+              ? new Error(`${invocationOrError.message}${RETRY_LOOP_STOP_DIRECTIVE}`)
               : displayError;
+          if (count >= VALIDATION_RETRY_LOOP_THRESHOLD) throw finalError;
 
           newToolCalls.push({
             status: 'error',
