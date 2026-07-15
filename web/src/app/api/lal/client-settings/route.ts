@@ -97,6 +97,23 @@ export function GET(request: Request) {
       // outbound telemetry as part of managed setup.
       privacy: { usageStatisticsEnabled: false },
       telemetry: { enabled: false },
+      // A small local model should not prefill the inherited Qwen tool catalog
+      // (agents, teams, workflows, cron, MCP, browser, worktrees, etc.) before
+      // every turn. Keep the complete daily coding loop and make every omitted
+      // capability an explicit future product decision.
+      tools: {
+        core: [
+          "list_directory",
+          "read_file",
+          "grep_search",
+          "glob",
+          "edit",
+          "write_file",
+          "run_shell_command",
+          "todo_write",
+          "ask_user_question",
+        ],
+      },
       context: { fileName: ["LAL.md", "AGENTS.md", "QWEN.md"] },
       security: { auth: { selectedType: "openai" } },
       model: { name: preferred },
