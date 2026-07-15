@@ -7,7 +7,6 @@
 import {
   AgentEventType,
   type AgentEventEmitter,
-  type AgentFinishEvent,
   type AgentToolCallEvent,
   type AgentToolOutputUpdateEvent,
   type AgentToolResultEvent,
@@ -30,6 +29,8 @@ export interface RemoteRunMirrorOptions extends ClientRunInit {
   /** Optional bridge to the TUI's normal prompt submission path. The server
    * only leases `{type:'submit'}` commands; it cannot request tools/approvals. */
   onCommand?: (command: ClientRunCommand) => Promise<boolean> | boolean;
+  /** Context size requested from the managed LAL host for this native run. */
+  contextWindow?: number;
 }
 
 export interface RemoteRunMirrorStatus {
@@ -65,6 +66,7 @@ export class RemoteRunMirror {
   private readonly init: ClientRunInit;
   private readonly heartbeatMs: number;
   private readonly onCommand: ((command: ClientRunCommand) => Promise<boolean> | boolean) | undefined;
+  private readonly contextWindow: number;
   private readonly queued: ClientRunEvent[] = [];
   private runId: string | undefined;
   private conversationId: string | undefined;
@@ -129,13 +131,18 @@ export class RemoteRunMirror {
         completionTokens,
         totalTokens: usage.totalTokenCount ?? promptTokens + completionTokens,
         tokPerSec: null,
-        ctx: 0,
+        // The server-side proxy later supplies measured throughput; do not
+        // regress the HUD to an unknown context size when this native summary
+        // arrives after the proxy's final usage frame.
+        ctx: this.contextWindow,
       },
     });
   };
-  private readonly onFinish = (_event: AgentFinishEvent) => {
-    void this.stop('done');
-  };
+  // FINISH is emitted for each model reply, not when the interactive terminal
+  // session closes. Keeping the client run active is what lets /rc mirror the
+  // next prompt in the same shared conversation. Explicit /rc stop, terminal
+  // shutdown, or server expiry settle the run instead.
+  private readonly onFinish = () => {};
   private readonly onError = (event: { error: string }) => {
     void this.stop('error', event.error);
   };
@@ -151,6 +158,15 @@ export class RemoteRunMirror {
     };
     this.heartbeatMs = options.heartbeatMs ?? 15_000;
     this.onCommand = options.onCommand;
+    this.contextWindow = options.contextWindow ?? 32_768;
+  }
+
+  /** Add an accepted terminal/phone prompt to the durable shared transcript.
+   * This is intentionally opt-in through /rc and never uploads prior history. */
+  recordPrompt(prompt: string): void {
+    const query = prompt.trim();
+    if (!query) return;
+    this.enqueue({ k: 'query', v: { query: text(query, 16_000), model: this.init.model } });
   }
 
   async start(): Promise<RemoteRunMirrorStatus> {

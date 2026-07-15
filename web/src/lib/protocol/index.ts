@@ -93,7 +93,7 @@ export type HiveTaggedToolLoopEvent = ToolLoopEvent & { workflowId: string; node
 export type AdditionalRouteEvent =
   | { k: "model_loading"; v: { model: string; ctx: number } }
   | { k: "model_ready"; v: { model: string; ctx: number; backend?: string } }
-  | { k: "token_confidence"; v: { p: number; alts?: [string, number][] } }
+  | { k: "token_confidence"; v: { token?: string; p: number; alts?: [string, number][] } }
   | { k: "model"; v: string } // vision route: which model actually answered
   | { k: "project"; v: { root: string; instructionFiles?: string[] } }
   | { k: "done"; v: { conversationId?: string; dir?: string } }

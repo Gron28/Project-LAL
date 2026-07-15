@@ -8,6 +8,7 @@ import type { MessageActionReturn, SlashCommand } from './types.js';
 import { CommandKind } from './types.js';
 import qrcode from 'qrcode-terminal';
 import { RemoteRunMirror } from '../../lal/remote-run/remote-run-mirror.js';
+import { setActiveRemoteRunMirror } from '../../lal/remote-run/remote-run-state.js';
 import { GatewayClient } from '../../lal/attach/gateway-client.js';
 
 let activeMirror: RemoteRunMirror | null = null;
@@ -75,6 +76,7 @@ export const rcCommand: SlashCommand = {
         return message('info', 'Remote control is not active.');
       await activeMirror.stop('stopped');
       activeMirror = null;
+      setActiveRemoteRunMirror(null);
       activeRemoteUrl = null;
       return message(
         'info',
@@ -110,11 +112,13 @@ export const rcCommand: SlashCommand = {
       model: config?.getModel() || 'unknown',
       projectLabel: config?.getTargetDir?.(),
       mode: config?.getActiveCodeMode?.(),
+      contextWindow: 32_768,
       onCommand: (command) => submitRemotePrompt(command.text),
     });
     try {
       await mirror.start();
       activeMirror = mirror;
+      setActiveRemoteRunMirror(mirror);
       const state = mirror.status();
       const link = new URL(
         `/code?conv=${encodeURIComponent(state.conversationId ?? '')}`,

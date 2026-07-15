@@ -112,8 +112,23 @@ import { useDualOutput } from '../../dualOutput/DualOutputContext.js';
 import { recordGoalStatusItem } from '../utils/restoreGoal.js';
 import { sanitizeDisplayText } from '../../utils/extension-mention.js';
 import process from 'node:process';
+import { recordMirroredPrompt } from '../../lal/remote-run/remote-run-state.js';
 
 const debugLogger = createDebugLogger('GEMINI_STREAM');
+
+function plainPromptForRemoteLedger(value: PartListUnion): string | null {
+  if (typeof value === 'string') return value;
+  if (!Array.isArray(value)) return null;
+  const text = value
+    .map((part) => {
+      if (typeof part === 'string') return part;
+      const candidate = part as { text?: unknown };
+      return typeof candidate.text === 'string' ? candidate.text : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+  return text || null;
+}
 
 // The per-turn model override is held in two coupled refs: the model id and a
 // flag marking whether it came from an explicit inline `/model <id> <prompt>`
@@ -2528,6 +2543,13 @@ export const useGeminiStream = (
         }
 
         const finalQueryToSend = queryToSend;
+        // /rc is a mirror of the normal native terminal session. Record the
+        // prompt only after all local preprocessing accepted it, so a rejected
+        // command/image never creates a misleading phone-side turn.
+        if (submitType === SendMessageType.UserQuery) {
+          const prompt = plainPromptForRemoteLedger(finalQueryToSend);
+          if (prompt) recordMirroredPrompt(prompt);
+        }
         lastPromptRef.current = finalQueryToSend;
         lastPromptErroredRef.current = false;
 

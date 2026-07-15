@@ -26,7 +26,8 @@ type Ev =
   | { k: "think_recovered"; v: { count: number }; agent?: string }
   | { k: "model_loading"; v: { model: string; ctx: number }; agent?: string }
   | { k: "model_ready"; v: { model: string; ctx: number; backend?: string }; agent?: string }
-  | { k: "token_confidence"; v: { p: number; alts?: [string, number][] }; agent?: string }
+  | { k: "token_confidence"; v: { token?: string; p: number; alts?: [string, number][] }; agent?: string }
+  | { k: "query"; v: { query: string; model: string }; agent?: string }
   | { k: "context_limit"; v: { estimatedTokens: number; reserveTokens: number; ctx: number }; agent?: string }
   | { k: "context_compacted"; v: { trimmed: number }; agent?: string }
   | { k: "tool_request"; v: { id: string; name: string; args: Record<string, unknown> }; agent?: string }
@@ -529,6 +530,8 @@ export default function CodePage() {
     runIdRef.current = runId;
     truncatedRef.current = false;
     setTruncated(false);
+    setCertaintyWave([]);
+    setCertaintyAlts([]);
     const es = new EventSource(`/api/agent/runs/${runId}/stream`);
     esRef.current = es;
     const finish = async (status: string, errText?: string) => {
@@ -571,9 +574,21 @@ export default function CodePage() {
         }
         return;
       }
-      if (raw.k === "usage") { setUsage(raw.v as Usage); return; }
+      if (raw.k === "usage") {
+        const incoming = raw.v as Usage | null;
+        if (!incoming) return;
+        // Proxy-measured context/throughput can arrive before the native SDK's
+        // final summary. Keep measured values if that summary omits them.
+        setUsage((previous) => ({
+          ...incoming,
+          totalTokens: incoming.totalTokens ?? previous?.totalTokens ?? 0,
+          ctx: incoming.ctx || previous?.ctx || 0,
+          tokPerSec: incoming.tokPerSec ?? previous?.tokPerSec ?? null,
+        }));
+        return;
+      }
       if (raw.k === "token_confidence") {
-        const value = raw.v as { p?: unknown; alts?: unknown };
+        const value = raw.v as { token?: unknown; p?: unknown; alts?: unknown };
         const p = value.p;
         if (typeof p === "number" && Number.isFinite(p)) {
           setCertaintyWave((previous) => [...previous, p].slice(-240));
@@ -582,8 +597,22 @@ export default function CodePage() {
             const alts = rawAlts.filter((item): item is [string, number] =>
               Array.isArray(item) && typeof item[0] === "string" && typeof item[1] === "number",
             );
-            setCertaintyAlts((previous) => [...previous, { token: "", p, alts }].slice(-12));
+            setCertaintyAlts((previous) => [...previous, { token: typeof value.token === "string" ? value.token : "", p, alts }].slice(-12));
           }
+        }
+        return;
+      }
+      if (raw.k === "query") {
+        const value = raw.v as { query?: unknown };
+        if (typeof value.query === "string" && value.query) {
+          const query = value.query;
+          setBlocks((previous) => {
+            const last = previous[previous.length - 1];
+            // Phone-submitted prompts are optimistically rendered before the
+            // terminal accepts them; don't show their mirrored ledger echo twice.
+            if (last?.t === "user" && last.text === query) return previous;
+            return [...previous, { t: "user", text: query, hIdx: -1 }];
+          });
         }
         return;
       }

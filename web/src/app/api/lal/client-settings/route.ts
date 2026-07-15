@@ -80,7 +80,10 @@ export function GET(request: Request) {
           // default lets a small model spend minutes narrating instead of
           // making its first tool call; longer work continues across turns.
           samplingParams: { temperature: 0.2, max_tokens: 1024 },
-          extra_body: { chat_template_kwargs: { enable_thinking: false } },
+          // Native /rc turns mirror visible model reasoning into the owner's
+          // local run ledger. This is model-provided reasoning output, not a
+          // claim to expose hidden provider internals.
+          extra_body: { chat_template_kwargs: { enable_thinking: true } },
         },
       };
     });

@@ -54,7 +54,7 @@ export async function POST(request: Request) {
             if (typeof candidate.token !== "string" || typeof candidate.logprob !== "number" || !Number.isFinite(candidate.logprob)) return [];
             return [[candidate.token, Math.max(0, Math.min(1, Math.exp(candidate.logprob)))]];
           });
-          appendHostObservationForClientDevice(deviceId, { k: "token_confidence", v: { p, ...(alts.length ? { alts } : {}) } });
+          appendHostObservationForClientDevice(deviceId, { k: "token_confidence", v: { ...(typeof item.token === "string" ? { token: item.token } : {}), p, ...(alts.length ? { alts } : {}) } });
         }
       } catch { /* malformed provider frames remain visible to the client unchanged */ }
     }
