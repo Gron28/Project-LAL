@@ -54,6 +54,13 @@ second system being built today.
 
 On the present Linux host, `./start.sh` rebuilds and starts the web app. It is
 an internal launcher for the current machine, not a general installer yet.
+On a fresh Linux setup, run `./scripts/install-project-lal-service.sh` once
+before using the launcher; it installs the tracked `project-lal.service` user
+unit and refuses to switch while LAL-owned work is active.
+
+With the host already running and idle, `./scripts/smoke-project-lal.sh` runs a
+guarded one-line model/run/replay/cleanup check. It refuses to interrupt live
+work and is intentionally not part of the ordinary static test suite.
 
 The old `lab-agent` client is transitional. The intended client is `lal`; the
 recovery client will be retired once the full LAL flow is reliable.

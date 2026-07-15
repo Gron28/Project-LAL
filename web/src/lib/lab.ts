@@ -1144,6 +1144,11 @@ if (!lgg.__lab_lens) lgg.__lab_lens = { running: false };
 const lensState = lgg.__lab_lens;
 if (!("proc" in lensState)) lensState.proc = null;
 export function lensRunning() { return lensState.running; }
+export function stopLens() {
+  if (!lensState.running || !lensState.proc || lensState.proc.exitCode !== null) return { ok: false, note: "no lens run is active" };
+  try { lensState.proc.kill("SIGKILL"); } catch {}
+  return { ok: true, stopping: true, model: lensState.model ?? null };
+}
 export function lensRuntimeStatus() {
   return {
     pid: lensState.proc?.pid ?? null,
@@ -1178,8 +1183,13 @@ export async function runLensScript(model: string, messages: { role: string; con
   try { trainerPids = execSync("pgrep -f 'python[0-9.]* .*finetune'", { stdio: "pipe" }).toString().trim(); } catch {}
   if (trainerPids) return { ok: false, error: "GPU is busy: a training process is running (started outside the app)" };
 
-  const isLocal = listLensableModels().includes(model);
-  const modelPath = isLocal ? path.join(OUT_DIR, model) : model;
+  // Lens deliberately accepts only retained, host-owned HF checkpoints. Passing
+  // arbitrary paths made a typo launch an expensive Python/Torch process and left
+  // the request hanging instead of reporting a clear unavailable-model state.
+  if (!listLensableModels().includes(model)) {
+    return { ok: false, error: `lens model is unavailable: ${model}` };
+  }
+  const modelPath = path.join(OUT_DIR, model);
 
   lensState.running = true;
   lensState.startedAt = Date.now();

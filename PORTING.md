@@ -128,12 +128,13 @@ actually porting for.
   update the constant, or leave it — the feature just no-ops if the path is missing.
 - `start.sh` / `web/run_web.sh` are bash — Linux/Mac only. On Windows, either run
   under **WSL2** (needs zero porting — it's Linux underneath) or write PowerShell
-  equivalents. The systemd user service referenced in project memory
-  (`~/.config/systemd/user/localailab.service`, not part of this repo) is likewise
-  Linux-only; Windows would use Task Scheduler, or just run the app manually.
-- The old machine's systemd unit wraps its exec in `sg render -c "..."` — a Linux
-  group-permission workaround for GPU device access on that specific distro.
-  Irrelevant elsewhere.
+  equivalents. The Linux user-service source is tracked at
+  `deploy/systemd/project-lal.service` and installed with
+  `./scripts/install-project-lal-service.sh`; Windows would use Task Scheduler,
+  or just run the app manually.
+- GPU access is an OS/user permission concern. The current Linux owner belongs to
+  the `render` group, so the tracked unit launches the web host directly instead
+  of wrapping it in the old machine-specific `sg render` shell.
 
 ### E. llama.cpp serving binary
 - `llama/llama-b9835/` (gitignored, not shipped in the repo — downloaded separately)

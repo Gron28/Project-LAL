@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listLensableModels, lensRunning, runLensScript } from "@/lib/lab";
+import { listLensableModels, lensRunning, runLensScript, stopLens } from "@/lib/lab";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 600;
@@ -10,6 +10,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
+  if (b.action === "stop") return NextResponse.json(stopLens());
   const model = typeof b.model === "string" ? b.model : "";
   const messages = Array.isArray(b.messages) ? b.messages : null;
   if (!model) return NextResponse.json({ error: "model is required" }, { status: 400 });

@@ -89,6 +89,24 @@ export async function POST(req: NextRequest) {
       saveConvo(convo);
     } catch {}
   };
+  // A process restart skips `finally`, so waiting until a run settles loses the
+  // whole reply from the conversation even though the run ledger has it. Keep a
+  // compact, throttled checkpoint in the conversation; the durable event ledger
+  // remains the detailed source, while this makes an interrupted chat resumable.
+  const newReplyAccumulator = (): ReplyAccumulator => {
+    let lastCheckpoint = 0;
+    const acc: ReplyAccumulator = {
+      full: "",
+      checkpoint: () => {
+        const now = Date.now();
+        if (acc.full && now - lastCheckpoint >= 750) {
+          saveReply(acc.full);
+          lastCheckpoint = now;
+        }
+      },
+    };
+    return acc;
+  };
 
   if (attachments.length) {
     const visionModel = attachments.length > VISION_FAST_THRESHOLD ? VISION_MODEL_FAST : VISION_MODEL_QUALITY;
@@ -106,7 +124,7 @@ export async function POST(req: NextRequest) {
           : { role: m.role, content: m.content });
       if (system) ollamaMessages.unshift({ role: "system", content: system });
 
-      const acc = { full: "" };
+      const acc = newReplyAccumulator();
       try {
         // Tell the UI which vision model actually answered — "fast" vs "quality" is
         // otherwise invisible; the user asked to be able to notice which one ran.
@@ -169,7 +187,7 @@ export async function POST(req: NextRequest) {
     if (s.options.num_predict > 0) payload.max_tokens = s.options.num_predict;
     if (!think) payload.chat_template_kwargs = { enable_thinking: false };
 
-    const acc = { full: "" };
+    const acc = newReplyAccumulator();
     try {
       if (useOllama) {
         const upstream = await fetch("http://127.0.0.1:11434/api/chat", {
@@ -214,7 +232,9 @@ export async function POST(req: NextRequest) {
 // Both pumps accumulate into a caller-owned object so a mid-stream abort/error
 // still leaves the partial text where the caller's `finally` can persist it.
 // Ollama's /api/chat streams NDJSON, not SSE.
-async function pumpOllama(upstream: Response, emit: EmitFn, signal: AbortSignal, acc: { full: string }, ctx: number): Promise<void> {
+type ReplyAccumulator = { full: string; checkpoint: () => void };
+
+async function pumpOllama(upstream: Response, emit: EmitFn, signal: AbortSignal, acc: ReplyAccumulator, ctx: number): Promise<void> {
   const reader = upstream.body!.getReader();
   const dec = new TextDecoder();
   let buf = "";
@@ -231,7 +251,7 @@ async function pumpOllama(upstream: Response, emit: EmitFn, signal: AbortSignal,
       try {
         const j = JSON.parse(line);
         const tok = j.message?.content || "";
-        if (tok) { acc.full += tok; emit({ k: "text", v: tok }); }
+        if (tok) { acc.full += tok; acc.checkpoint(); emit({ k: "text", v: tok }); }
         if (j.message?.thinking) emit({ k: "think", v: j.message.thinking });
         if (j.done) {
           const promptTokens = Number(j.prompt_eval_count) || 0;
@@ -251,7 +271,7 @@ async function pumpOllama(upstream: Response, emit: EmitFn, signal: AbortSignal,
   }
 }
 
-async function pumpOpenAI(upstream: Response, emit: EmitFn, acc: { full: string }, ctx: number): Promise<void> {
+async function pumpOpenAI(upstream: Response, emit: EmitFn, acc: ReplyAccumulator, ctx: number): Promise<void> {
   const reader = upstream.body!.getReader();
   const dec = new TextDecoder();
   let buf = "";
@@ -295,7 +315,7 @@ async function pumpOpenAI(upstream: Response, emit: EmitFn, acc: { full: string 
           }
         }
         if (delta.reasoning_content) emit({ k: "think", v: delta.reasoning_content, ...(p !== undefined && !delta.content ? { p } : {}) });
-        if (delta.content) { acc.full += delta.content; emit({ k: "text", v: delta.content, ...(p !== undefined ? { p } : {}), ...(alts ? { alts } : {}) }); }
+        if (delta.content) { acc.full += delta.content; acc.checkpoint(); emit({ k: "text", v: delta.content, ...(p !== undefined ? { p } : {}), ...(alts ? { alts } : {}) }); }
         if (j.usage) {
           const promptTokens = Number(j.timings?.cache_n ?? 0) + Number(j.timings?.prompt_n ?? j.usage.prompt_tokens ?? 0);
           const completionTokens = Number(j.timings?.predicted_n ?? j.usage.completion_tokens ?? 0);

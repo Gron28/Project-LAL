@@ -1,6 +1,7 @@
 # Project-LAL foundation roadmap
 
-Status: current delivery order. Last updated: 2026-07-14.
+Status: current delivery order. Milestone 0 is complete; Milestone 1 is next.
+Last updated: 2026-07-14.
 
 ## Rule of the roadmap
 
@@ -25,6 +26,48 @@ Create one reliable diagnostic picture before making broad changes.
 Exit criterion: after a failed run or restart, the owner can identify what is
 still running, where its log is, whether it owns GPU resources, and how to stop
 it safely.
+
+### Verified progress — 2026-07-14
+
+- The status API now reports serving, training, lens, durable active runs, and
+  a process inventory with PID, owner classification, and command.
+- Project-LAL's own Linux web-service process is identified from the tracked
+  `project-lal.service` control group; unrelated Next processes are not labeled
+  as Project-LAL.
+- The tracked service starts `next-server` directly rather than through the old
+  machine-local `sg render` wrapper. Its process is now the systemd main PID,
+  making restart and cleanup ownership explicit. The retired
+  `localailab.service` is disabled on the current host.
+- The inventory has a regression test for shell commands that merely mention
+  `llama-server` or `finetune`, preventing fictional orphan-process reports.
+- A manual vertical smoke run successfully loaded a local model, produced and
+  replayed a durable run ledger, stopped through the guarded API, released its
+  GPU process, and was reachable through the configured Tailscale URL.
+- A controlled long chat run was stopped through its per-run API. Its durable
+  record settled as `stopped`, its server-side active-run state cleared, and the
+  resident model was then released through the guarded unload path.
+- A forced service restart during a live chat produced a durable `interrupted`
+  record, preserved the streamed run ledger, killed the model child with the
+  service control group, and left the host healthy. Chat now checkpoints partial
+  assistant text during streaming, so the recovered conversation can be
+  continued through the normal continuation contract after a restart.
+- The Hive `/resume` API was exercised in supervised mode against a historical
+  failed workflow: completed nodes were preserved, the failed node restarted in
+  a fresh durable execution, and `/stop` settled it as `cancelled` without any
+  repository source mutation. That historical workflow still needs a larger or
+  better-managed context budget to complete useful work.
+
+The Milestone 0 exit criterion is met on the current host: after a controlled
+run failure or service restart, the owner can see the durable run outcome, live
+process ownership, log path, GPU state, and guarded stop path. Preview cleanup
+was proven across a service restart. Lens has no installed checkpoint on this
+host, so its unavailable-model and idle-stop states were verified without
+starting GPU work; training's idle-stop state is likewise verified. The guarded
+`scripts/smoke-project-lal.sh` command automates the idle-host vertical check.
+
+Milestone 1 now needs repeated real use from Windows LAL and phone attach mode,
+including a deliberately interrupted connection, before it can be marked
+complete.
 
 ## Milestone 1 — one dependable personal workflow
 

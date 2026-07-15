@@ -7,6 +7,7 @@ BACKUP="$APP/.next.last-good"
 FAILED="$APP/.next.failed"
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/rebuild-local-ai-lab-${UID}.lock"
 PORT="${PORT:-8770}"
+SERVICE="${PROJECT_LAL_SERVICE:-project-lal.service}"
 
 exec 9>"$LOCK"
 if ! flock -n 9; then
@@ -61,7 +62,7 @@ fi
 rm -rf "$BACKUP" "$FAILED"
 
 echo "==> Local AI Lab: activating the successful build"
-systemctl --user restart localailab.service
+systemctl --user restart "$SERVICE"
 
 for _ in $(seq 1 60); do
   if curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/"; then
@@ -75,5 +76,5 @@ for _ in $(seq 1 60); do
 done
 
 echo "Local AI Lab did not become healthy within 60 seconds."
-systemctl --user --no-pager --full status localailab.service
+systemctl --user --no-pager --full status "$SERVICE"
 exit 1

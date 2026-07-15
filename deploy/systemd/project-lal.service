@@ -1,0 +1,16 @@
+[Unit]
+Description=Project-LAL web host
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=%h/Desktop/local-ai-lab/web
+ExecStart=%h/Desktop/local-ai-lab/web/run_web.sh
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+KillMode=control-group
+
+[Install]
+WantedBy=default.target
