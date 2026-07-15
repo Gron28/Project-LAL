@@ -69,6 +69,9 @@ type ActiveRun = {
 // visible from every page instead of being trapped in the surface that started it.
 function ActiveRunNotice() {
   const [run, setRun] = useState<ActiveRun | null>(null);
+  const [dismissedRunId, setDismissedRunId] = useState<string | null>(() => {
+    try { return typeof window === "undefined" ? null : sessionStorage.getItem("lal-dismissed-active-run"); } catch { return null; }
+  });
   useEffect(() => {
     let alive = true;
     const poll = async () => {
@@ -82,7 +85,7 @@ function ActiveRunNotice() {
     const timer = setInterval(poll, 2000);
     return () => { alive = false; clearInterval(timer); };
   }, []);
-  if (!run) return null;
+  if (!run || dismissedRunId === run.id) return null;
   const href = run.kind === "chat"
     ? `/chat?conv=${encodeURIComponent(run.conversationId)}`
     : run.kind === "code" || run.kind === "deliberate"
@@ -94,12 +97,26 @@ function ActiveRunNotice() {
     : run.kind === "deliberate" ? "Research" : run.kind[0].toUpperCase() + run.kind.slice(1);
   const device = terminalLinked && run.ownerDeviceId ? ` on ${run.ownerDeviceId}` : "";
   return (
-    <Link href={href} className="fixed z-[60] top-2 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1rem)] rounded-full border border-[var(--border-loud)] bg-[var(--surface-1)] px-3 py-1.5 shadow-lg flex items-center gap-2 text-[10px] text-[var(--text-2)] hover:text-[var(--accent-ai)] transition-colors" title={`Open active ${label.toLowerCase()} run ${run.id}${device}`}>
-      <Radio size={12} className="text-[var(--accent-ai)] animate-pulse shrink-0" />
-      <span className="font-medium text-[var(--text)]">{label} active</span>
-      <span className="truncate max-w-28 sm:max-w-48">{run.model}</span>
-      <span className="text-[var(--accent-ai)]">open</span>
-    </Link>
+    <div className="fixed z-[60] top-2 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1rem)] rounded-full border border-[var(--border-loud)] bg-[var(--surface-1)] shadow-lg flex items-center text-[10px] text-[var(--text-2)]">
+      <Link href={href} className="min-w-0 px-3 py-1.5 flex items-center gap-2 hover:text-[var(--accent-ai)] transition-colors" title={`Open active ${label.toLowerCase()} run ${run.id}${device}`}>
+        <Radio size={12} className="text-[var(--accent-ai)] animate-pulse shrink-0" />
+        <span className="font-medium text-[var(--text)] whitespace-nowrap">{label} active</span>
+        <span className="truncate max-w-28 sm:max-w-48">{run.model}</span>
+        <span className="text-[var(--accent-ai)]">open</span>
+      </Link>
+      <button
+        type="button"
+        aria-label="dismiss active-run notification"
+        title="dismiss this notification until a different run starts"
+        className="mr-1 p-1 rounded-full text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors"
+        onClick={() => {
+          setDismissedRunId(run.id);
+          try { sessionStorage.setItem("lal-dismissed-active-run", run.id); } catch {}
+        }}
+      >
+        <X size={12} />
+      </button>
+    </div>
   );
 }
 
