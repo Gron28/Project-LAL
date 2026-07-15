@@ -3,7 +3,10 @@
 Status: implementation in progress. The CLI source has been absorbed into
 `apps/cli/`; archived experiments and generated datasets have been removed from
 the working tree after a Desktop archive and checksum manifest were created.
-Last updated: 2026-07-14.
+The root command contract now owns the supported test, build, smoke, and LAL
+release entry points; the CLI keeps a separate npm workspace only while its
+inherited dependency graph is being reduced.
+Last updated: 2026-07-15.
 
 ## Goal
 
@@ -64,7 +67,7 @@ of the product.
 
 ### 1. Establish one workspace contract
 
-- Add a root workspace manifest and a single documented development entry point.
+- Add a root workspace manifest and a single documented development entry point. **Complete for the supported paths:** root `package.json` owns test, build, guarded smoke, attach smoke, and LAL release commands.
 - Keep web and CLI dependency installation separate initially if that is the
   least risky choice; unify only after builds are known-good.
 - Centralize shared configuration for formatting, tests, ignores, and release

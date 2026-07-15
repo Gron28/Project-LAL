@@ -58,6 +58,18 @@ On a fresh Linux setup, run `./scripts/install-project-lal-service.sh` once
 before using the launcher; it installs the tracked `project-lal.service` user
 unit and refuses to switch while LAL-owned work is active.
 
+From the repository root, the supported checks are intentionally few:
+
+```text
+npm run test          # web, protocol, and Windows-release contracts
+npm run smoke          # guarded real-model host smoke; idle host only
+npm run smoke:attach   # durable attach/replay contract
+```
+
+The terminal client remains its own npm workspace under `apps/cli/` while its
+inherited dependency graph is reduced. `npm run cli:test` runs its test suite;
+`npm run release:lal` creates the internal Windows release archive.
+
 With the host already running and idle, `./scripts/smoke-project-lal.sh` runs a
 guarded one-line model/run/replay/cleanup check. It refuses to interrupt live
 work and is intentionally not part of the ordinary static test suite.

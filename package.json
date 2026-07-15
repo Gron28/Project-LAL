@@ -1,0 +1,14 @@
+{
+  "name": "project-lal",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first personal AI system",
+  "scripts": {
+    "test": "npm --prefix web run test && node --test web/src/lib/protocol/protocol.conformance.test.ts && node scripts/check_protocol_drift.mjs && python3 -m unittest tests.test_lal_windows_release",
+    "build": "npm --prefix web run build",
+    "cli:test": "npm --prefix apps/cli run test --workspace=packages/cli",
+    "smoke": "./scripts/smoke-project-lal.sh",
+    "smoke:attach": "./scripts/smoke-attach-replay.sh",
+    "release:lal": "./scripts/release-lal-cli.sh"
+  }
+}
