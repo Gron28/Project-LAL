@@ -32,6 +32,8 @@ $Headers = @{
   'X-LAL-Client-Version' = [string]$Manifest.clientVersion
 }
 $SettingsText = (Invoke-WebRequest -UseBasicParsing -Headers $Headers "$HostUrl/api/lal/client-settings").Content
+$SystemPromptPath = Join-Path $LalHome 'system.md'
+Invoke-WebRequest -UseBasicParsing -OutFile $SystemPromptPath "$HostUrl/lal/system.md"
 
 $RuntimeFile = Join-Path $LalHome 'runtime-version'
 $InstalledRuntime = if (Test-Path $RuntimeFile) { (Get-Content $RuntimeFile -Raw).Trim() } else { '' }

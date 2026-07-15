@@ -66,4 +66,22 @@ describe('RemoteRunMirror', () => {
     expect(client.settleClientRun).toHaveBeenCalledWith('run-local-1', 'writer-secret', 'done', undefined);
     expect(mirror.status().state).toBe('stopped');
   });
+
+  it('does not duplicate cumulative stream buffers in the remote transcript', async () => {
+    const emitter = new AgentEventEmitter();
+    const client = gateway();
+    const mirror = new RemoteRunMirror({ emitter, client, model: 'local-model' });
+    await mirror.start();
+    emitter.emit(AgentEventType.STREAM_TEXT, { subagentId: 'a', round: 1, text: "Let's", thought: false, timestamp: 1 });
+    emitter.emit(AgentEventType.STREAM_TEXT, { subagentId: 'a', round: 1, text: "Let's begin", thought: false, timestamp: 2 });
+    emitter.emit(AgentEventType.ROUND_TEXT, { subagentId: 'a', round: 1, text: "Let's begin", thoughtText: '', timestamp: 3 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const sent = (client.appendClientRunEvents as ReturnType<typeof vi.fn>).mock.calls
+      .flatMap((call) => call[2] as Array<{ event: { k: string; v: string } }>)
+      .filter((entry) => entry.event.k === 'text')
+      .map((entry) => entry.event.v)
+      .join('');
+    expect(sent).toBe("Let's begin");
+    await mirror.stop();
+  });
 });

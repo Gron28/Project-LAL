@@ -66,6 +66,8 @@ class LalWindowsReleaseTest(unittest.TestCase):
         self.assertIn("WriteAllText($SettingsPath, $MergedSettingsText, $Utf8NoBom)", installer)
         self.assertIn("Set-LalSettingProperty $CurrentSettings 'security'", installer)
         self.assertIn("Set-LalSettingProperty $CurrentSettings 'modelProviders'", installer)
+        self.assertIn('"$HostUrl/lal/system.md"', installer)
+        self.assertIn('QWEN_SYSTEM_MD=%LAL_HOME%\\system.md', wrapper)
         self.assertNotIn("if (-not (Test-Path $SettingsPath))", installer)
 
 

@@ -75,14 +75,23 @@ export class RemoteRunMirror {
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
   private lastError: string | undefined;
+  private streamedText = '';
+  private streamedThought = '';
 
   private readonly onStreamText = (event: {
     text: string;
     thought?: boolean;
-  }) => this.enqueue({ k: event.thought ? 'think' : 'text', v: event.text });
+  }) => {
+    const next = event.thought
+      ? this.streamDelta(event.text, 'thought')
+      : this.streamDelta(event.text, 'text');
+    if (next) this.enqueue({ k: event.thought ? 'think' : 'text', v: next });
+  };
   private readonly onRoundText = (event: { text: string; thoughtText: string }) => {
-    if (event.thoughtText) this.enqueue({ k: 'think', v: event.thoughtText });
-    if (event.text) this.enqueue({ k: 'text', v: event.text });
+    const thought = event.thoughtText && this.streamDelta(event.thoughtText, 'thought');
+    const output = event.text && this.streamDelta(event.text, 'text');
+    if (thought) this.enqueue({ k: 'think', v: thought });
+    if (output) this.enqueue({ k: 'text', v: output });
   };
   private readonly onToolCall = (event: AgentToolCallEvent) =>
     this.enqueue({
@@ -211,6 +220,16 @@ export class RemoteRunMirror {
     if (this.stopped || !this.runId) return;
     this.queued.push({ clientEventId: `cli-${this.nextSeq++}`, event });
     void this.flush();
+  }
+
+  /** The native emitter normally sends deltas, but some providers replay the
+   * accumulated buffer. Keep the remote transcript truthful in both cases. */
+  private streamDelta(value: string, channel: 'text' | 'thought'): string {
+    const previous = channel === 'text' ? this.streamedText : this.streamedThought;
+    const delta = value.startsWith(previous) ? value.slice(previous.length) : value;
+    if (channel === 'text') this.streamedText = value.startsWith(previous) ? value : previous + value;
+    else this.streamedThought = value.startsWith(previous) ? value : previous + value;
+    return delta;
   }
 
   private async flush(): Promise<void> {

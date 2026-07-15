@@ -1,4 +1,4 @@
-import { allModels, servingModel } from "@/lib/lab";
+import { allModels, servingModel, servingRuntimeStatus } from "@/lib/lab";
 import { cliAuthorized, cliDeviceCustomHeaders, recordCliAccess, unauthorizedResponse } from "@/lib/lal-cli";
 
 export const dynamic = "force-dynamic";
@@ -6,8 +6,10 @@ export const dynamic = "force-dynamic";
 const CONTEXT_WINDOW_SIZE = 32768;
 
 // Cheap, local-only heuristics so the CLI's model picker can show
-// "name · family/role · loaded · ctx" without a second round trip. These are
-// display hints, not authoritative metadata — HIVE's own registry
+// "name · family/role · loaded · context request" without a second round trip.
+// The active runtime context is read below when a model is resident; otherwise
+// this is explicitly the context LAL will request, not a claim about a model's
+// theoretical maximum. HIVE's own registry
 // (web/src/lib/hive/model-registry.ts) remains the source of truth for
 // anything that drives training/eval decisions.
 function inferFamily(name: string): string {
@@ -37,6 +39,7 @@ export function GET(request: Request) {
   const origin = `${protocol}://${host}`;
   const customHeaders = cliDeviceCustomHeaders(request);
   const resident = servingModel();
+  const runtime = servingRuntimeStatus();
   // Both GGUF models served directly ("local") and Ollama-served models
   // (Gemma, etc.) belong in the CLI's catalog — excluding Ollama entirely
   // here hid every Gemma model from the picker even though they're legitimate,
@@ -47,7 +50,11 @@ export function GET(request: Request) {
       const family = inferFamily(model.name);
       const role = inferRole(model.name);
       const loaded = model.name === resident;
-      const descriptionParts = [family, ...(role ? [role] : []), loaded ? "loaded" : "not loaded", `${Math.round(CONTEXT_WINDOW_SIZE / 1024)}k ctx`];
+      const activeContext = loaded ? runtime.context : null;
+      const contextLabel = activeContext
+        ? `${Math.round(activeContext / 1024)}k active context`
+        : `requests ${Math.round(CONTEXT_WINDOW_SIZE / 1024)}k context`;
+      const descriptionParts = [family, ...(role ? [role] : []), loaded ? "loaded" : "not loaded", contextLabel];
       return {
         id: model.name,
         // Plain model name only — no "LAL ·" prefix. Duplicating the LAL
@@ -69,7 +76,10 @@ export function GET(request: Request) {
           maxRetries: 1,
           contextWindowSize: CONTEXT_WINDOW_SIZE,
           ...(Object.keys(customHeaders).length ? { customHeaders } : {}),
-          samplingParams: { temperature: 0.2, max_tokens: 4096 },
+          // Local agents should act in short, observable turns. A 4k-token
+          // default lets a small model spend minutes narrating instead of
+          // making its first tool call; longer work continues across turns.
+          samplingParams: { temperature: 0.2, max_tokens: 1024 },
           extra_body: { chat_template_kwargs: { enable_thinking: false } },
         },
       };

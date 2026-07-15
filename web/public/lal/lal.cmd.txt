@@ -4,6 +4,7 @@ set "LAL_HOME=%USERPROFILE%\.lal"
 if /I "%~1"=="update" goto update
 set "QWEN_HOME=%LAL_HOME%"
 set "LAL_MANAGED=1"
+if exist "%LAL_HOME%\system.md" set "QWEN_SYSTEM_MD=%LAL_HOME%\system.md"
 if exist "%LAL_HOME%\.env" for /f "usebackq tokens=1,* delims==" %%A in ("%LAL_HOME%\.env") do if "%%A"=="LAL_API_KEY" set "LAL_API_KEY=%%B"
 if exist "%LAL_HOME%\client-host" for /f "usebackq delims=" %%A in ("%LAL_HOME%\client-host") do set "LAL_HOST=%%A"
 if exist "%LAL_HOME%\device-id" for /f "usebackq delims=" %%A in ("%LAL_HOME%\device-id") do set "LAL_DEVICE_ID=%%A"
