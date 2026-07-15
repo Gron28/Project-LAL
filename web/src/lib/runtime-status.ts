@@ -88,6 +88,7 @@ export function readRuntimeStatus() {
   const runs = listRuns(20);
   const activeRuns = runs.filter((run) => run.status === "running").map((run) => ({
     id: run.id, kind: run.kind, model: run.model, startedAt: run.startedAt, updatedAt: run.updatedAt,
+    executionLocation: run.executionLocation ?? "server", ownerDeviceId: run.ownerDeviceId,
   }));
   const processList = processes();
   return {

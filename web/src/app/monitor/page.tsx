@@ -6,6 +6,8 @@ type Sys = {
   gpu: number | null; vramUsedGb: number | null; vramTotalGb: number | null; vramPct: number | null;
   cpuTemp: number | null; gpuTemp: number | null; nvmeTemp: number | null; ollamaLoaded: string | null;
   runtime?: {
+    serving?: { pid: number | null; alive: boolean; model: string | null; context: number | null; logPath: string };
+    activeRuns?: { id: string; kind: string; model: string; startedAt: number; updatedAt: number; executionLocation?: "server" | "client"; ownerDeviceId?: string }[];
     processes?: { pid: number; ppid: number; elapsed: string; state: string; rssKb: number; command: string; kind: string; ownership: string }[];
     processEvents?: { ts: number; event: "observed" | "exited"; process: { pid: number; kind: string; ownership: string; command: string } }[];
   };
@@ -61,6 +63,23 @@ export default function Monitor() {
             <div className="flex justify-between"><span className="text-[var(--muted)]">Other Ollama model loaded</span><span style={{ color: s.ollamaLoaded ? "var(--accent-warn)" : "var(--text-2)" }}>{s.ollamaLoaded || "nothing"}</span></div>
           </div>
         )}
+        <div className={card + " overflow-hidden"}>
+          <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
+            <div><div className="text-xs font-medium">Active LAL work</div><div className="text-[10px] text-[var(--muted)] mt-0.5">Durable runs are listed separately from processes: a terminal session can be live while its model is idle.</div></div>
+            <span className="text-[10px] text-[var(--accent-ai)]">{s?.runtime?.activeRuns?.length ?? 0} active</span>
+          </div>
+          {s?.runtime?.activeRuns?.length ? <div className="divide-y divide-[var(--border-soft)]">
+            {s.runtime.activeRuns.map((run) => {
+              const terminal = run.executionLocation === "client";
+              return <div key={run.id} className="px-4 py-2.5 grid grid-cols-[auto_1fr_auto] gap-x-3 items-center text-[10px]">
+                <span className={terminal ? "text-[var(--accent-warn)]" : "text-[var(--accent-ai)]"}>{terminal ? "terminal" : "host"}</span>
+                <span className="min-w-0"><span className="font-medium text-[var(--text-2)]">{run.kind}</span><span className="text-[var(--muted)]"> · {run.model}</span>{terminal && run.ownerDeviceId ? <span className="text-[var(--muted)]"> · {run.ownerDeviceId}</span> : null}</span>
+                <span className="text-[var(--muted)] tabular-nums">updated {new Date(run.updatedAt).toLocaleTimeString()}</span>
+              </div>;
+            })}
+          </div> : <div className="px-4 py-6 text-center text-[var(--muted)] text-xs">No LAL run is active.</div>}
+          {s?.runtime?.serving?.model && <div className="px-4 py-2 border-t border-[var(--border-soft)] text-[10px] text-[var(--muted)]">Model host: PID {s.runtime.serving.pid ?? "unknown"} · {s.runtime.serving.model} · {s.runtime.serving.context?.toLocaleString() ?? "unknown"} context · <span className="font-mono">{s.runtime.serving.logPath}</span></div>}
+        </div>
         <div className={card + " overflow-hidden"}>
           <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
             <div><div className="text-xs font-medium">Model-capable process inventory</div><div className="text-[10px] text-[var(--muted)] mt-0.5">Known local model hosts, trainers, previews, Ollama, and LAL service processes.</div></div>
