@@ -6,10 +6,37 @@
 
 import type { MessageActionReturn, SlashCommand } from './types.js';
 import { CommandKind } from './types.js';
+import { createRequire } from 'node:module';
 import { RemoteRunMirror } from '../../lal/remote-run/remote-run-mirror.js';
 import { GatewayClient } from '../../lal/attach/gateway-client.js';
 
 let activeMirror: RemoteRunMirror | null = null;
+let activeRemoteUrl: string | null = null;
+const require = createRequire(import.meta.url);
+
+type TerminalQr = {
+  generate(
+    value: string,
+    options: { small: boolean },
+    callback: (qr: string) => void,
+  ): void;
+};
+
+function terminalQr(value: string): string | null {
+  try {
+    let output = '';
+    (require('qrcode-terminal') as TerminalQr).generate(
+      value,
+      { small: true },
+      (qr) => {
+        output = qr.trimEnd();
+      },
+    );
+    return output || null;
+  } catch {
+    return null;
+  }
+}
 
 function message(
   messageType: MessageActionReturn['messageType'],
@@ -29,7 +56,11 @@ export const rcCommand: SlashCommand = {
   action: async (context, rawArgs): Promise<MessageActionReturn> => {
     const arg = rawArgs.trim().toLowerCase();
     if (arg === 'status') {
-      if (!activeMirror) return message('info', 'Remote control is not active. Use /rc to start mirroring an active native agent.');
+      if (!activeMirror)
+        return message(
+          'info',
+          'Remote control is not active. Use /rc to start mirroring an active native agent.',
+        );
       const state = activeMirror.status();
       return message(
         state.lastError ? 'warning' : 'info',
@@ -39,19 +70,34 @@ export const rcCommand: SlashCommand = {
           state.conversationId ? `Conversation: ${state.conversationId}` : '',
           `Queued events: ${state.queuedEvents}`,
           state.lastError ? `Last gateway error: ${state.lastError}` : '',
-        ].filter(Boolean).join('\n'),
+        ]
+          .filter(Boolean)
+          .join('\n'),
       );
     }
+    if (arg === 'link') {
+      return activeRemoteUrl
+        ? message('info', activeRemoteUrl)
+        : message('info', 'Remote control is not active. Use /rc first.');
+    }
     if (arg === 'stop' || arg === 'off') {
-      if (!activeMirror) return message('info', 'Remote control is not active.');
+      if (!activeMirror)
+        return message('info', 'Remote control is not active.');
       await activeMirror.stop('stopped');
       activeMirror = null;
-      return message('info', 'Stopped remote mirroring. The native agent keeps running locally.');
+      activeRemoteUrl = null;
+      return message(
+        'info',
+        'Stopped remote mirroring. The native agent keeps running locally.',
+      );
     }
-    if (arg) return message('error', 'Usage: /rc [status|stop]');
+    if (arg) return message('error', 'Usage: /rc [status|link|stop]');
     if (activeMirror) {
       const state = activeMirror.status();
-      return message('info', `Remote control is already active for ${state.runId ?? 'a run'}. Use /rc status or /rc stop.`);
+      return message(
+        'info',
+        `Remote control is already active for ${state.runId ?? 'a run'}. Use /rc status or /rc stop.`,
+      );
     }
 
     const emitter = context.session.agentEventEmitter;
@@ -88,9 +134,13 @@ export const rcCommand: SlashCommand = {
         'lal-control': state.controlToken ?? '',
         run: state.runId ?? '',
       }).toString();
+      activeRemoteUrl = link.toString();
+      const qr = terminalQr(activeRemoteUrl);
       return message(
         'info',
-        `Remote control active. Open this exact link on your phone:\n${link}\n\nIt mirrors local execution and accepts normal prompts. Tool permissions remain local.`,
+        qr
+          ? `Remote control active. Scan this QR code with your phone:\n\n${qr}\n\nIt mirrors local execution and accepts normal prompts. Tool permissions remain local. Use /rc link only if you need the URL.`
+          : `Remote control active. QR rendering is unavailable in this terminal. Use /rc link to print the phone URL.`,
       );
     } catch (error) {
       return message(

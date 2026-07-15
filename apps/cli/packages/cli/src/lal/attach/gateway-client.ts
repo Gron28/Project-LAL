@@ -29,7 +29,7 @@ import path from 'node:path';
  * HANDOFF/memory notes: "app is port 8770 not 3000"). */
 export const DEFAULT_GATEWAY_ORIGIN = 'http://localhost:8770';
 
-export const CLI_CLIENT_VERSION = '0.1.0-lal.9';
+export const CLI_CLIENT_VERSION = '0.1.0-lal.10';
 
 export interface GatewayRunMeta {
   id: string;
