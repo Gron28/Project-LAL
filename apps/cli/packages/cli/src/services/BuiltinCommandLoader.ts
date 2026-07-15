@@ -13,6 +13,7 @@ import { workflowsCommand } from '../ui/commands/workflowsCommand.js';
 import { agentsCommand } from '../ui/commands/agentsCommand.js';
 import { arenaCommand } from '../ui/commands/arenaCommand.js';
 import { attachCommand } from '../ui/commands/attach-command.js';
+import { rcCommand } from '../ui/commands/rc-command.js';
 import { approvalModeCommand } from '../ui/commands/approvalModeCommand.js';
 import { authCommand } from '../ui/commands/authCommand.js';
 import { branchCommand } from '../ui/commands/branchCommand.js';
@@ -120,6 +121,7 @@ export class BuiltinCommandLoader implements ICommandLoader {
       this.config?.isWorkflowsEnabled() ? workflowsCommand : null,
       arenaCommand,
       attachCommand,
+      rcCommand,
       approvalModeCommand,
       authCommand,
       branchCommand,

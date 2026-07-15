@@ -62,5 +62,10 @@ With the host already running and idle, `./scripts/smoke-project-lal.sh` runs a
 guarded one-line model/run/replay/cleanup check. It refuses to interrupt live
 work and is intentionally not part of the ordinary static test suite.
 
+`./scripts/smoke-attach-replay.sh` checks the durable stream replay and resume
+cursor used by phone attach and `lal /attach`. See the
+[Windows/phone attach guide](docs/guides/windows-phone-attach-smoke.md) for the
+real-device smoke procedure.
+
 The old `lab-agent` client is transitional. The intended client is `lal`; the
 recovery client will be retired once the full LAL flow is reliable.

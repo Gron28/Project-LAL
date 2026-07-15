@@ -133,6 +133,19 @@ export * from './services/session-organization-service.js';
 // module path (e.g. `@qwen-code/qwen-code-core/dist/tools/edit.js`) as these
 // classes are now lazy-loaded and are not exported as values from the package root.
 export type { EditTool, EditToolParams } from './tools/edit.js';
+export {
+  AgentEventEmitter,
+  AgentEventType,
+} from './agents/runtime/agent-events.js';
+export type {
+  AgentEvent,
+  AgentEventMap,
+  AgentFinishEvent,
+  AgentToolCallEvent,
+  AgentToolOutputUpdateEvent,
+  AgentToolResultEvent,
+  AgentUsageEvent,
+} from './agents/runtime/agent-events.js';
 export type {
   ExitPlanModeTool,
   ExitPlanModeParams,

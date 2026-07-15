@@ -37,6 +37,7 @@ import {
 } from './types.js';
 import {
   type EditorType,
+  AgentEventEmitter,
   type Config,
   type IdeInfo,
   type IdeContext,
@@ -536,6 +537,18 @@ export const AppContainer = (props: AppContainerProps) => {
         });
       }),
   );
+
+  const agentViewState = useAgentViewState();
+  const mainAgentEventEmitterRef = useRef<AgentEventEmitter | null>(null);
+  if (!mainAgentEventEmitterRef.current) {
+    mainAgentEventEmitterRef.current = new AgentEventEmitter();
+  }
+  const activeAgentEventEmitter = agentViewState.activeView === 'main'
+    ? mainAgentEventEmitterRef.current
+    : agentViewState.agents.get(agentViewState.activeView)?.interactiveAgent.getEventEmitter();
+  const remoteSubmitRef = useRef<
+    ((text: string) => Promise<boolean> | boolean) | null
+  >(null);
 
   const {
     extensionsUpdateState,
@@ -1633,6 +1646,8 @@ export const AppContainer = (props: AppContainerProps) => {
     historyManager.updateItem,
     setSessionName,
     extensionRefreshState,
+    activeAgentEventEmitter,
+    remoteSubmitRef,
   );
 
   // onDebugMessage should log to debug logfile, not update footer debugMessage
@@ -1881,7 +1896,20 @@ export const AppContainer = (props: AppContainerProps) => {
     logger,
     availableTerminalHeightRef,
     terminalWidthRef,
+    mainAgentEventEmitterRef.current,
   );
+
+  // `/rc` leases only text submissions from the paired host. Route them through
+  // the same normal path a local user uses; there is no remote tool/approval API.
+  remoteSubmitRef.current = (text: string) => {
+    if (agentViewState.activeView !== 'main') {
+      const agent = agentViewState.agents.get(agentViewState.activeView);
+      if (!agent) return false;
+      agent.interactiveAgent.enqueueMessage(text);
+      return true;
+    }
+    return Promise.resolve(submitQuery(text)).then(() => true);
+  };
 
   // Now that streamingState is available, keep isIdleRef in sync and
   // flush any deferred update notifications when the model finishes responding.
@@ -1946,7 +1974,6 @@ export const AppContainer = (props: AppContainerProps) => {
   // fallback so a single Tab keystroke triggers only one action. See #4171.
   const [hasTabConsumer, setHasTabConsumer] = useState(false);
 
-  const agentViewState = useAgentViewState();
   const {
     dialogOpen: bgTasksDialogOpen,
     entries: bgTaskEntries,

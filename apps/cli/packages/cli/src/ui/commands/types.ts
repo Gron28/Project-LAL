@@ -8,6 +8,7 @@ import type { MutableRefObject, ReactNode } from 'react';
 import type { Content, PartListUnion } from '@google/genai';
 import type {
   Config,
+  AgentEventEmitter,
   Logger,
   SessionListItem,
 } from '@qwen-code/qwen-code-core';
@@ -107,6 +108,13 @@ export interface CommandContext {
     sessionShellAllowlist: Set<string>;
     /** Reset session metrics and prompt counters for a fresh session. */
     startNewSession?: (sessionId: string) => void;
+    /** Optional native-agent event surface for LAL remote-control mirroring.
+     * Mainline sessions bridge their real stream; other hosts may omit it. */
+    agentEventEmitter?: AgentEventEmitter;
+    /** Submit a paired-device text message through this session's ordinary
+     * prompt path. It deliberately accepts text only: remote peers cannot
+     * invoke tools, approval handlers, or shell commands directly. */
+    submitRemotePrompt?: (text: string) => Promise<boolean> | boolean;
   };
   // Flag to indicate if an overwrite has been confirmed
   overwriteConfirmed?: boolean;

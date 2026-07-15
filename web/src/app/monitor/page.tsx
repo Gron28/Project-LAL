@@ -5,6 +5,10 @@ type Sys = {
   cpu: number; ramUsedGb: number; ramTotalGb: number; ramPct: number;
   gpu: number | null; vramUsedGb: number | null; vramTotalGb: number | null; vramPct: number | null;
   cpuTemp: number | null; gpuTemp: number | null; nvmeTemp: number | null; ollamaLoaded: string | null;
+  runtime?: {
+    processes?: { pid: number; ppid: number; elapsed: string; state: string; rssKb: number; command: string; kind: string; ownership: string }[];
+    processEvents?: { ts: number; event: "observed" | "exited"; process: { pid: number; kind: string; ownership: string; command: string } }[];
+  };
 };
 
 const card = "bg-[var(--surface-1)] border border-[var(--border)] rounded-[var(--r-lg)]";
@@ -57,7 +61,23 @@ export default function Monitor() {
             <div className="flex justify-between"><span className="text-[var(--muted)]">Other Ollama model loaded</span><span style={{ color: s.ollamaLoaded ? "var(--accent-warn)" : "var(--text-2)" }}>{s.ollamaLoaded || "nothing"}</span></div>
           </div>
         )}
-        <p className="text-[10px] text-[var(--muted)] leading-relaxed">Live, updates every 2s. Amber ≥70%, red ≥90%. If RAM/VRAM spikes and you didn&apos;t start anything here, it&apos;s usually another app&apos;s Ollama loading a big model (shown above) — it unloads when idle.</p>
+        <div className={card + " overflow-hidden"}>
+          <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
+            <div><div className="text-xs font-medium">Model-capable process inventory</div><div className="text-[10px] text-[var(--muted)] mt-0.5">Known local model hosts, trainers, previews, Ollama, and LAL service processes.</div></div>
+            <span className="text-[10px] text-[var(--accent-ai)]">live · 2s</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[10px] text-left">
+              <thead className="text-[var(--muted)] uppercase tracking-wider"><tr><th className="px-4 py-2 font-normal">process</th><th className="px-2 py-2 font-normal">owner</th><th className="px-2 py-2 font-normal">PID</th><th className="px-2 py-2 font-normal">age</th><th className="px-2 py-2 font-normal">memory</th><th className="px-2 py-2 font-normal">command</th></tr></thead>
+              <tbody>{s?.runtime?.processes?.length ? s.runtime.processes.map((process) => <tr key={`${process.pid}-${process.command}`} className="border-t border-[var(--border-soft)]"><td className="px-4 py-2 font-medium">{process.kind}</td><td className="px-2 py-2" style={{ color: process.ownership === "managed" ? "var(--accent-ai)" : process.ownership === "external" ? "var(--accent-warn)" : "var(--accent-danger)" }}>{process.ownership}</td><td className="px-2 py-2 tabular-nums">{process.pid}</td><td className="px-2 py-2 tabular-nums">{process.elapsed}</td><td className="px-2 py-2 tabular-nums">{Math.round(process.rssKb / 1024)} MB</td><td className="px-2 py-2 max-w-80 truncate font-mono text-[9px]" title={process.command}>{process.command}</td></tr>) : <tr><td colSpan={6} className="px-4 py-6 text-center text-[var(--muted)]">No known model-capable processes detected.</td></tr>}</tbody>
+            </table>
+          </div>
+        </div>
+        <div className={card + " overflow-hidden"}>
+          <div className="px-4 py-3 border-b border-[var(--border)]"><div className="text-xs font-medium">Process observation log</div><div className="text-[10px] text-[var(--muted)] mt-0.5">Host observations are retained locally; this is an audit trail, not a claim that every GPU process is detectable.</div></div>
+          <div className="max-h-64 overflow-auto divide-y divide-[var(--border-soft)]">{s?.runtime?.processEvents?.length ? s.runtime.processEvents.map((event, index) => <div key={`${event.ts}-${event.process.pid}-${index}`} className="px-4 py-2 text-[10px] grid grid-cols-[auto_auto_1fr] gap-x-2"><span className={event.event === "observed" ? "text-[var(--accent-ai)]" : "text-[var(--muted)]"}>{event.event === "observed" ? "seen" : "exited"}</span><span className="text-[var(--text-2)]">{event.process.kind} · {event.process.pid}</span><span className="truncate font-mono text-[var(--muted)]" title={event.process.command}>{new Date(event.ts).toLocaleString()} · {event.process.command}</span></div>) : <div className="px-4 py-6 text-center text-[var(--muted)] text-xs">No observations recorded yet.</div>}</div>
+        </div>
+        <p className="text-[10px] text-[var(--muted)] leading-relaxed">Live, updates every 2s. Amber ≥70%, red ≥90%. The inventory recognizes explicitly known executable forms; an unknown process is not proof that no other software is using the GPU.</p>
       </div>
     </div>
   );

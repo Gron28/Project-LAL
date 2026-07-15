@@ -29,6 +29,33 @@ export type RetentionPlan = {
 export const DEFAULT_MAX_RUNS = 20;
 export const DEFAULT_MAX_TOTAL_BYTES = 512 * 1024 * 1024;
 
+export type RunLedgerEntry = { id: string; status: string; updatedAt: number; bytes: number };
+export type RunLedgerRetentionOptions = { now?: number; maxAgeMs?: number; maxTotalBytes?: number };
+
+export const DEFAULT_MAX_RUN_LEDGER_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+export const DEFAULT_MAX_RUN_LEDGER_BYTES = 256 * 1024 * 1024;
+
+// A run's metadata and NDJSON ledger are one paired resource. Live runs are
+// never candidates; recoverable work is worth more than the size budget.
+export function runLedgerEvictionPlan(entries: RunLedgerEntry[], opts: RunLedgerRetentionOptions = {}) {
+  const now = opts.now ?? Date.now();
+  const maxAgeMs = opts.maxAgeMs ?? DEFAULT_MAX_RUN_LEDGER_AGE_MS;
+  const maxTotalBytes = opts.maxTotalBytes ?? DEFAULT_MAX_RUN_LEDGER_BYTES;
+  const terminal = entries.filter((entry) => entry.status !== "running");
+  const live = entries.filter((entry) => entry.status === "running");
+  const expired = terminal.filter((entry) => now - entry.updatedAt > maxAgeMs);
+  const eligible = terminal.filter((entry) => now - entry.updatedAt <= maxAgeMs)
+    .sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
+  const keep = [...live];
+  const evict = [...expired];
+  let keptBytes = live.reduce((total, entry) => total + entry.bytes, 0);
+  for (const entry of eligible) {
+    if (keptBytes + entry.bytes <= maxTotalBytes) { keep.push(entry); keptBytes += entry.bytes; }
+    else evict.push(entry);
+  }
+  return { keep, evict, keptBytes };
+}
+
 // Precedence: (1) protected runs always survive, unconditionally — a manifest that
 // points at bytes retention silently deleted would corrupt provenance, which is worse
 // than the disk cost of keeping a few extra runs; (2) among the rest, the maxRuns most

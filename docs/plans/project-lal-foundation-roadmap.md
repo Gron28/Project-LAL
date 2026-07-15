@@ -67,7 +67,8 @@ starting GPU work; training's idle-stop state is likewise verified. The guarded
 
 Milestone 1 now needs repeated real use from Windows LAL and phone attach mode,
 including a deliberately interrupted connection, before it can be marked
-complete.
+complete. `scripts/smoke-attach-replay.sh` now proves the host-side durable SSE
+replay and `Last-Event-ID` cursor contract without requiring a second device.
 
 ## Milestone 1 — one dependable personal workflow
 
@@ -94,6 +95,13 @@ network connection and a deliberate model/backend failure.
   training output.
 - Add regression tests for startup, reconnect/replay, cancellation, process
   cleanup, protocol compatibility, and storage limits.
+
+Current implementation slice: protocol mirror drift and ledger conformance are
+checked, unknown event kinds are rejected before persistence, and terminal run
+ledgers are retained as paired metadata/log files for 30 days and capped at
+256 MiB without ever deleting live work. The physical shared package and the
+remaining storage categories stay deferred until the root workspace boundary is
+established.
 
 Exit criterion: every user-visible status item has a real data source and an
 unknown or failed event degrades visibly rather than silently.

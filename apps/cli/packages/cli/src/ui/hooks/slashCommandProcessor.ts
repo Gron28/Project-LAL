@@ -18,6 +18,7 @@ import type { UseHistoryManagerReturn } from './useHistoryManager.js';
 import type { ArenaDialogType } from './useArenaCommand.js';
 import {
   type Logger,
+  type AgentEventEmitter,
   type Config,
   createDebugLogger,
   logSlashCommand,
@@ -183,6 +184,10 @@ export const useSlashCommandProcessor = (
   updateItem: UseHistoryManagerReturn['updateItem'],
   setSessionName?: (name: string | null) => void,
   extensionRefreshState?: ExtensionRefreshState,
+  agentEventEmitter?: AgentEventEmitter,
+  remoteSubmitRef?: MutableRefObject<
+    ((text: string) => Promise<boolean> | boolean) | null
+  >,
 ) => {
   const fallbackExtensionRefreshStateRef = useRef<ExtensionRefreshState | null>(
     null,
@@ -502,6 +507,8 @@ export const useSlashCommandProcessor = (
         stats: sessionStats,
         sessionShellAllowlist,
         startNewSession,
+        agentEventEmitter,
+        submitRemotePrompt: (text: string) => remoteSubmitRef?.current?.(text) ?? false,
       },
       executionMode: 'interactive' as const,
     }),
@@ -529,6 +536,8 @@ export const useSlashCommandProcessor = (
       extensionsUpdateState,
       isIdleRef,
       activeExtensionRefreshState,
+      agentEventEmitter,
+      remoteSubmitRef,
     ],
   );
 

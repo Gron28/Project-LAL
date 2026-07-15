@@ -132,4 +132,29 @@ describe('GatewayClient', () => {
     const [url] = fetchImpl.mock.calls[0];
     expect(url).toBe('http://gw:8770/api/agent/runs/r1?trace=1');
   });
+
+  it('uses the authenticated client-run ingestion contract', async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          run: { id: 'run-client-1', conversationId: 'conv-client-1' },
+          ingestToken: 'capability',
+          controlToken: 'control-capability',
+          heartbeatIntervalMs: 30000,
+        }),
+        { status: 201 },
+      ),
+    );
+    const client = new GatewayClient({
+      origin: 'http://gw:8770', token: 'tok', fetchImpl,
+    });
+    await expect(client.registerClientRun({ model: 'local', projectLabel: 'project' }))
+      .resolves.toMatchObject({ runId: 'run-client-1', writerToken: 'capability' });
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe('http://gw:8770/api/lal/runs');
+    expect(JSON.parse(String(init?.body))).toEqual({ kind: 'code', model: 'local', projectLabel: 'project' });
+  });
 });

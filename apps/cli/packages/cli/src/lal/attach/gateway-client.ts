@@ -27,7 +27,7 @@ import os from 'node:os';
  * HANDOFF/memory notes: "app is port 8770 not 3000"). */
 export const DEFAULT_GATEWAY_ORIGIN = 'http://localhost:8770';
 
-export const CLI_CLIENT_VERSION = '0.1.0-lal.7';
+export const CLI_CLIENT_VERSION = '0.1.0-lal.8';
 
 export interface GatewayRunMeta {
   id: string;
@@ -65,6 +65,33 @@ export interface GatewayConversationSummary {
   model?: string;
   mode?: string;
   [key: string]: unknown;
+}
+
+export interface ClientRunRegistration {
+  runId: string;
+  conversationId: string;
+  writerToken: string;
+  controlToken: string;
+  heartbeatIntervalMs?: number;
+}
+
+export interface ClientRunInit {
+  conversationId?: string;
+  projectLabel?: string;
+  model: string;
+  mode?: string;
+}
+
+export interface ClientRunEvent {
+  clientEventId: string;
+  event: Record<string, unknown> & { k: string };
+}
+
+export interface ClientRunCommand {
+  id: string;
+  type: 'submit';
+  text: string;
+  leaseId: string;
 }
 
 /** Resolve the gateway's origin (scheme://host[:port], no trailing slash).
@@ -286,6 +313,75 @@ export class GatewayClient {
   streamUrl(runId: string, afterSeq = 0): string {
     return this.url(`/api/agent/runs/${encodeURIComponent(runId)}/stream`, {
       after: afterSeq,
+    });
+  }
+
+  /** Register a client-owned native terminal run. The host contract is
+   * deliberately separate from `/api/agent/*`: the terminal owns execution;
+   * the gateway only durably records and relays its observable events. */
+  async registerClientRun(init: ClientRunInit): Promise<ClientRunRegistration> {
+    const response = await this.json<{
+      run: { id: string; conversationId: string };
+      ingestToken: string;
+      controlToken: string;
+      heartbeatIntervalMs?: number;
+    }>('/api/lal/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'code', ...init }),
+    });
+    return {
+      runId: response.run.id,
+      conversationId: response.run.conversationId,
+      writerToken: response.ingestToken,
+      controlToken: response.controlToken,
+      heartbeatIntervalMs: response.heartbeatIntervalMs,
+    };
+  }
+
+  async appendClientRunEvents(
+    runId: string,
+    writerToken: string,
+    events: ClientRunEvent[],
+  ): Promise<void> {
+    await this.json(`/api/lal/runs/${encodeURIComponent(runId)}/events`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-lal-run-token': writerToken,
+      },
+      body: JSON.stringify({ events }),
+    });
+  }
+
+  async heartbeatClientRun(
+    runId: string,
+    writerToken: string,
+    ackCommand?: { id: string; leaseId: string },
+  ): Promise<{ command?: ClientRunCommand }> {
+    return this.json(`/api/lal/runs/${encodeURIComponent(runId)}/heartbeat`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-lal-run-token': writerToken,
+      },
+      body: JSON.stringify(ackCommand ? { ackCommand } : {}),
+    });
+  }
+
+  async settleClientRun(
+    runId: string,
+    writerToken: string,
+    status: 'done' | 'error' | 'stopped',
+    error?: string,
+  ): Promise<void> {
+    await this.json(`/api/lal/runs/${encodeURIComponent(runId)}/finish`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-lal-run-token': writerToken,
+      },
+      body: JSON.stringify({ status, ...(error ? { error } : {}) }),
     });
   }
 }

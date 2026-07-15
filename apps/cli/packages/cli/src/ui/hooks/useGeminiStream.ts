@@ -13,6 +13,8 @@ import {
   useLayoutEffect,
 } from 'react';
 import {
+  AgentEventEmitter,
+  AgentEventType,
   type Config,
   type EditorType,
   type GeminiClient,
@@ -483,6 +485,9 @@ export const useGeminiStream = (
   // Live terminal width, paired with the height ref so the commit loop reads
   // both dimensions consistently across a mid-stream resize.
   terminalWidthRef?: React.RefObject<number>,
+  // The primary terminal does not use AgentInteractive, so AppContainer
+  // supplies this small observability bridge for local remote-control clients.
+  mainAgentEventEmitter?: AgentEventEmitter,
 ) => {
   const [initError, setInitError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -1215,6 +1220,13 @@ export const useGeminiStream = (
         // Prevents additional output after a user initiated cancel.
         return '';
       }
+      mainAgentEventEmitter?.emit(AgentEventType.STREAM_TEXT, {
+        subagentId: 'main',
+        round: 0,
+        text: eventValue,
+        thought: false,
+        timestamp: Date.now(),
+      });
       // Track output chars for real-time token estimation & mark as receiving.
       streamingResponseLengthRef.current += eventValue.length;
       setIsReceivingContent(true);
@@ -1384,6 +1396,7 @@ export const useGeminiStream = (
       terminalHeight,
       availableTerminalHeightRef,
       terminalWidthRef,
+      mainAgentEventEmitter,
     ],
   );
 
@@ -1438,6 +1451,13 @@ export const useGeminiStream = (
       if (!thoughtText) {
         return currentThoughtBuffer;
       }
+      mainAgentEventEmitter?.emit(AgentEventType.STREAM_TEXT, {
+        subagentId: 'main',
+        round: 0,
+        text: thoughtText,
+        thought: true,
+        timestamp: Date.now(),
+      });
 
       let newThoughtBuffer = currentThoughtBuffer + thoughtText;
       if (newThoughtBuffer.trim().length === 0) {
@@ -1518,7 +1538,13 @@ export const useGeminiStream = (
 
       return newThoughtBuffer;
     },
-    [addItem, mergeThought, pendingThoughtItemRef, setPendingThoughtItem],
+    [
+      addItem,
+      mergeThought,
+      pendingThoughtItemRef,
+      setPendingThoughtItem,
+      mainAgentEventEmitter,
+    ],
   );
 
   // Commit the streamed reasoning to history as a collapsible block (or drop

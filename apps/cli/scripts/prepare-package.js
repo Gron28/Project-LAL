@@ -35,11 +35,12 @@ export function preparePackage({
   rootDir = defaultRootDir,
   requireNativeAudioCapture = process.env
     .QWEN_REQUIRE_AUDIO_CAPTURE_PREBUILD === '1',
+  requireWebShell = process.env.LAL_HEADLESS_STANDALONE !== '1',
   maxPackageUnpackedBytes = DEFAULT_MAX_NPM_PACKAGE_UNPACKED_BYTES,
 } = {}) {
   const distDir = path.join(rootDir, 'dist');
 
-  verifyBundleArtifacts(rootDir, distDir);
+  verifyBundleArtifacts(rootDir, distDir, { requireWebShell });
   copyDocumentationFiles(rootDir, distDir);
   copyLocales(rootDir, distDir);
   copyExtensionExamples(rootDir, distDir);
@@ -62,19 +63,26 @@ function isDirectRun() {
     : false;
 }
 
-function verifyBundleArtifacts(rootDir, distDir) {
+function verifyBundleArtifacts(rootDir, distDir, { requireWebShell = true } = {}) {
   const requiredPaths = [
     path.join(distDir, 'cli.js'),
     path.join(distDir, 'vendor'),
-    path.join(distDir, 'bundled', 'qc-helper', 'docs'),
+    path.join(distDir, 'bundled', 'qc-helper'),
+    ...(requireWebShell
+      ? [path.join(distDir, 'bundled', 'qc-helper', 'docs')]
+      : []),
     // The Web Shell ships with the published package ("Web Shell out of the
     // box"). Gate on it here so a build that skipped the web-shell workspace
     // (e.g. `npm ci --ignore-scripts` bypassing the root `prepare`) fails
     // loudly during packaging instead of silently publishing an API-only CLI
     // whose `GET /` 404s. copy_bundle_assets.js stays warn-and-skip for
     // --cli-only dev bundles; this is the release gate.
-    path.join(distDir, 'web-shell', 'index.html'),
-    path.join(distDir, 'web-shell', 'assets'),
+    ...(requireWebShell
+      ? [
+          path.join(distDir, 'web-shell', 'index.html'),
+          path.join(distDir, 'web-shell', 'assets'),
+        ]
+      : []),
   ];
 
   if (!fs.existsSync(distDir)) {

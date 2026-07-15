@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import OpenAI, { type ClientOptions } from 'openai';
 import type { GenerateContentConfig } from '@google/genai';
 import type { Config } from '../../../config/config.js';
 import type { ContentGeneratorConfig } from '../../contentGenerator.js';
@@ -153,7 +153,13 @@ export class DashScopeOpenAICompatibleProvider extends DefaultOpenAICompatiblePr
       timeout,
       maxRetries,
       defaultHeaders,
-      ...(runtimeOptions || {}),
+      // The OpenAI SDK's public RequestInit type does not expose undici's
+      // dispatcher or Bun's timeout:false extension.  Both are intentional
+      // runtime options supplied by our transport helper.
+      ...((runtimeOptions || {}) as Pick<
+        ClientOptions,
+        'fetch' | 'fetchOptions'
+      >),
     });
   }
 

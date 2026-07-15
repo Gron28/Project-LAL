@@ -55,6 +55,12 @@ type Block =
   | { t: "status"; text: string }
   | { t: "error"; text: string };
 type Convo = { id: string; title: string; updatedAt: number; project?: string };
+type RunLookup = {
+  id: string;
+  status: string;
+  conversationId: string;
+  executionLocation?: "host" | "client";
+};
 // Raw shape of a persisted /code conversation turn (server keeps the full tool-loop
 // transcript — tool role, null content on tool-call-only assistant turns).
 type RawMsg = {
@@ -271,6 +277,12 @@ export default function CodePage() {
   const [workspace, setWorkspace] = useState("");
   const [projects, setProjects] = useState<string[]>([]);
   const [project, setProject] = useState("");           // "" = default workspace
+  // A client-owned run has a real project on the computer running `lal`, not on
+  // this web host.  The phone is an observer/approval surface for it; never
+  // quietly turn that into the host's default workspace.
+  const [clientOwnedRun, setClientOwnedRun] = useState(false);
+  const [clientRunId, setClientRunId] = useState("");
+  const [clientControl, setClientControl] = useState<{ runId: string; token: string } | null>(null);
   const [instructionFiles, setInstructionFiles] = useState<string[]>([]);
   const [auto, setAuto] = useState(false);
   const [think, setThink] = useState(true);
@@ -302,6 +314,15 @@ export default function CodePage() {
   const autoContinueCount = useRef(0);                    // cap auto-continues per user turn
   const truncatedRef = useRef(false);                     // live truncated flag seen this run
   useEffect(() => { try { setAutoContinue(localStorage.getItem("code_autocontinue") === "1"); } catch {} }, []);
+  useEffect(() => {
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    const runId = hash.get("run") || "";
+    const token = hash.get("lal-control") || "";
+    if (!runId || !token) return;
+    setClientControl({ runId, token });
+    try { sessionStorage.setItem(`lal-control:${runId}`, token); } catch {}
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }, []);
   const changeAutoContinue = (v: boolean) => { setAutoContinue(v); try { localStorage.setItem("code_autocontinue", v ? "1" : "0"); } catch {} };
   const toggleTree = (v: boolean) => { setTreeOpen(v); try { localStorage.setItem("code_tree_open", v ? "1" : "0"); } catch {} };
   // Drag-resizable side panels. treeW is the file/git/run sidebar's width in px;
@@ -383,7 +404,18 @@ export default function CodePage() {
     if (typeof window !== "undefined") window.history.replaceState(null, "", `/code?conv=${encodeURIComponent(id)}`);
   };
 
-  const openConvo = async (id: string): Promise<RawMsg[] | null> => {
+  const adoptExecutionLocation = (location: unknown) => {
+    const clientOwned = location === "client";
+    setClientOwnedRun(clientOwned);
+    if (clientOwned) {
+      setProject("");
+      setOpenFile(null);
+      setTreeOpen(false);
+    }
+    return clientOwned;
+  };
+
+  const openConvo = async (id: string, runLocation?: unknown): Promise<RawMsg[] | null> => {
     setSessionsOpen(false);
     try {
       const r = await fetch(`/api/agent/conversations/${id}`);
@@ -396,7 +428,8 @@ export default function CodePage() {
       // field; a saved default-workspace path maps back to "" (the select's
       // "workspace" option); a folder deleted since the session ran falls back
       // to the workspace with an inline notice instead of a dead project.
-      const savedProj = typeof j.project === "string" && j.project !== workspaceRef.current ? j.project : "";
+      const clientOwned = adoptExecutionLocation(runLocation ?? j.executionLocation);
+      const savedProj = !clientOwned && typeof j.project === "string" && j.project !== workspaceRef.current ? j.project : "";
       let projWarning = "";
       if (savedProj) {
         const ok = await fetch("/api/agent/fs?" + new URLSearchParams({ op: "list", path: ".", project: savedProj }))
@@ -428,7 +461,7 @@ export default function CodePage() {
         const userMsg = rawMsgs.find((m) => m.role === "user");
         setBlocks(userMsg ? [{ t: "user", text: userMsg.content ?? "", hIdx: -1 }] : []);
         try {
-          const runs: { id: string; conversationId: string }[] = await fetch("/api/agent/runs?limit=200").then((r2) => r2.json());
+          const runs: RunLookup[] = await fetch("/api/agent/runs?limit=200").then((r2) => r2.json());
           const run = runs.find((x) => x.conversationId === id);
           if (run) attachRun(run.id, null);
         } catch { /* no matching run on disk — the stub query block is all there is */ }
@@ -441,6 +474,8 @@ export default function CodePage() {
 
   const newSession = () => {
     setSessionsOpen(false);
+    setClientOwnedRun(false);
+    setClientRunId("");
     history.current = [];
     setBlocks([]);
     setConvoId("");
@@ -519,7 +554,18 @@ export default function CodePage() {
       if (raw.k === "run") {
         // Meta preamble — carries the persisted truncated flag for a run that
         // finished while we were detached (cross-device Continue).
-        if ((raw.v as { truncated?: boolean } | undefined)?.truncated) truncatedRef.current = true;
+        const meta = raw.v as { truncated?: boolean; executionLocation?: unknown } | undefined;
+        if (meta?.truncated) truncatedRef.current = true;
+        adoptExecutionLocation(meta?.executionLocation);
+        if (meta?.executionLocation === "client") {
+          setClientRunId(runId);
+          if (!clientControl || clientControl.runId !== runId) {
+            try {
+              const token = sessionStorage.getItem(`lal-control:${runId}`);
+              if (token) setClientControl({ runId, token });
+            } catch {}
+          }
+        }
         return;
       }
       if (raw.k === "usage") { setUsage(raw.v as Usage); return; }
@@ -586,10 +632,11 @@ export default function CodePage() {
       const id = convoIdRef.current;
       if (!id) return;
       try {
-        const runs: { id: string; status: string; conversationId: string }[] = await fetch("/api/agent/runs?limit=20").then((r) => r.json());
+        const runs: RunLookup[] = await fetch("/api/agent/runs?limit=20").then((r) => r.json());
         const r = runs.find((x) => x.status === "running" && x.conversationId === id);
         if (!r) return;
         const c = await fetch(`/api/agent/conversations/${id}`).then((x) => (x.ok ? x.json() : null)).catch(() => null);
+        adoptExecutionLocation(r.executionLocation);
         setBusy(true);
         attachRun(r.id, (c?.messages ?? []) as RawMsg[]);
       } catch { /* offline — next visibility change retries */ }
@@ -637,14 +684,14 @@ export default function CodePage() {
         // specific session. Without one, the session starts blank.
         const targetId = qs.get("conv");
         if (!targetId) return;
-        const msgs = await openConvo(targetId);
+        const runs: RunLookup[] = await fetch("/api/agent/runs?limit=20").then((r) => r.json());
+        const live = runs.find((x) => x.status === "running" && x.conversationId === targetId);
+        const msgs = await openConvo(targetId, live?.executionLocation);
         // A fully closed-and-reopened tab is a fresh mount with no memory that a
         // task might still be running — so ask the run manager instead of guessing
         // from the transcript's shape. A live run for this conversation gets
         // reattached (replay + tail); anything else is genuinely not running.
         try {
-          const runs: { id: string; status: string; conversationId: string }[] = await fetch("/api/agent/runs?limit=20").then((r) => r.json());
-          const live = runs.find((x) => x.status === "running" && x.conversationId === targetId);
           if (live) { setBusy(true); attachRun(live.id, msgs ?? []); }
         } catch { /* server unreachable — visibility resync will retry */ }
       })
@@ -725,6 +772,28 @@ export default function CodePage() {
   };
 
   const send = async () => {
+    if (clientOwnedRun) {
+      const text = input.trim();
+      const control = clientControl?.runId === clientRunId ? clientControl : null;
+      if (!text || !clientRunId) return;
+      if (!control) {
+        setBlocks((prev) => [...prev, { t: "status", text: "── observer mode: open the /rc link from the terminal to send messages ──" }]);
+        return;
+      }
+      try {
+        const response = await fetch(`/api/agent/runs/${encodeURIComponent(clientRunId)}/commands`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-lal-control-token": control.token },
+          body: JSON.stringify({ text }),
+        });
+        if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "remote control request failed");
+        setInput("");
+        setBlocks((prev) => [...prev, { t: "user", text, hIdx: -1 }, { t: "status", text: "── sent to terminal ──" }]);
+      } catch (error) {
+        setBlocks((prev) => [...prev, { t: "error", text: `remote control: ${(error as Error).message}` }]);
+      }
+      return;
+    }
     if (mode === "deliberate") return sendDeliberate();
     const text = input.trim() || "Take a look at the attached image.";
     if ((!input.trim() && !attached.length) || busy) return;
@@ -807,7 +876,7 @@ export default function CodePage() {
   // truncated assistant text, so the model continues from there. Works whether the
   // truncation happened on this device or another (the run meta persists the flag).
   const continueRun = async () => {
-    if (busy) return;
+    if (busy || clientOwnedRun) return;
     setTruncated(false);
     setBusy(true);
     stickRef.current = true;
@@ -837,7 +906,7 @@ export default function CodePage() {
   // window scrolling; see the scroll-effect comment above).
   return (
     <div style={{ "--tree-w": treeW + "px", "--ed-w": edW ? edW + "px" : "min(52vw,760px)" } as React.CSSProperties}
-      className={(treeOpen ? "xl:pl-[var(--tree-w)] " : "") + (openFile ? "lg:pr-[var(--ed-w)]" : "")}>
+      className={(!clientOwnedRun && treeOpen ? "xl:pl-[var(--tree-w)] " : "") + (openFile ? "lg:pr-[var(--ed-w)]" : "")}>
     <div className="max-w-6xl mx-auto px-3 pb-40 flex flex-col min-h-dvh">
       {/* ── Sticky command bar + telemetry ───────────────────────────────── */}
       <div className="sticky top-0 z-30 -mx-3 px-3 bg-[var(--bg)]/92 backdrop-blur-md border-b border-[var(--border-soft)]">
@@ -855,12 +924,12 @@ export default function CodePage() {
             <select value={mode} onChange={(e) => changeMode(e.target.value)} className={inp + " w-28 max-w-[18%] truncate"} title="workflow mode">
               {modes.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
-            <select value={project} onChange={(e) => { setProject(e.target.value); setOpenFile(null); newSession(); }}
+            <select value={project} disabled={clientOwnedRun} onChange={(e) => { setProject(e.target.value); setOpenFile(null); newSession(); }}
               className={inp + " w-40 max-w-[24%] truncate"} title="project (switching starts a fresh session)">
               <option value="">{workspace ? "workspace" : "workspace"}</option>
               {projects.filter((p) => p !== workspace).map((p) => <option key={p} value={p}>{p.split("/").slice(-2).join("/")}</option>)}
             </select>
-            <button onClick={() => setPickerOpen(true)} className={iconBtn} title="open another project"><FolderGit2 size={15} /></button>
+            <button disabled={clientOwnedRun} onClick={() => setPickerOpen(true)} className={iconBtn + " disabled:opacity-30"} title="open another project"><FolderGit2 size={15} /></button>
           </div>
 
           {/* Right cluster (both layouts) */}
@@ -870,7 +939,7 @@ export default function CodePage() {
             <button onClick={() => setAuto(!auto)} title={auto ? "tools auto-approved" : "tools ask first"}
               className={iconBtn} style={{ borderColor: auto ? "var(--accent-warn)" : undefined, color: auto ? "var(--accent-warn)" : undefined }}>{auto ? <Zap size={15} /> : <ShieldCheck size={15} />}</button>
             <button onClick={stopAllAgents} title="stop every active agent run" className={iconBtn + " text-[var(--accent-danger)] hover:border-[var(--accent-danger)]"}><CircleStop size={15} /></button>
-            <button onClick={() => toggleTree(!treeOpen)} title="files · git · run" className={iconBtn}
+            <button disabled={clientOwnedRun} onClick={() => toggleTree(!treeOpen)} title={clientOwnedRun ? "terminal device owns this project's files" : "files · git · run"} className={iconBtn + " disabled:opacity-30"}
               style={{ borderColor: treeOpen ? "var(--accent-ai)" : undefined, color: treeOpen ? "var(--accent-ai)" : undefined }}><PanelLeft size={15} /></button>
             <div className="relative">
               <button onClick={() => setSessionsOpen((o) => !o)} title="past sessions" className={iconBtn}><ChevronDown size={15} /></button>
@@ -907,6 +976,13 @@ export default function CodePage() {
           </div>
         )}
 
+        {clientOwnedRun && (
+          <div className="pb-1.5 -mt-1 flex items-center gap-1.5 text-[11px] text-[var(--accent-ai)]">
+            <TerminalSquare size={12} />
+            Terminal-linked run — its files and tools remain on the terminal device. Open the `/rc` link on this device to send normal prompts.
+          </div>
+        )}
+
         {/* Telemetry: full strip on desktop, tap-to-expand glance on mobile */}
         <div className="pb-2">
           <div className="hidden sm:block"><StatsHud usage={usage} active={busy} onServingChange={setServingModel} /></div>
@@ -929,8 +1005,10 @@ export default function CodePage() {
           <div className="mt-6 text-center">
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-[var(--surface-2)] border border-[var(--border-soft)] mb-4"><Bot size={22} className="text-[var(--accent-ai)]" /></div>
             <p className="text-sm text-[var(--text-2)] max-w-md mx-auto leading-relaxed">
-              An agent with real tools over <span className="font-mono text-[var(--text)]">{project ? project.split("/").pop() : (workspace ? "workspace" : "the workspace")}</span>:
               files, shell, a Python REPL, web research, image understanding, and helper sub-agents.
+              {clientOwnedRun
+                ? "A terminal-linked agent. Its files and tools stay on the terminal device; this view follows the durable run."
+                : <>An agent with real tools over <span className="font-mono text-[var(--text)]">{project ? project.split("/").pop() : (workspace ? "workspace" : "the workspace")}</span>: files, shell, a Python REPL, web research, image understanding, and helper sub-agents.</>}
             </p>
             <p className="text-xs text-[var(--muted)] mt-2">Ask it to build, fix, research — or train a model.</p>
           </div>
@@ -1015,7 +1093,7 @@ export default function CodePage() {
         <div className="max-w-6xl mx-auto">
           {/* Continue affordance: the last reply hit the token ceiling mid-thought. */}
           {truncated && !busy && (
-            <button onClick={continueRun}
+            <button onClick={continueRun} disabled={clientOwnedRun}
               className="flex items-center gap-2 text-xs mb-2 px-3 py-1.5 rounded-lg border border-[var(--accent-warn)] text-[var(--accent-warn)] hover:bg-[var(--accent-warn)]/10 transition-colors animate-fade-in">
               <ArrowRight size={13} /> reply was cut off — continue
             </button>
@@ -1032,12 +1110,12 @@ export default function CodePage() {
           )}
           <div className="flex items-end gap-2 bg-[var(--surface-1)] border border-[var(--border)] focus-within:border-[var(--border-loud)] rounded-2xl px-2 py-1.5 transition-colors">
             <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-            <button onClick={() => fileRef.current?.click()} title="attach image (for describe_image)"
-              className="h-9 w-9 flex items-center justify-center rounded-lg text-[var(--muted)] hover:text-[var(--text-2)] shrink-0"><Paperclip size={16} /></button>
+            <button disabled={clientOwnedRun} onClick={() => fileRef.current?.click()} title="attach image (for describe_image)"
+              className="h-9 w-9 flex items-center justify-center rounded-lg text-[var(--muted)] hover:text-[var(--text-2)] shrink-0 disabled:opacity-30"><Paperclip size={16} /></button>
             <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={1}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
               onPaste={(e) => { const files = e.clipboardData?.files; if (files?.length) addFiles(files); }}
-              placeholder={mode === "deliberate" ? "What question should the deliberation settle?" : "Build, fix, research…"}
+              placeholder={clientOwnedRun ? (clientControl?.runId === clientRunId ? "Message the terminal session…" : "Open the /rc link to control this terminal session") : mode === "deliberate" ? "What question should the deliberation settle?" : "Build, fix, research…"}
               className="flex-1 resize-none bg-transparent text-sm text-[var(--text)] placeholder:text-[var(--muted)] outline-none py-1.5 max-h-40 min-h-[2.25rem]"
               style={{ height: "auto" }}
               onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; }} />
@@ -1070,7 +1148,7 @@ export default function CodePage() {
             </select>
           </label>
           <label className="block text-[11px] text-[var(--muted)]">Project
-            <select value={project} onChange={(e) => { setProject(e.target.value); setOpenFile(null); newSession(); }} className={inp + " w-full mt-1 max-w-none"}>
+            <select value={project} disabled={clientOwnedRun} onChange={(e) => { setProject(e.target.value); setOpenFile(null); newSession(); }} className={inp + " w-full mt-1 max-w-none disabled:opacity-40"}>
               <option value="">workspace</option>
               {projects.filter((p) => p !== workspace).map((p) => <option key={p} value={p}>{p.split("/").slice(-2).join("/")}</option>)}
             </select>
@@ -1078,14 +1156,14 @@ export default function CodePage() {
           <div className="flex flex-wrap gap-2 pt-1">
             <button onClick={() => setThink(!think)} className="flex items-center gap-1.5 text-xs border rounded-lg px-3 py-2" style={{ borderColor: think ? "var(--accent-ai)" : "var(--border-soft)", color: think ? "var(--accent-ai)" : "var(--text-2)" }}><Brain size={14} />{think ? "think" : "no-think"}</button>
             <button onClick={() => setAuto(!auto)} className="flex items-center gap-1.5 text-xs border rounded-lg px-3 py-2" style={{ borderColor: auto ? "var(--accent-warn)" : "var(--border-soft)", color: auto ? "var(--accent-warn)" : "var(--text-2)" }}>{auto ? <Zap size={14} /> : <ShieldCheck size={14} />}{auto ? "auto" : "ask"}</button>
-            <button onClick={() => { setPickerOpen(true); setMenuOpen(false); }} className="flex items-center gap-1.5 text-xs border border-[var(--border-soft)] rounded-lg px-3 py-2 text-[var(--text-2)]"><FolderGit2 size={14} /> open</button>
-            <button onClick={() => { toggleTree(!treeOpen); setMenuOpen(false); }} className="flex items-center gap-1.5 text-xs border border-[var(--border-soft)] rounded-lg px-3 py-2 text-[var(--text-2)]"><PanelLeft size={14} /> panels</button>
+            <button disabled={clientOwnedRun} onClick={() => { setPickerOpen(true); setMenuOpen(false); }} className="flex items-center gap-1.5 text-xs border border-[var(--border-soft)] rounded-lg px-3 py-2 text-[var(--text-2)] disabled:opacity-40"><FolderGit2 size={14} /> open</button>
+            <button disabled={clientOwnedRun} onClick={() => { toggleTree(!treeOpen); setMenuOpen(false); }} className="flex items-center gap-1.5 text-xs border border-[var(--border-soft)] rounded-lg px-3 py-2 text-[var(--text-2)] disabled:opacity-40"><PanelLeft size={14} /> panels</button>
           </div>
         </div>
       </div>
     )}
 
-    {treeOpen && (
+    {!clientOwnedRun && treeOpen && (
       <>
         {/* below xl the sidebar overlays the chat — backdrop click dismisses */}
         <div className="fixed inset-0 z-10 bg-black/40 xl:hidden" onClick={() => toggleTree(false)} />

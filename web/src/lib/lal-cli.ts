@@ -95,6 +95,14 @@ export function cliDeviceCustomHeaders(request: Request): Record<string, string>
   return values;
 }
 
+/** A client-owned run is attributed to a stable, explicitly supplied device id.
+ * Unlike the display-oriented registry fallback, ingestion must never silently
+ * merge two callers by IP address: the owner is an authorization boundary. */
+export function cliAuthenticatedDeviceId(request: Request): string | null {
+  const explicitId = clean(request.headers.get("x-lal-device-id"), 128);
+  return /^[A-Za-z0-9._:-]{8,128}$/.test(explicitId) ? explicitId : null;
+}
+
 /** Persist connection metadata only; prompts, paths, and request bodies are never recorded. */
 export function recordCliAccess(request: Request, activity: string, authorized: boolean): void {
   const registry = readDeviceRegistry();
