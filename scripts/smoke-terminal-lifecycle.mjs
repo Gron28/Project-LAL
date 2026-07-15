@@ -61,11 +61,16 @@ try {
   await completion.text();
 
   const inspection = await request(`/api/agent/runs/${encodeURIComponent(runId)}?trace=1`).then((response) => response.json());
-  const kinds = new Set((inspection.trace?.events || []).map((event) => event.k));
+  const events = inspection.trace?.events || [];
+  const kinds = new Set(events.map((event) => event.k));
   if (!kinds.has("model_loading") || !kinds.has("model_ready")) {
     throw new Error(`terminal lifecycle events missing: ${[...kinds].join(", ") || "none"}`);
   }
-  console.log("==> Terminal lifecycle verified: host model events reached the durable client run");
+  const usage = events.find((event) => event.k === "usage")?.detail || "";
+  if (!/32768/.test(usage)) throw new Error(`host usage telemetry missing actual context: ${usage || "none"}`);
+  const confidenceCount = events.filter((event) => event.k === "token_confidence").length;
+  console.log(`==> Token-certainty frames: ${confidenceCount}${confidenceCount ? " (backend logprobs available)" : " (backend did not return logprobs)"}`);
+  console.log("==> Terminal lifecycle verified: host model events and usage reached the durable client run");
 } finally {
   if (runId && ingestToken) {
     await fetch(`${base}/api/lal/runs/${encodeURIComponent(runId)}/finish`, {

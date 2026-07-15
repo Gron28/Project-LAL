@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Current Linux LAL entrypoint. The recovery client remains bin/lab-agent under
+# its own name; `lal` must always run the maintained terminal agent.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+LAL_HOME="${LAL_HOME:-$HOME/.lal}"
+export QWEN_HOME="$LAL_HOME"
+export LAL_MANAGED=1
+
+if [ -f "$LAL_HOME/.env" ]; then
+  # The managed env file contains only the local pairing token. Do not source
+  # arbitrary shell syntax from it.
+  LAL_API_KEY="$(sed -n 's/^LAL_API_KEY=//p' "$LAL_HOME/.env" | head -n1)"
+  [ -n "$LAL_API_KEY" ] && export LAL_API_KEY
+fi
+for item in client-host device-id device-name platform client-version; do
+  file="$LAL_HOME/$item"
+  [ -f "$file" ] || continue
+  value="$(tr -d '\r\n' < "$file")"
+  case "$item" in
+    client-host) export LAL_GATEWAY_URL="$value" ;;
+    device-id) export LAL_DEVICE_ID="$value" ;;
+    device-name) export LAL_DEVICE_NAME="$value" ;;
+    platform) export LAL_PLATFORM="$value" ;;
+    client-version) export LAL_CLIENT_VERSION="$value" ;;
+  esac
+done
+[ -f "$LAL_HOME/system.md" ] && export QWEN_SYSTEM_MD="$LAL_HOME/system.md"
+
+exec node "$ROOT/apps/cli/packages/cli/dist/index.js" "$@"

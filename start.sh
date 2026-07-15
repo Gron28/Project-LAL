@@ -15,7 +15,7 @@
 # TS_PORT must stay off 443: the bare-hostname mount (443) is reserved for the
 # inbox app on :3000 — defaulting to 443 here is what kept hijacking it.
 # Handy flags:  --install-launcher  write a double-clickable desktop entry
-#               --install-cli       install lab-agent for this user
+#               --install-cli       install the current LAL terminal client for this user
 #               --show-cli-token    print the pairing token for another computer
 #               --list-cli-devices  show authenticated/rejected LAL CLI connections
 #               --release-lal       build, package, verify, and deploy the LAL client
@@ -50,12 +50,9 @@ fi
 
 # --- optional: install the terminal client for this user ---------------------
 if [ "${1:-}" = "--install-cli" ]; then
+  "$HERE/scripts/install-local-lal.sh"
   target="$HOME/.local/bin"
-  mkdir -p "$target"
-  ln -sfn "$HERE/bin/lab-agent" "$target/lab-agent"
-  ln -sfn "$HERE/bin/lab-agent" "$target/lal"
-  ln -sfn "$HERE/bin/lab-agent" "$target/LAL"
-  c_ok "CLI installed. Run 'lal' or 'LAL' from any folder."
+  c_ok "Current LAL CLI installed. Run 'lal' or 'LAL' from any folder."
   case ":$PATH:" in
     *":$target:"*) ;;
     *) c_warn "Add $target to PATH, then open a new terminal." ;;

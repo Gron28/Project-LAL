@@ -159,7 +159,11 @@ export async function acquireCliGpuLease(): Promise<() => void> {
   };
 }
 
-export function streamWithRelease(body: ReadableStream<Uint8Array>, release: () => void): ReadableStream<Uint8Array> {
+export function streamWithRelease(
+  body: ReadableStream<Uint8Array>,
+  release: () => void,
+  observer?: { onChunk?: (chunk: Uint8Array) => void; onClose?: () => void },
+): ReadableStream<Uint8Array> {
   const reader = body.getReader();
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
@@ -167,8 +171,10 @@ export function streamWithRelease(body: ReadableStream<Uint8Array>, release: () 
         const { done, value } = await reader.read();
         if (done) {
           release();
+          observer?.onClose?.();
           controller.close();
         } else {
+          observer?.onChunk?.(value);
           controller.enqueue(value);
         }
       } catch (error) {

@@ -71,6 +71,10 @@ The terminal client remains its own npm workspace under `apps/cli/` while its
 inherited dependency graph is reduced. `npm run cli:test` runs its test suite;
 `npm run release:lal` creates the internal Windows release archive.
 
+On the Linux host, run `./start.sh --install-cli` once to make `lal` use the
+current source client. `lab-agent` remains available only as an explicitly
+named recovery client; it is not the `lal` command.
+
 With the host already running and idle, `./scripts/smoke-project-lal.sh` runs a
 guarded one-line model/run/replay/cleanup check. It refuses to interrupt live
 work and is intentionally not part of the ordinary static test suite.

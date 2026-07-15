@@ -232,6 +232,11 @@ const HANDLERS: Record<string, Handler> = {
       'usage',
     );
   },
+  token_confidence: (e) => {
+    const v = asRecord(e.v);
+    const p = typeof v['p'] === 'number' ? `${Math.round(v['p'] * 100)}%` : '?';
+    return line('dim', `token certainty ${p}`, 'token_confidence');
+  },
   truncated: () =>
     line(
       'warning',

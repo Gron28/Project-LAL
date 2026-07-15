@@ -93,6 +93,7 @@ export type HiveTaggedToolLoopEvent = ToolLoopEvent & { workflowId: string; node
 export type AdditionalRouteEvent =
   | { k: "model_loading"; v: { model: string; ctx: number } }
   | { k: "model_ready"; v: { model: string; ctx: number; backend?: string } }
+  | { k: "token_confidence"; v: { p: number; alts?: [string, number][] } }
   | { k: "model"; v: string } // vision route: which model actually answered
   | { k: "project"; v: { root: string; instructionFiles?: string[] } }
   | { k: "done"; v: { conversationId?: string; dir?: string } }
@@ -131,7 +132,7 @@ export const KNOWN_EVENT_KINDS = new Set<string>([
   // HiveWorkflowEvent
   "workflow_routing", "stage_trace", "workflow_started", "workflow_node", "workflow_finished",
   // AdditionalRouteEvent
-  "model_loading", "model_ready", "model", "project", "done", "query", "transcript",
+  "model_loading", "model_ready", "token_confidence", "model", "project", "done", "query", "transcript",
 ]);
 
 export function isKnownEventKind(k: string): boolean {

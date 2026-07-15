@@ -26,6 +26,7 @@ type Ev =
   | { k: "think_recovered"; v: { count: number }; agent?: string }
   | { k: "model_loading"; v: { model: string; ctx: number }; agent?: string }
   | { k: "model_ready"; v: { model: string; ctx: number; backend?: string }; agent?: string }
+  | { k: "token_confidence"; v: { p: number; alts?: [string, number][] }; agent?: string }
   | { k: "context_limit"; v: { estimatedTokens: number; reserveTokens: number; ctx: number }; agent?: string }
   | { k: "context_compacted"; v: { trimmed: number }; agent?: string }
   | { k: "tool_request"; v: { id: string; name: string; args: Record<string, unknown> }; agent?: string }
@@ -306,6 +307,8 @@ export default function CodePage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   // New UI state: live meter, truncation/continue, mobile menu, HUD visibility.
   const [usage, setUsage] = useState<Usage>(null);
+  const [certaintyWave, setCertaintyWave] = useState<number[]>([]);
+  const [certaintyAlts, setCertaintyAlts] = useState<TokenAlternatives[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [autoContinue, setAutoContinue] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);        // mobile: model/mode/project sheet
@@ -569,6 +572,21 @@ export default function CodePage() {
         return;
       }
       if (raw.k === "usage") { setUsage(raw.v as Usage); return; }
+      if (raw.k === "token_confidence") {
+        const value = raw.v as { p?: unknown; alts?: unknown };
+        const p = value.p;
+        if (typeof p === "number" && Number.isFinite(p)) {
+          setCertaintyWave((previous) => [...previous, p].slice(-240));
+          const rawAlts = value.alts;
+          if (Array.isArray(rawAlts)) {
+            const alts = rawAlts.filter((item): item is [string, number] =>
+              Array.isArray(item) && typeof item[0] === "string" && typeof item[1] === "number",
+            );
+            setCertaintyAlts((previous) => [...previous, { token: "", p, alts }].slice(-12));
+          }
+        }
+        return;
+      }
       // Deliberate mode's usage events never arrive at the top level — every one of
       // its askOnce() calls wraps its events in {k:"inner", v:{phase, role, event}},
       // so the check above never matches and the HUD's context/tok-s numbers stayed
@@ -991,6 +1009,7 @@ export default function CodePage() {
             <ChevronDown size={12} className={"ml-auto text-[var(--muted)] transition-transform " + (hudOpen ? "rotate-180" : "")} />
           </button>
           {hudOpen && <div className="sm:hidden pt-2"><StatsHud usage={usage} active={busy} onServingChange={setServingModel} /></div>}
+          {clientOwnedRun && <CertaintyWave wave={certaintyWave} alts={certaintyAlts} active={busy} height={36} />}
         </div>
       </div>
 
