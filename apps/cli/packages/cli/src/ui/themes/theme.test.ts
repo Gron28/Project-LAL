@@ -89,7 +89,7 @@ describe('themeManager.loadCustomThemes', () => {
     const result = themeManager.getTheme('Legacy Custom Theme')!;
 
     // Should use DEFAULT_THEME (LALDark) values for missing fields
-    expect(result.colors.DiffAdded).toBe('#55E06F');
+    expect(result.colors.DiffAdded).toBe('#80FF9B');
     expect(result.colors.DiffRemoved).toBe('#F26D78');
     expect(result.colors.AccentBlue).toBe(legacyTheme.AccentBlue);
     expect(result.name).toBe(legacyTheme.name);

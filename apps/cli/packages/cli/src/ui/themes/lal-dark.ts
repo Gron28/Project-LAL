@@ -14,25 +14,26 @@ import type { SemanticColors } from './semantic-tokens.js';
 const lalDarkColors: ColorsTheme = {
   type: 'dark',
   Background: '#0B0F0C',
-  Foreground: '#C9D2C9',
+  // Keep all reading text comfortably above the near-black background.
+  Foreground: '#F2F7F1',
   // "LightBlue" slot → light lime (inline code, names).
-  LightBlue: '#B8E36A',
+  LightBlue: '#D5FF8A',
   // "AccentBlue" slot → lime-green (links, focused borders, types).
-  AccentBlue: '#7FD654',
+  AccentBlue: '#A9FF73',
   // "AccentPurple" slot → yellow-lime (accents, literals).
-  AccentPurple: '#D7E866',
+  AccentPurple: '#FFF28A',
   // Mint-green (quotes, symbols) — cool counterpoint inside the family.
-  AccentCyan: '#8FE6C0',
-  AccentGreen: '#55E06F',
-  AccentYellow: '#E6D85C',
+  AccentCyan: '#A7FFE1',
+  AccentGreen: '#80FF9B',
+  AccentYellow: '#FFE78A',
   AccentRed: '#F26D78',
-  AccentYellowDim: '#8B8230',
-  AccentRedDim: '#8B3A4A',
-  DiffAdded: '#55E06F',
+  AccentYellowDim: '#C9BB56',
+  AccentRedDim: '#D97984',
+  DiffAdded: '#80FF9B',
   DiffRemoved: '#F26D78',
-  Comment: '#5C6B5E',
-  Gray: '#3E4A41',
-  GradientColors: ['#55E06F', '#AAD94C', '#E6D85C'],
+  Comment: '#AABAAA',
+  Gray: '#8FA18F',
+  GradientColors: ['#80FF9B', '#CFFF68', '#FFE78A'],
 };
 
 const lalDarkSemanticColors: SemanticColors = {
