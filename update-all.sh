@@ -95,6 +95,10 @@ fi
 
 if [ "$PUBLISH_CLIENTS" = "1" ]; then
   echo "==> Packaging and publishing the connected Windows client"
+  # The development bundle deliberately omits the standalone wrapper. Prepare
+  # it before packaging so the generated archive contains cli-entry.js and
+  # connected clients never receive an incomplete runtime.
+  (cd "$CLI" && LAL_HEADLESS_STANDALONE=1 npm run prepare:package)
   LAL_REUSE_DIST=1 LAL_HEADLESS_STANDALONE=1 "$ROOT/scripts/release-lal-cli.sh"
 fi
 
