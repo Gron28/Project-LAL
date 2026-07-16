@@ -2170,7 +2170,10 @@ export async function loadCliConfig(
     preventSystemSleep: settings.general?.preventSystemSleep ?? true,
     skipNextSpeakerCheck: settings.model?.skipNextSpeakerCheck,
     skipWorkflowUsageWarning: settings.model?.skipWorkflowUsageWarning ?? false,
-    skipLoopDetection: settings.model?.skipLoopDetection ?? true,
+    // A local unattended run must prefer a clean, observable stop over
+    // silently consuming the entire context window in read/edit churn. Users
+    // can still opt out for unusual exploratory workflows.
+    skipLoopDetection: settings.model?.skipLoopDetection ?? false,
     maxToolCallsPerTurn: settings.model?.maxToolCallsPerTurn,
     skipStartupContext: settings.model?.skipStartupContext ?? false,
     truncateToolOutputThreshold: settings.tools?.truncateToolOutputThreshold,
