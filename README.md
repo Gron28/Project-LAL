@@ -52,6 +52,25 @@ second system being built today.
 
 ## Current local use
 
+### Complete update
+
+`./update-all.sh` is the one command for bringing an already provisioned host
+fully up to date. It builds the CLI and web app, deploys/restarts the local
+service, refreshes the installed `lal` command and settings, publishes the
+connected-client release, and refreshes the standard Tailscale URL for phone
+access when Tailscale is connected:
+
+```bash
+./update-all.sh
+```
+
+The intended result is a running and current system, rather than a collection
+of separate scripts an operator has to discover and execute. Any future change
+that requires a build, install, migration, service action, deployment, or
+external-route refresh must be added to `update-all.sh` before it is treated as
+complete. One-time machine provisioning remains explicitly documented rather
+than being silently assumed.
+
 On the present Linux host, `./start.sh` rebuilds and starts the web app. It is
 an internal launcher for the current machine, not a general installer yet.
 On a fresh Linux setup, run `./scripts/install-project-lal-service.sh` once

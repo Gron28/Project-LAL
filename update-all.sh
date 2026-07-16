@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Canonical Project-LAL update path. This deliberately owns the complete
 # ordering so a compiled package, executable CLI bundle, deployed web host,
-# managed settings, and published remote-client artifact cannot drift apart.
+# managed settings, published remote-client artifact, and phone-facing route
+# cannot drift apart.
+#
+# Maintenance rule: a change is not complete until every required build,
+# install, migration, service restart, deployment, or external route refresh
+# is represented here (or explicitly documented as a one-time prerequisite).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
