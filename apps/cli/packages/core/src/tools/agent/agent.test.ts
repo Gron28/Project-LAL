@@ -480,13 +480,21 @@ describe('AgentTool', () => {
       expect(result).toBeNull();
     });
 
-    it('should reject empty description', async () => {
+    it('should allow an omitted description', async () => {
+      const { description: _description, ...withoutDescription } = validParams;
+      const result = agentTool.validateToolParams({
+        ...withoutDescription,
+      } as AgentParams);
+      expect(result).toBeNull();
+    });
+
+    it('should reject an empty description when supplied', async () => {
       const result = agentTool.validateToolParams({
         ...validParams,
         description: '',
       });
       expect(result).toBe(
-        'Parameter "description" must be a non-empty string.',
+        'Parameter "description" must be a non-empty string when set.',
       );
     });
 

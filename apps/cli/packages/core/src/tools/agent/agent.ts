@@ -781,7 +781,10 @@ export class AgentTool extends BaseDeclarativeTool<AgentParams, ToolResult> {
             "Pin the sub-agent's working directory to an EXISTING git worktree of this repo (absolute path, or relative to the current directory). Unlike 'isolation', the worktree is NOT created or cleaned up — the caller owns its lifecycle. The sub-agent's cwd-relative file and shell operations resolve inside this directory, and search tools (grep, glob) default to it as their root. This is a cwd pin, not a filesystem sandbox — file, shell, and search tools can still be pointed outside via an explicit absolute path. Must be a worktree already registered against the current repository, and must live inside it. Mutually exclusive with 'isolation'.",
         },
       },
-      required: ['description', 'prompt'],
+      // Small local models regularly omit the cosmetic summary while still
+      // providing a complete task.  The invocation derives it from prompt so
+      // delegation remains usable instead of repeatedly failing validation.
+      required: ['prompt'],
       additionalProperties: false,
       $schema: 'http://json-schema.org/draft-07/schema#',
     };
@@ -983,13 +986,15 @@ assistant: Uses the ${ToolNames.AGENT} tool to launch the test-runner agent
   }
 
   override validateToolParams(params: AgentParams): string | null {
-    // Validate required fields
+    // Description is optional: it is a UI/task-list label, not task input.
+    // When omitted (a common local-model tool call), createInvocation derives
+    // a concise label from the prompt.
     if (
-      !params.description ||
-      typeof params.description !== 'string' ||
-      params.description.trim() === ''
+      params.description !== undefined &&
+      (typeof params.description !== 'string' ||
+        params.description.trim() === '')
     ) {
-      return 'Parameter "description" must be a non-empty string.';
+      return 'Parameter "description" must be a non-empty string when set.';
     }
 
     if (
@@ -1095,7 +1100,16 @@ assistant: Uses the ${ToolNames.AGENT} tool to launch the test-runner agent
   }
 
   protected createInvocation(params: AgentParams) {
-    return new AgentToolInvocation(this.config, this.subagentManager, params);
+    const suppliedDescription = params.description?.trim();
+    const prompt = params.prompt.trim().replace(/\s+/g, ' ');
+    const description =
+      suppliedDescription ||
+      (prompt.length <= 80 ? prompt : `${prompt.slice(0, 77).trimEnd()}...`);
+
+    return new AgentToolInvocation(this.config, this.subagentManager, {
+      ...params,
+      description,
+    });
   }
 
   override toAutoClassifierInput(params: AgentParams): Record<string, unknown> {
