@@ -47,6 +47,10 @@ export function GET(request: Request) {
   // selectable chat models. The web /chat route's silent image-attachment
   // auto-routing to a Gemma vision model is a separate, unrelated concern.
   const models = allModels()
+    // Managed context profiles are internal runtime variants. The terminal
+    // should present the familiar base model once, not make the user choose a
+    // cache/window implementation detail.
+    .filter((model) => !model.name.endsWith("-lal-cli-16k"))
     .map((model) => {
       const family = inferFamily(model.name);
       const role = inferRole(model.name);

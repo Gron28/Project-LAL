@@ -50,49 +50,14 @@ function asCount(value: unknown): number {
 }
 
 const OLLAMA_CLI_CONTEXT = 16384;
+const OLLAMA_CLI_PROFILE_SUFFIX = "-lal-cli-16k";
 
-/** Ollama's OpenAI-compatible endpoint silently starts an unloaded model with
- * its 4096-token default. The CLI can request 16K correctly and still receive
- * a 4095-token prompt plus one unusable output token. Prime only when the
- * resident runner is missing or too small; subsequent turns reuse it. */
-async function ensureOllamaCliContext(model: string): Promise<void> {
-  try {
-    const current = await fetch("http://127.0.0.1:11434/api/ps", {
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (current.ok) {
-      const payload = await current.json() as {
-        models?: Array<{ name?: string; context_length?: number }>;
-      };
-      const resident = payload.models?.find((item) => item.name === model);
-      if ((resident?.context_length ?? 0) >= OLLAMA_CLI_CONTEXT) return;
-    }
-
-    const preload = await fetch("http://127.0.0.1:11434/api/chat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: "" }],
-        stream: false,
-        think: false,
-        keep_alive: "5m",
-        options: {
-          num_ctx: OLLAMA_CLI_CONTEXT,
-          num_predict: 1,
-          temperature: 0,
-        },
-      }),
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (!preload.ok) {
-      throw new Error(`Ollama context preload failed: HTTP ${preload.status}`);
-    }
-    await preload.arrayBuffer();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not prepare ${model} with ${OLLAMA_CLI_CONTEXT} context: ${message}`);
-  }
+/** The OpenAI-compatible Ollama endpoint has no request-level context option.
+ * A model created from a tiny Modelfile is the documented persistent way to
+ * keep an agent's tool schemas and output budget out of the 4K default. */
+function managedOllamaModel(model: string): string {
+  const candidate = `${model}${OLLAMA_CLI_PROFILE_SUFFIX}`;
+  return allModels().some((item) => item.name === candidate) ? candidate : model;
 }
 
 /** Keep the executable tool contract AND its meaning. Tool names, parameter
@@ -206,12 +171,12 @@ export async function POST(request: Request) {
   const release = await acquireCliGpuLease();
   try {
     const isOllama = modelInfo?.source === "ollama";
+    const upstreamModel = isOllama ? managedOllamaModel(model) : model;
     if (isOllama) {
       // Gemma and other Ollama-only architectures must never be handed to the
       // pinned llama.cpp build. Stop our server so Ollama owns the GPU, then
       // use Ollama's OpenAI-compatible endpoint below.
       stopServing();
-      await ensureOllamaCliContext(model);
     } else {
       await ensureServing(model, 32768);
     }
@@ -242,7 +207,7 @@ export async function POST(request: Request) {
     const upstream = await fetch(`${isOllama ? "http://127.0.0.1:11434" : `http://127.0.0.1:${SERVE_PORT}`}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: request.headers.get("accept") ?? "application/json" },
-      body: JSON.stringify(upstreamPayload),
+      body: JSON.stringify({ ...upstreamPayload, model: upstreamModel }),
       signal: request.signal,
     });
     if (!upstream.body) {

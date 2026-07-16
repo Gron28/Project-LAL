@@ -78,6 +78,21 @@ echo "==> Building CLI packages"
 echo "==> Building the executable CLI bundle"
 (cd "$CLI" && npm run bundle)
 
+# Ollama's OpenAI-compatible API cannot set a request-level context size. The
+# small derived profile below is the official durable solution: it preserves
+# the familiar base name in LAL while giving tool-using Gemma enough room.
+if command -v ollama >/dev/null && ollama show gemma4:12b >/dev/null 2>&1; then
+  if ! ollama show gemma4:12b-lal-cli-16k >/dev/null 2>&1; then
+    echo "==> Creating Gemma 12B's managed 16K-context profile"
+    PROFILE_FILE="$(mktemp "${TMPDIR:-/tmp}/lal-gemma4-16k.XXXXXX.Modelfile")"
+    trap 'rm -f "$PROFILE_FILE"' EXIT
+    printf 'FROM gemma4:12b\nPARAMETER num_ctx 16384\n' > "$PROFILE_FILE"
+    ollama create gemma4:12b-lal-cli-16k -f "$PROFILE_FILE"
+    rm -f "$PROFILE_FILE"
+    trap - EXIT
+  fi
+fi
+
 if [ "$PUBLISH_CLIENTS" = "1" ]; then
   echo "==> Packaging and publishing the connected Windows client"
   LAL_REUSE_DIST=1 LAL_HEADLESS_STANDALONE=1 "$ROOT/scripts/release-lal-cli.sh"
