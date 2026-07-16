@@ -10,6 +10,7 @@ WEB="$ROOT/web"
 PUBLISH_CLIENTS=1
 RUN_SMOKE=0
 OPEN_BROWSER=0
+WEB_PORT="${LAL_WEB_PORT:-8770}"
 
 usage() {
   cat <<'EOF'
@@ -30,6 +31,10 @@ Options:
 Connected machines are never modified by surprise. Publishing makes the new
 runtime available through the normal authenticated LAL installer/update path;
 run that path on each connected machine to activate it.
+
+When Tailscale is installed and connected, the standard tailnet HTTPS URL is
+also refreshed to proxy this machine's deployed web UI. This makes the same
+link work from a phone connected to the tailnet after every full update.
 EOF
 }
 
@@ -48,6 +53,25 @@ done
 command -v node >/dev/null || { echo "Node.js is required." >&2; exit 1; }
 command -v npm >/dev/null || { echo "npm is required." >&2; exit 1; }
 command -v systemctl >/dev/null || { echo "systemctl is required." >&2; exit 1; }
+
+refresh_tailscale_ui() {
+  if ! command -v tailscale >/dev/null 2>&1; then
+    echo "==> Tailscale not installed; skipping tailnet UI route"
+    return 0
+  fi
+
+  # Replace only the default HTTPS listener. Do not reset the complete Serve
+  # configuration: people may have intentionally configured other services.
+  # `off` is harmless when no default listener exists.
+  if ! tailscale serve --https=443 off >/dev/null 2>&1; then
+    echo "==> Tailscale unavailable or not connected; skipping tailnet UI route"
+    return 0
+  fi
+
+  echo "==> Refreshing the standard Tailscale URL for the web UI"
+  tailscale serve --https=443 --bg "http://127.0.0.1:${WEB_PORT}"
+  tailscale serve status
+}
 
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/update-all-local-ai-lab-${UID}.lock"
 exec 9>"$LOCK"
@@ -105,6 +129,8 @@ fi
 echo "==> Safely building and deploying the web UI/API"
 OPEN_BROWSER="$OPEN_BROWSER" "$ROOT/scripts/rebuild-local-ai-lab.sh"
 
+refresh_tailscale_ui
+
 echo "==> Refreshing this machine's CLI, managed settings, and system prompt"
 LAL_SKIP_CLI_BUILD=1 "$ROOT/scripts/install-local-lal.sh"
 
@@ -115,6 +141,9 @@ fi
 
 echo "==> Complete LAL update succeeded"
 echo "    Web UI/API: deployed and healthy"
+if command -v tailscale >/dev/null 2>&1; then
+  echo "    Tailnet UI: standard Tailscale HTTPS URL refreshed when connected"
+fi
 echo "    Local CLI: bundled, installed, and refreshed"
 if [ "$PUBLISH_CLIENTS" = "1" ]; then
   echo "    Connected-client release: published and checksum-pinned"
