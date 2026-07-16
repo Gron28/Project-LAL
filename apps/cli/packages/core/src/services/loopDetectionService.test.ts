@@ -1156,22 +1156,25 @@ describe('LoopDetectionService', () => {
       );
     });
 
-    it('should exempt opening exploration from READ_FILE_LOOP (cold start)', () => {
+    it('should allow bounded opening exploration before stopping read-only churn', () => {
       service.reset('');
 
-      // Regression for PR #3236 review: a prompt like "summarize this
-      // project" opens with parallel read_file / list_directory calls and
-      // must not trip READ_FILE_LOOP before any write/execute action has
-      // fired. This exercises FILE_READ_WINDOW+ consecutive reads with no
-      // prior non-read tool — nothing should fire.
-      for (let i = 0; i < 20; i++) {
+      // A prompt may legitimately inspect several files before acting, but an
+      // unattended agent must not retain an unlimited cold-start exemption.
+      // The first eleven reads are allowed; the twelfth is read-only churn.
+      for (let i = 0; i < 11; i++) {
         const name = i % 2 === 0 ? 'read_file' : 'list_directory';
         const isLoop = service.addAndCheck(
           createToolCallRequestEvent(name, { path: `f${i}` }),
         );
         expect(isLoop).toBe(false);
       }
-      expect(loggers.logLoopDetected).not.toHaveBeenCalledWith(
+
+      const isLoop = service.addAndCheck(
+        createToolCallRequestEvent('read_file', { path: 'f11' }),
+      );
+      expect(isLoop).toBe(true);
+      expect(loggers.logLoopDetected).toHaveBeenCalledWith(
         mockConfig,
         expect.objectContaining({ loop_type: 'read_file_loop' }),
       );

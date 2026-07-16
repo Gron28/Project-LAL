@@ -40,12 +40,12 @@ const MAX_THOUGHT_HISTORY = 50;
 // project" legitimately opens with `list_directory` + several parallel
 // `read_file` calls in a single turn, which previously tripped the detector
 // on its first productive move. 8/15 leaves enough headroom for that shape
-// while still catching pathological read-only churn. Combined with the
-// cold-start exemption below (see `hasSeenNonReadTool`), a turn that has
-// only ever performed read-like actions is treated as exploration, not a
-// loop — once any non-read tool lands, the detector activates.
+// while still catching pathological read-only churn. Opening exploration gets
+// a bounded allowance below; a model must not be able to consume an entire
+// context window by reading forever before its first edit or command.
 const FILE_READ_THRESHOLD = 8;
 const FILE_READ_WINDOW = 15;
+const MAX_INITIAL_READS = 12;
 
 // Action stagnation tracking
 const STAGNATION_THRESHOLD = 8;
@@ -119,9 +119,9 @@ export class LoopDetectionService {
   private shellInspectionStreak = 0;
 
   // Cold-start gate for READ_FILE_LOOP: the opening exploration of a prompt
-  // is almost always read-heavy (list + parallel reads). Until at least one
-  // non-read-like tool fires, a window full of reads is treated as legitimate
-  // exploration rather than loop evidence. Resets per-prompt in reset().
+  // is often read-heavy (list + parallel reads). It is bounded by
+  // MAX_INITIAL_READS so a model that never advances beyond inspection cannot
+  // exhaust the context window. Resets per-prompt in reset().
   private hasSeenNonReadTool = false;
 
   // Non-consecutive global duplicate tracking: counts every (tool, args)
@@ -737,11 +737,13 @@ export class LoopDetectionService {
    * Checks for excessive file read operations without meaningful progress.
    */
   private checkReadFileLoop(): boolean {
-    // Cold-start exemption: if no non-read-like tool has ever fired in this
-    // prompt, the model is still in its opening exploration phase. Treat a
-    // run of reads as legitimate discovery rather than a loop. Once any
-    // write/execute/other tool lands, normal detection resumes.
-    if (!this.hasSeenNonReadTool) {
+    // Allow a bounded initial discovery pass. The previous unlimited
+    // exemption meant a stalled local model could continuously read distinct
+    // files and consume its complete context without ever tripping a guard.
+    if (
+      !this.hasSeenNonReadTool &&
+      this.recentToolCalls.length < MAX_INITIAL_READS
+    ) {
       return false;
     }
 
