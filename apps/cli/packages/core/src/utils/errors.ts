@@ -156,6 +156,9 @@ export function getErrorMessage(error: unknown): string {
  *    errors where the SDK never sees a real HTTP status because the stream
  *    opened with 200 OK and the provider signaled the error mid-stream.
  *    DashScope uses `:HTTP_STATUS/429` as an SSE comment on throttling.
+ * 6. A leading `NNN fetch failed` transport message. Some local OpenAI-
+ *    compatible servers surface a 5xx this way but omit `.status`, which
+ *    would otherwise bypass the normal transient-request retry policy.
  *
  * @returns The HTTP status code (100-599), or undefined if not found.
  */
@@ -186,6 +189,13 @@ export function getErrorStatus(error: unknown): number | undefined {
       if (parsed >= 100 && parsed <= 599) {
         return parsed;
       }
+    }
+
+    const transportMatch = err.message.match(
+      /\b([1-5]\d{2})\s+(?:fetch failed|service unavailable|internal server error)\b/i,
+    );
+    if (transportMatch) {
+      return Number(transportMatch[1]);
     }
   }
 

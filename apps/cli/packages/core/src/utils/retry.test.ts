@@ -1403,6 +1403,10 @@ describe('getErrorStatus', () => {
     expect(getErrorStatus(new Error('upstream :HTTP_STATUS/503'))).toBe(503);
   });
 
+  it('should parse status from opaque local-server transport errors', () => {
+    expect(getErrorStatus(new Error('503 fetch failed'))).toBe(503);
+  });
+
   it('should prefer numeric status fields over HTTP_STATUS/NNN in message', () => {
     const error: HttpError = new Error(':HTTP_STATUS/500');
     error.status = 429;
