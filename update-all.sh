@@ -37,9 +37,9 @@ Connected machines are never modified by surprise. Publishing makes the new
 runtime available through the normal authenticated LAL installer/update path;
 run that path on each connected machine to activate it.
 
-When Tailscale is installed and connected, the standard tailnet HTTPS URL is
-also refreshed to proxy this machine's deployed web UI. This makes the same
-link work from a phone connected to the tailnet after every full update.
+When Tailscale is installed and connected, the LAL tailnet HTTPS URL on :8443
+is refreshed to proxy this machine's deployed web UI. Root HTTPS (443) is
+reserved for the Inbox service and is never changed by this script.
 EOF
 }
 
@@ -65,16 +65,18 @@ refresh_tailscale_ui() {
     return 0
   fi
 
-  # Replace only the default HTTPS listener. Do not reset the complete Serve
-  # configuration: people may have intentionally configured other services.
-  # `off` is harmless when no default listener exists.
-  if ! tailscale serve --https=443 off >/dev/null 2>&1; then
-    echo "==> Tailscale unavailable or not connected; skipping tailnet UI route"
+  # Replace only LAL's dedicated HTTPS listener. Do not reset the complete
+  # Serve configuration: people may have intentionally configured other services.
+  # Root HTTPS (443) belongs to the Inbox app on this host. LAL is deliberately
+  # isolated on :8443; never clear or replace the root listener during an LAL
+  # update.
+  if ! tailscale serve --https=8443 off >/dev/null 2>&1; then
+    echo "==> Tailscale unavailable or not connected; skipping LAL tailnet route"
     return 0
   fi
 
-  echo "==> Refreshing the standard Tailscale URL for the web UI"
-  tailscale serve --https=443 --bg "http://127.0.0.1:${WEB_PORT}"
+  echo "==> Refreshing the :8443 Tailscale URL for the LAL web UI"
+  tailscale serve --https=8443 --bg "http://127.0.0.1:${WEB_PORT}"
   tailscale serve status
 }
 
