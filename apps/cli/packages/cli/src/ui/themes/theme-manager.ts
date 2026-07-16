@@ -17,6 +17,8 @@ import { ShadesOfPurple } from './shades-of-purple.js';
 import { XCode } from './xcode.js';
 import { QwenLight } from './qwen-light.js';
 import { QwenDark } from './qwen-dark.js';
+import { LALDark } from './lal-dark.js';
+import { LALLight } from './lal-light.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -42,7 +44,7 @@ export interface ThemeDisplay {
   isCustom?: boolean;
 }
 
-export const DEFAULT_THEME: Theme = QwenDark;
+export const DEFAULT_THEME: Theme = LALDark;
 export const AUTO_THEME_NAME = 'auto';
 
 function isPathWithinDirectory(parent: string, child: string): boolean {
@@ -62,6 +64,8 @@ class ThemeManager {
 
   constructor() {
     this.availableThemes = [
+      LALDark,
+      LALLight,
       AyuDark,
       AyuLight,
       AtomOneDark,
@@ -166,14 +170,14 @@ class ThemeManager {
 
   /**
    * Detects the terminal's dark/light preference (synchronous) and returns
-   * the corresponding Qwen theme.
+   * the corresponding LAL theme.
    * Used by the theme dialog for instant preview. Prefers the cached
    * async-detected value when available so we stay consistent with the
    * OSC 11 probe performed at startup.
    */
   private resolveAutoTheme(): Theme {
     const detected = this.cachedAutoDetection ?? detectTerminalTheme();
-    return detected === 'light' ? QwenLight : QwenDark;
+    return detected === 'light' ? LALLight : LALDark;
   }
 
   /**
@@ -185,7 +189,7 @@ class ThemeManager {
   async resolveAutoThemeAsync(): Promise<void> {
     const detected = await detectTerminalThemeAsync();
     this.cachedAutoDetection = detected;
-    this.activeTheme = detected === 'light' ? QwenLight : QwenDark;
+    this.activeTheme = detected === 'light' ? LALLight : LALDark;
     debugLogger.info(`Auto-detected theme (async): ${this.activeTheme.name}`);
   }
 
@@ -275,12 +279,13 @@ class ThemeManager {
       }),
     );
 
-    // Separate Qwen themes
-    const qwenThemes = builtInThemes.filter(
-      (theme) => theme.name === QwenLight.name || theme.name === QwenDark.name,
+    // Pin the LAL brand themes to the top of the picker.
+    const brandThemeNames = new Set([LALDark.name, LALLight.name]);
+    const qwenThemes = builtInThemes.filter((theme) =>
+      brandThemeNames.has(theme.name),
     );
     const otherBuiltInThemes = builtInThemes.filter(
-      (theme) => theme.name !== QwenLight.name && theme.name !== QwenDark.name,
+      (theme) => !brandThemeNames.has(theme.name),
     );
 
     // Sort other themes by type and then name

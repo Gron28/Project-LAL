@@ -11,7 +11,7 @@ export type TokenLimitType = 'input' | 'output';
 export const DEFAULT_TOKEN_LIMIT: TokenCount = 200_000; // 200K tokens
 export const DEFAULT_OUTPUT_TOKEN_LIMIT: TokenCount = 32_000; // 32K tokens
 
-export const ESCALATED_MAX_TOKENS: TokenCount = 64_000;
+export const ESCALATED_MAX_TOKENS: TokenCount = 1_000_000;
 
 /**
  * Ceiling on the auto (non-user-configured) output request. Models

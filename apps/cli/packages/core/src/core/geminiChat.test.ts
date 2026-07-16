@@ -8757,13 +8757,17 @@ describe('GeminiChat', async () => {
       const recovery2Config = calls[2]![0].config as {
         maxOutputTokens?: number;
       };
-      // Iteration 1: plenty of room, ceiling binds.
-      expect(recovery1Config.maxOutputTokens).toBe(64_000);
-      // Iteration 2: the stale count-based estimate (frozen at ~69K) would
-      // re-grant the full 64,000; the padded walk (~148K: two 64K partials
-      // + pad) must win, shrinking the grant to roughly
-      // 180,000 − ~148K − 10,000 ≈ 22K.
-      expect(recovery2Config.maxOutputTokens).toBeLessThan(30_000);
+      // Iteration 1: plenty of room. With the escalation ceiling at 1M the
+      // window clamp binds instead: 180,000 − ~5K prompt − 10,000 margin.
+      expect(recovery1Config.maxOutputTokens).toBeGreaterThan(160_000);
+      expect(recovery1Config.maxOutputTokens).toBeLessThanOrEqual(165_000);
+      // Iteration 2: the stale count-based estimate (frozen at ~69K total)
+      // would re-grant nearly the full window again; the padded fresh walk
+      // (which sees both ~64K partials) must win, shrinking the grant by at
+      // least the size of the second partial.
+      expect(recovery2Config.maxOutputTokens).toBeLessThan(
+        recovery1Config.maxOutputTokens! - 60_000,
+      );
       expect(recovery2Config.maxOutputTokens).toBeGreaterThanOrEqual(4_000);
     });
 
@@ -8918,6 +8922,15 @@ describe('GeminiChat', async () => {
     });
 
     it('should skip no-op escalation and recover directly for high-output models', async () => {
+      // With the escalation ceiling at 1M, escalation is a no-op only when
+      // the context window itself binds both grants: a 60K window clamps the
+      // first send and the escalated send to the same room, so the chat must
+      // recover directly (continuation) instead of pointlessly re-sending.
+      vi.mocked(mockConfig.getContentGeneratorConfig).mockReturnValue({
+        authType: AuthType.USE_GEMINI,
+        model: 'gemini-3-pro',
+        contextWindowSize: 60_000,
+      });
       const streams = [
         makeStream([makeChunk([{ text: 'Hello' }], 'MAX_TOKENS')]),
         makeStream([makeChunk([{ text: ' ending.' }], 'STOP')]),
@@ -8960,6 +8973,13 @@ describe('GeminiChat', async () => {
     });
 
     it('retries protocol-tag leaks during direct output recovery', async () => {
+      // Same setup rationale as the direct-recovery test above: a tight
+      // window makes escalation a no-op so recovery is continuation-based.
+      vi.mocked(mockConfig.getContentGeneratorConfig).mockReturnValue({
+        authType: AuthType.USE_GEMINI,
+        model: 'gemini-3-pro',
+        contextWindowSize: 60_000,
+      });
       vi.useFakeTimers();
       try {
         const streams = [

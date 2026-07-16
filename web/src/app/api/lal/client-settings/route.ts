@@ -78,9 +78,13 @@ export function GET(request: Request) {
           maxRetries: 1,
           contextWindowSize,
           ...(Object.keys(customHeaders).length ? { customHeaders } : {}),
-          // Thinking and tool arguments share this budget. 1K was too small
-          // for even a modest write_file call and caused truncated-tool loops.
-          samplingParams: { temperature: 0.2, max_tokens: 8192 },
+          // Deliberately NO max_tokens here: a managed value is treated by the
+          // CLI as an explicit user ceiling (min() with everything else wins),
+          // which silently capped every reply at 8K and defeated /tokens. The
+          // CLI's own window clamp (clampOutputTokensToWindow) already sizes
+          // each request to the room left in the context window — that is the
+          // honest budget for a locally-served model.
+          samplingParams: { temperature: 0.2 },
           // Native /rc turns mirror visible model reasoning into the owner's
           // local run ledger. This is model-provided reasoning output, not a
           // claim to expose hidden provider internals.
@@ -103,18 +107,35 @@ export function GET(request: Request) {
       // every turn. Keep the complete daily coding loop and make every omitted
       // capability an explicit future product decision.
       tools: {
+        // Desktop automation contributes 35 schemas and exhausted Gemma's
+        // effective request window before it could emit a useful token. A
+        // coding project run does not need OS-level mouse/keyboard control.
+        computerUse: { enabled: false },
         core: [
           "read_file",
           "edit",
           "write_file",
           "run_shell_command",
+          // Orientation tools: a model that cannot list or search the project
+          // cannot ground its edits, and small models degrade into repeating
+          // themselves instead of acting. Keep the discovery loop intact.
+          "grep_search",
+          "glob",
+          "list_directory",
+          "todo_write",
+          // Keep orchestration available and keep research deferred behind
+          // tool_search. The model pays for one coordinator schema up front,
+          // not the full inherited automation catalog.
+          "tool_search",
+          "web_search",
+          "web_fetch",
+          "agent",
+          "task_stop",
         ],
         // Some inherited synthetic tools intentionally bypass `tools.core`.
         // Exclude them explicitly so their schemas cannot consume most of a
         // 32k local-model turn before the user's first token is processed.
         exclude: [
-          "agent",
-          "task_stop",
           "send_message",
           "skill",
           "ask_user_question",
@@ -130,7 +151,9 @@ export function GET(request: Request) {
       },
       context: { fileName: ["LAL.md", "AGENTS.md", "QWEN.md"] },
       security: { auth: { selectedType: "openai" } },
-      model: { name: preferred },
+      // Broad project prompts need room for research -> plan -> implement ->
+      // judge -> repair. Simple prompts still stop as soon as they are done.
+      model: { name: preferred, maxSessionTurns: 120 },
       modelProviders: { openai: models },
     },
     { headers: { "content-type": "application/json; charset=utf-8" } },

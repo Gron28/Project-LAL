@@ -2347,7 +2347,7 @@ describe('AnthropicContentGenerator', () => {
         const [anthropicRequest] =
           anthropicState.lastCreateArgs as AnthropicCreateArgs;
         expect(anthropicRequest).toEqual(
-          expect.objectContaining({ max_tokens: 64000 }),
+          expect.objectContaining({ max_tokens: 65536 }),
         );
       });
 
@@ -2382,7 +2382,7 @@ describe('AnthropicContentGenerator', () => {
           const [anthropicRequest] =
             anthropicState.lastCreateArgs as AnthropicCreateArgs;
           expect(anthropicRequest).toEqual(
-            expect.objectContaining({ max_tokens: 64000 }),
+            expect.objectContaining({ max_tokens: 65536 }),
           );
         }
       });
@@ -2481,7 +2481,7 @@ describe('AnthropicContentGenerator', () => {
         const [anthropicRequest] =
           anthropicState.lastCreateArgs as AnthropicCreateArgs;
         expect(anthropicRequest).toEqual(
-          expect.objectContaining({ max_tokens: 64000 }),
+          expect.objectContaining({ max_tokens: 65536 }),
         );
       });
     });

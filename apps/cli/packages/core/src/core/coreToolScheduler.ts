@@ -1182,6 +1182,18 @@ export class CoreToolScheduler {
   private isFinalizingToolCalls = false;
   private isScheduling = false;
   private validationRetryCounts = new Map<string, number>();
+  // Exact-repeat guard for deterministic workspace mutations (Kind.Edit:
+  // edit/write_file/notebook_edit). An identical (tool, args) mutation re-run
+  // can never produce new information — small local models get stuck
+  // repeating one at temperature 0 (observed 12 identical rounds on the web
+  // loop before the same guard shipped there, web/src/lib/toolloop.ts).
+  // Signatures are recorded when a call is actually dispatched and the set is
+  // scoped to one user prompt (prompt_id), so a user re-requesting the same
+  // change later starts clean. Repeats are refused with a corrective error
+  // (the model can self-correct) well before the always-on 5-identical-calls
+  // kill switch ends the whole turn.
+  private executedMutationSigs = new Set<string>();
+  private mutationSigsPromptId: string | undefined;
   private autoModeFallbackCallIds = new Set<string>();
   // Tool span lifecycle now spans validating → awaiting_approval → executing
   // → terminal, so we hold the span across method boundaries by callId.
@@ -2122,6 +2134,35 @@ export class CoreToolScheduler {
 
         // Reset all validation retry counters for this tool since it passed validation
         this.clearRetryCountsForTool(reqInfo.name);
+
+        // Refuse an exact repeat of a mutation already dispatched for this
+        // prompt: re-running it is deterministic and cannot change anything,
+        // so answer with a corrective error the model can act on instead of
+        // silently executing a no-op (or letting the rut run into the
+        // 5-identical-calls kill switch).
+        if (toolInstance.kind === Kind.Edit) {
+          if (reqInfo.prompt_id !== this.mutationSigsPromptId) {
+            this.mutationSigsPromptId = reqInfo.prompt_id;
+            this.executedMutationSigs.clear();
+          }
+          const mutationSig = `${canonicalName}:${JSON.stringify(reqInfo.args ?? {})}`;
+          if (this.executedMutationSigs.has(mutationSig)) {
+            newToolCalls.push({
+              status: 'error',
+              request: reqInfo,
+              tool: toolInstance,
+              response: createErrorResponse(
+                reqInfo,
+                new Error(
+                  `You already made this exact ${reqInfo.name} call in this task — the file already reflects it (or it deterministically failed), so repeating it cannot change anything. The call was NOT run again. Read the file to see its actual current state, then take a different action: a different edit, or rewrite the file with write_file.`,
+                ),
+                ToolErrorType.EXECUTION_FAILED,
+              ),
+              durationMs: 0,
+            });
+            continue;
+          }
+        }
 
         newToolCalls.push({
           status: 'validating',
@@ -3269,6 +3310,18 @@ export class CoreToolScheduler {
 
     const scheduledCall = toolCall;
     const { callId, name: toolName } = scheduledCall.request;
+
+    // Record dispatched mutations for the exact-repeat guard in _schedule.
+    // Recorded here (not at schedule time) so calls the user denies or
+    // cancels never count as "already made".
+    if (
+      scheduledCall.tool?.kind === Kind.Edit &&
+      scheduledCall.request.prompt_id === this.mutationSigsPromptId
+    ) {
+      this.executedMutationSigs.add(
+        `${canonicalToolName(toolName)}:${JSON.stringify(scheduledCall.request.args ?? {})}`,
+      );
+    }
 
     // The tool span is opened in `_schedule` so it covers validating →
     // awaiting_approval → executing in one span. Reuse it here. If it's

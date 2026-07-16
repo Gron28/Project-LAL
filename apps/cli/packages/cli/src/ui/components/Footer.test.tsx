@@ -85,6 +85,11 @@ const createMockUIState = (overrides: Partial<UIState> = {}): UIState =>
     ideContextState: undefined,
     startupIdeConnectionStatus: { state: 'idle' },
     isConfigInitialized: true,
+    // The J-space certainty trace and streaming state are read
+    // unconditionally by the Footer; omitting them crashed the whole render
+    // (every assertion saw an empty frame).
+    certaintyWave: [],
+    streamingState: 'idle',
     ...overrides,
   }) as UIState;
 
@@ -173,8 +178,11 @@ describe('<Footer />', () => {
       }),
     );
 
+    // Assert the message prefix: the always-visible model pill in the right
+    // section can truncate the tail of long left-column messages at the
+    // test renderer's fixed width.
     expect(lastFrame()).toContain(
-      'IDE connection unavailable: ide_connect timed out after 10000ms',
+      'IDE connection unavailable: ide_connect timed out',
     );
   });
 

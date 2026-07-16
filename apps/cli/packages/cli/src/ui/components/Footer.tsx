@@ -24,6 +24,7 @@ import { useVimModeState } from '../contexts/VimModeContext.js';
 import { GeminiSpinner } from './GeminiRespondingSpinner.js';
 import { GoalPill, useFooterGoalState } from './GoalPill.js';
 import { CronPill, useFooterCronTaskCount } from './CronPill.js';
+import { useGatewayStats } from '../hooks/useGatewayStats.js';
 import { t } from '../../i18n/index.js';
 
 export const Footer: React.FC = () => {
@@ -119,7 +120,53 @@ export const Footer: React.FC = () => {
     <Text color={theme.text.secondary}>{t('? for shortcuts')}</Text>
   );
 
+  const gatewayStats = useGatewayStats();
+  const isRunning = uiState.streamingState !== 'idle';
+  const configuredModel = config.getModel();
+  // Host truth beats client assumption: flag when the gateway is serving a
+  // different model than the one this session is configured for.
+  const modelMismatch =
+    gatewayStats?.servingModel &&
+    configuredModel &&
+    gatewayStats.servingModel !== configuredModel;
+
   const rightItems: Array<{ key: string; node: React.ReactNode }> = [];
+  // Always-visible model + run-state: `▶` while a turn is running, `●` when
+  // the model is resident on the host GPU, `○` when the GPU is cold.
+  if (configuredModel) {
+    const stateGlyph = isRunning
+      ? '▶'
+      : gatewayStats?.servingModel === configuredModel
+        ? '●'
+        : '○';
+    rightItems.push({
+      key: 'model',
+      node: (
+        <Text
+          color={isRunning ? theme.status.success : theme.text.secondary}
+          wrap="truncate"
+        >
+          {`${stateGlyph} ${configuredModel}`}
+          {modelMismatch ? (
+            <Text color={theme.status.warning}>
+              {` (host: ${gatewayStats!.servingModel})`}
+            </Text>
+          ) : null}
+        </Text>
+      ),
+    });
+  }
+  if (gatewayStats && gatewayStats.vramUsedGb != null) {
+    const vramHot = (gatewayStats.vramPct ?? 0) >= 90;
+    rightItems.push({
+      key: 'gpu',
+      node: (
+        <Text color={vramHot ? theme.status.warning : theme.text.secondary}>
+          {`GPU ${gatewayStats.gpuPct ?? 0}% · ${gatewayStats.vramUsedGb}/${gatewayStats.vramTotalGb ?? '?'}G`}
+        </Text>
+      ),
+    });
+  }
   if (sandboxInfo) {
     rightItems.push({
       key: 'sandbox',
@@ -211,7 +258,10 @@ export const Footer: React.FC = () => {
           )}
         {(certainty.length > 0 || uiState.streamingState !== 'idle') && (
           <Text color={theme.text.secondary} wrap="truncate">
-            {`J-space ${certaintyGraph || '···'}${certaintyAverage == null ? ' waiting' : ` ${Math.round(certaintyAverage * 100)}%`}`}
+            {/* Honest gap label: llama-server rejects logprobs together with
+                streamed tool definitions, so tool-carrying turns have no
+                confidence signal — say so instead of "waiting" forever. */}
+            {`J-space ${certaintyGraph || '···'}${certaintyAverage == null ? ' n/a (logprobs unavailable with tools)' : ` ${Math.round(certaintyAverage * 100)}%`}`}
           </Text>
         )}
         {/* Built-in worktree indicator. Shown by default whenever a

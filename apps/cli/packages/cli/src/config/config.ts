@@ -2059,8 +2059,10 @@ export async function loadCliConfig(
       ...settings.ui?.accessibility,
       screenReader,
     },
+    // Default ON: live tok/s is part of the always-visible runtime truth
+    // (LAL transparency baseline); opt out with ui.showResponseTokensPerSecond=false.
     showResponseTokensPerSecond:
-      settings.ui?.showResponseTokensPerSecond === true,
+      settings.ui?.showResponseTokensPerSecond !== false,
     telemetry: telemetrySettings,
     // Ordinary interactive TUI defers telemetry until after first paint. Auth
     // events emitted before the deferred init are an accepted startup-latency

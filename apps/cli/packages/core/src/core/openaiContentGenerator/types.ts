@@ -79,6 +79,37 @@ export interface RequestContext {
    * emitted after the reasoning thought if no tagged thought appears.
    */
   pendingContentParts?: Part[];
+  /**
+   * Rolling tail of this stream's visible + reasoning text, kept solely so a
+   * buried textual tool call (Qwen3 GitHub #1817: the model writes a
+   * well-formed <tool_call>{...}</tool_call> block as plain text instead of a
+   * structured tool_calls delta) can be recovered when the stream finishes
+   * with no native tool calls. Bounded; never rendered.
+   */
+  recoveryTextTail?: string;
+  /**
+   * Per-tool-call-index count of argument chars already reported via
+   * toolCallProgress updates, so progress is emitted as deltas and throttled.
+   * Streaming tool-call arguments are otherwise invisible until
+   * finish_reason — minutes of "Thinking…" while a big write_file generates.
+   */
+  toolCallProgressEmittedChars?: Map<number, number>;
+}
+
+/**
+ * Live progress for a tool call whose arguments are still streaming.
+ * Attached to the converted response as a side-channel (never part of
+ * history) and surfaced to the UI as a ToolCallProgress event.
+ */
+export interface ToolCallProgressUpdate {
+  /** Tool name, once known from the stream metadata. */
+  name?: string;
+  /** Total argument chars accumulated so far for this call. */
+  argsChars: number;
+  /** New chars since the last progress update (for live token estimation). */
+  deltaChars: number;
+  /** Sanitized tail of the argument buffer for display. */
+  argsTail: string;
 }
 
 export interface ErrorHandler {

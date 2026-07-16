@@ -5824,3 +5824,152 @@ describe('modality filtering', () => {
     expect(parts[0].text).toContain('image file');
   });
 });
+
+describe('buried textual tool-call recovery (Qwen3 #1817)', () => {
+  const baseContext = (): RequestContext => ({
+    model: 'qwen3-4b-stock',
+    modalities: { image: false, pdf: false, audio: false, video: false },
+    startTime: 0,
+    toolCallParser: new StreamingToolCallParser(),
+  });
+
+  const chunk = (
+    delta: Record<string, unknown>,
+    finishReason: string | null = null,
+  ): OpenAI.Chat.ChatCompletionChunk =>
+    ({
+      id: 'chatcmpl-buried',
+      object: 'chat.completion.chunk',
+      created: 1,
+      model: 'qwen3-4b-stock',
+      choices: [{ index: 0, delta, finish_reason: finishReason }],
+    }) as unknown as OpenAI.Chat.ChatCompletionChunk;
+
+  const functionCallsOf = (response: GenerateContentResponse) =>
+    (response.candidates?.[0]?.content?.parts ?? []).filter(
+      (part) => 'functionCall' in part && part.functionCall,
+    );
+
+  it('recovers a <tool_call> block streamed as plain text across chunks', () => {
+    const ctx = baseContext();
+    // The exact live failure shape: a well-formed tool_call block emitted as
+    // ordinary content deltas, then a plain "stop" finish with no
+    // delta.tool_calls anywhere in the stream.
+    OpenAIContentConverter.convertOpenAIChunkToGemini(
+      chunk({ content: 'Let me read that file.\n<tool_call>\n{"name": "read_file", ' }),
+      ctx,
+    );
+    OpenAIContentConverter.convertOpenAIChunkToGemini(
+      chunk({ content: '"arguments": {"absolute_path": "/tmp/a.ts"}}\n</tool_call>' }),
+      ctx,
+    );
+    const final = OpenAIContentConverter.convertOpenAIChunkToGemini(
+      chunk({}, 'stop'),
+      ctx,
+    );
+
+    const calls = functionCallsOf(final);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].functionCall?.name).toBe('read_file');
+    expect(calls[0].functionCall?.args).toEqual({
+      absolute_path: '/tmp/a.ts',
+    });
+  });
+
+  it('recovers a buried call from the reasoning channel', () => {
+    const ctx = baseContext();
+    OpenAIContentConverter.convertOpenAIChunkToGemini(
+      chunk({
+        reasoning_content:
+          'I should search first. <tool_call>{"name": "grep_search", "arguments": {"pattern": "foo"}}</tool_call>',
+      }),
+      ctx,
+    );
+    const final = OpenAIContentConverter.convertOpenAIChunkToGemini(
+      chunk({}, 'stop'),
+      ctx,
+    );
+
+    const calls = functionCallsOf(final);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].functionCall?.name).toBe('grep_search');
+    expect(calls[0].functionCall?.args).toEqual({ pattern: 'foo' });
+  });
+
+  it('does not double-emit when native tool calls arrived', () => {
+    const ctx = baseContext();
+    OpenAIContentConverter.convertOpenAIChunkToGemini(
+      chunk({
+        content:
+          'Mentioning <tool_call>{"name": "read_file", "arguments": {}}</tool_call> in text.',
+      }),
+      ctx,
+    );
+    OpenAIContentConverter.convertOpenAIChunkToGemini(
+      chunk({
+        tool_calls: [
+          {
+            index: 0,
+            id: 'call_native',
+            function: { name: 'write_file', arguments: '{"path":"b.ts"}' },
+          },
+        ],
+      }),
+      ctx,
+    );
+    const final = OpenAIContentConverter.convertOpenAIChunkToGemini(
+      chunk({}, 'tool_calls'),
+      ctx,
+    );
+
+    const calls = functionCallsOf(final);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].functionCall?.name).toBe('write_file');
+  });
+
+  it('recovers <function=name> blocks in non-streaming responses', () => {
+    const response = {
+      id: 'chatcmpl-nonstream',
+      object: 'chat.completion',
+      created: 1,
+      model: 'qwen3-4b-stock',
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content:
+              'Running it now. <function=run_shell_command>{"command": "npm test"}</function>',
+          },
+          finish_reason: 'stop',
+        },
+      ],
+    } as unknown as OpenAI.Chat.ChatCompletion;
+
+    const result = OpenAIContentConverter.convertOpenAIResponseToGemini(
+      response,
+      {
+        model: 'qwen3-4b-stock',
+        modalities: { image: false, pdf: false, audio: false, video: false },
+        startTime: 0,
+      },
+    );
+    const calls = (result.candidates?.[0]?.content?.parts ?? []).filter(
+      (part) => 'functionCall' in part && part.functionCall,
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].functionCall?.name).toBe('run_shell_command');
+    expect(calls[0].functionCall?.args).toEqual({ command: 'npm test' });
+  });
+
+  it('skips malformed JSON and dedupes identical buried calls', () => {
+    const recovered = OpenAIContentConverter.recoverTextToolCalls(
+      '<tool_call>{"name": "read_file", "arguments": {"p": 1}}</tool_call>' +
+        '<tool_call>{"name": "read_file", "arguments": {"p": 1}}</tool_call>' +
+        '<tool_call>{not json}</tool_call>',
+    );
+    expect(recovered).toEqual([
+      { name: 'read_file', arguments: '{"p":1}' },
+    ]);
+  });
+});

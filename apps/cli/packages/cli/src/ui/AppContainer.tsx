@@ -1888,6 +1888,7 @@ export const AppContainer = (props: AppContainerProps) => {
     pendingToolCalls,
     streamingResponseLengthRef,
     isReceivingContent,
+    liveToolCallProgress,
   } = useGeminiStream(
     config.getGeminiClient(),
     historyManager.history,
@@ -3471,9 +3472,12 @@ export const AppContainer = (props: AppContainerProps) => {
   const runtimeLabel = runtimeStateLabel(
     computeRuntimeState(streamingState, hasExecutingTool, hasStreamedOutput),
   );
+  // A tool call whose arguments are still streaming is the most specific
+  // truth available — show it over the generic runtime label.
+  const statusLabel = liveToolCallProgress ?? runtimeLabel;
   const runtimePhrases = useMemo(
-    () => (runtimeLabel ? [runtimeLabel] : undefined),
-    [runtimeLabel],
+    () => (statusLabel ? [statusLabel] : undefined),
+    [statusLabel],
   );
 
   const {

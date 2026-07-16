@@ -37,6 +37,7 @@ import {
 import type { LoopType } from '../telemetry/types.js';
 import type { ActiveGoal } from '../goals/activeGoalStore.js';
 import { getProviderToolCallId } from './toolCallIdUtils.js';
+import type { ToolCallProgressUpdate } from './openaiContentGenerator/types.js';
 
 const ERROR_REPORT_HISTORY_TAIL_COUNT = 8;
 const ERROR_REPORT_TEXT_PREVIEW_CHARS = 200;
@@ -55,6 +56,9 @@ export interface ServerTool {
 export enum GeminiEventType {
   Content = 'content',
   ToolCallRequest = 'tool_call_request',
+  /** Argument-streaming progress for a tool call still being generated —
+   *  surfaces name/size/tail live instead of dead air until finish_reason. */
+  ToolCallProgress = 'tool_call_progress',
   ToolCallResponse = 'tool_call_response',
   ToolCallConfirmation = 'tool_call_confirmation',
   UserCancelled = 'user_cancelled',
@@ -409,6 +413,11 @@ export type ServerGeminiActiveGoalEvent = {
   value: ActiveGoal | null;
 };
 
+export type ServerGeminiToolCallProgressEvent = {
+  type: GeminiEventType.ToolCallProgress;
+  value: ToolCallProgressUpdate;
+};
+
 // The original union type, now composed of the individual types
 export type ServerGeminiStreamEvent =
   | ServerGeminiActiveGoalEvent
@@ -425,6 +434,7 @@ export type ServerGeminiStreamEvent =
   | ServerGeminiModelFallbackEvent
   | ServerGeminiThoughtEvent
   | ServerGeminiToolCallConfirmationEvent
+  | ServerGeminiToolCallProgressEvent
   | ServerGeminiToolCallRequestEvent
   | ServerGeminiToolCallResponseEvent
   | ServerGeminiUserCancelledEvent
@@ -534,6 +544,20 @@ export class Turn {
         const text = getResponseText(resp);
         if (text) {
           yield { type: GeminiEventType.Content, value: text };
+        }
+
+        // Surface live argument-streaming progress for tool calls still
+        // being generated (side-channel from the OpenAI-compat converter;
+        // never part of history).
+        const toolCallProgress = (
+          resp as GenerateContentResponse & {
+            toolCallProgress?: ToolCallProgressUpdate[];
+          }
+        ).toolCallProgress;
+        if (toolCallProgress) {
+          for (const progress of toolCallProgress) {
+            yield { type: GeminiEventType.ToolCallProgress, value: progress };
+          }
         }
 
         // Handle function calls (requesting tool execution)

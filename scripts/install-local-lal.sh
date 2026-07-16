@@ -9,6 +9,26 @@ HOST="${LAL_HOST:-http://127.0.0.1:8770}"
 LAL_HOME="${LAL_HOME:-$HOME/.lal}"
 TOKEN_FILE="${LAL_TOKEN_FILE:-$ROOT/web/.data/cli-token}"
 TARGET="${LAL_BIN_DIR:-$HOME/.local/bin}"
+CLI_ROOT="$ROOT/apps/cli"
+CLI_BUNDLE="$CLI_ROOT/dist/cli.js"
+
+# A local-source install must not silently point `lal` at yesterday's bundle.
+# `npm run build` compiles workspaces but does not refresh dist/cli.js; the
+# separate bundle step is the executable used by bin/lal. Rebuild whenever the
+# relevant source/config is newer, with an escape hatch for recovery installs.
+bundle_stale=false
+if [ ! -f "$CLI_BUNDLE" ]; then
+  bundle_stale=true
+elif [ "$CLI_ROOT/package.json" -nt "$CLI_BUNDLE" ] || [ "$CLI_ROOT/package-lock.json" -nt "$CLI_BUNDLE" ]; then
+  bundle_stale=true
+elif find "$CLI_ROOT/packages/core/src" "$CLI_ROOT/packages/cli/src" "$CLI_ROOT/scripts" \
+  -type f -newer "$CLI_BUNDLE" -print -quit | grep -q .; then
+  bundle_stale=true
+fi
+if [ "$bundle_stale" = true ] && [ "${LAL_SKIP_CLI_BUILD:-0}" != "1" ]; then
+  echo "CLI sources changed; rebuilding the runtime bundle..."
+  (cd "$CLI_ROOT" && npm run build && npm run bundle)
+fi
 
 [ -f "$TOKEN_FILE" ] || { echo "LAL pairing token is unavailable. Start the host first." >&2; exit 1; }
 command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }

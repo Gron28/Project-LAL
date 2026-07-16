@@ -1587,6 +1587,9 @@ export class Config {
   // restore if thinking is re-enabled later. See applyCodeModePreset().
   private activeCodeMode: string | undefined;
   private stashedReasoning: ContentGeneratorConfig['reasoning'] | undefined;
+  /** Sampling-params keys explicitly set by the user (e.g. /tokens); mode
+   * presets and managed defaults must not overwrite them. */
+  private readonly pinnedSamplingKeys = new Set<string>();
 
   private modelsConfig!: ModelsConfig;
   private readonly modelProvidersConfig?: ModelProvidersConfig;
@@ -3528,12 +3531,32 @@ export class Config {
    * ContentGeneratorConfig(s), the same way setReasoningEffort() merges a
    * `reasoning` patch. Used by `/mode` to apply a preset's temperature/token
    * budget without clobbering other provider-specific samplingParams keys.
+   *
+   * `pin: true` marks the patch's keys as user-set (e.g. `/tokens`): later
+   * calls with `respectPins: true` (mode presets, managed defaults) skip
+   * pinned keys, so an explicit user choice survives a `/mode` switch instead
+   * of being silently reset to the preset budget.
    */
   setSamplingOverride(
     patch: Partial<NonNullable<ContentGeneratorConfig['samplingParams']>>,
+    options?: { pin?: boolean; respectPins?: boolean },
   ): void {
+    let effective = patch;
+    if (options?.respectPins && this.pinnedSamplingKeys.size > 0) {
+      effective = Object.fromEntries(
+        Object.entries(patch).filter(
+          ([key]) => !this.pinnedSamplingKeys.has(key),
+        ),
+      );
+    }
+    if (options?.pin) {
+      for (const key of Object.keys(patch)) {
+        this.pinnedSamplingKeys.add(key);
+      }
+    }
+    if (Object.keys(effective).length === 0) return;
     this.forEachLiveContentGeneratorConfig((cfg) => {
-      cfg.samplingParams = { ...(cfg.samplingParams ?? {}), ...patch };
+      cfg.samplingParams = { ...(cfg.samplingParams ?? {}), ...effective };
     });
   }
 
@@ -3586,10 +3609,15 @@ export class Config {
   applyCodeModePreset(name: string, preset: CodeModePreset): void {
     this.activeCodeMode = name;
     this.setMaxSessionTurns(preset.maxRounds);
-    this.setSamplingOverride({
-      temperature: preset.temperature,
-      max_tokens: preset.maxTokens,
-    });
+    this.setSamplingOverride(
+      {
+        temperature: preset.temperature,
+        max_tokens: preset.maxTokens,
+      },
+      // A user's explicit /tokens (or other pinned sampling choice) outranks
+      // the preset budget — switching modes must not silently shrink it.
+      { respectPins: true },
+    );
     this.setContextWindowOverride(preset.ctx);
     this.setThinkingEnabled(preset.think);
     this.setAppendSystemPrompt(preset.addendum || undefined);
@@ -6661,6 +6689,10 @@ export class Config {
     await registerLazy(ToolNames.WEB_FETCH, async () => {
       const { WebFetchTool } = await import('../tools/web-fetch.js');
       return new WebFetchTool(this);
+    });
+    await registerLazy(ToolNames.WEB_SEARCH, async () => {
+      const { WebSearchTool } = await import('../tools/web-search.js');
+      return new WebSearchTool();
     });
     if (this.isArtifactEnabled()) {
       await registerLazy(ToolNames.ARTIFACT, async () => {

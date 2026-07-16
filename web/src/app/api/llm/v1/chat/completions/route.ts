@@ -12,23 +12,107 @@ const LAL_TERMINAL_TOOLS = new Set([
   "edit",
   "write_file",
   "run_shell_command",
+  // Orientation tools: without list/search the model cannot discover the
+  // project it is asked to change, which manifested as repeat-loops instead
+  // of tool calls.
+  "grep_search",
+  "glob",
+  "list_directory",
+  "todo_write",
+  // One-chat project orchestration. These are deliberately the only larger
+  // synthetic schemas admitted for managed terminals; teams/workflows/CUA
+  // remain outside this small-model boundary.
+  "tool_search",
+  "agent",
+  "task_stop",
+  "web_search",
+  "web_fetch",
 ]);
+
+// Budget guards, not documentation removal: a small local model needs the
+// real tool contract to emit correct native tool_calls, but inherited prose
+// must not consume most of a 32k turn.
+const TOOL_DESCRIPTION_MAX_CHARS = 700;
+const PARAM_DESCRIPTION_MAX_CHARS = 240;
+
+function trimDescription(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text) return null;
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const boundary = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("\n"));
+  return `${boundary > max * 0.5 ? cut.slice(0, boundary + 1) : cut}…`;
+}
 
 function asCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
 }
 
-/** Keep the executable tool contract while removing inherited prose that can
- * consume thousands of prompt tokens on a small local model. Tool names,
- * parameter names, types, required fields, enums, and structural constraints
- * are preserved; only documentation-only JSON Schema annotations are removed. */
+const OLLAMA_CLI_CONTEXT = 16384;
+
+/** Ollama's OpenAI-compatible endpoint silently starts an unloaded model with
+ * its 4096-token default. The CLI can request 16K correctly and still receive
+ * a 4095-token prompt plus one unusable output token. Prime only when the
+ * resident runner is missing or too small; subsequent turns reuse it. */
+async function ensureOllamaCliContext(model: string): Promise<void> {
+  try {
+    const current = await fetch("http://127.0.0.1:11434/api/ps", {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (current.ok) {
+      const payload = await current.json() as {
+        models?: Array<{ name?: string; context_length?: number }>;
+      };
+      const resident = payload.models?.find((item) => item.name === model);
+      if ((resident?.context_length ?? 0) >= OLLAMA_CLI_CONTEXT) return;
+    }
+
+    const preload = await fetch("http://127.0.0.1:11434/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "" }],
+        stream: false,
+        think: false,
+        keep_alive: "5m",
+        options: {
+          num_ctx: OLLAMA_CLI_CONTEXT,
+          num_predict: 1,
+          temperature: 0,
+        },
+      }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!preload.ok) {
+      throw new Error(`Ollama context preload failed: HTTP ${preload.status}`);
+    }
+    await preload.arrayBuffer();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not prepare ${model} with ${OLLAMA_CLI_CONTEXT} context: ${message}`);
+  }
+}
+
+/** Keep the executable tool contract AND its meaning. Tool names, parameter
+ * names, types, required fields, enums, and structural constraints are
+ * preserved; descriptions are kept but length-bounded, and purely decorative
+ * annotations (title/examples/$schema) are removed. Stripping descriptions
+ * entirely left 4B models with undocumented tools they could not use —
+ * the direct cause of buried/looping tool calls. */
 function compactToolSchema(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(compactToolSchema);
   if (!value || typeof value !== "object") return value;
   const source = value as Record<string, unknown>;
   const compact: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(source)) {
-    if (key === "description" || key === "title" || key === "examples" || key === "$schema") continue;
+    if (key === "title" || key === "examples" || key === "$schema") continue;
+    if (key === "description") {
+      const trimmed = trimDescription(child, PARAM_DESCRIPTION_MAX_CHARS);
+      if (trimmed) compact[key] = trimmed;
+      continue;
+    }
     compact[key] = compactToolSchema(child);
   }
   return compact;
@@ -51,7 +135,7 @@ function compactTools(value: unknown): unknown {
       ...entry,
       function: {
         ...functionDef,
-        description: `Use ${name} when needed.`,
+        description: trimDescription(functionDef.description, TOOL_DESCRIPTION_MAX_CHARS) ?? `Use ${name} when needed.`,
         ...(Object.hasOwn(functionDef, "parameters") ? { parameters: compactToolSchema(functionDef.parameters) } : {}),
       },
     };
@@ -127,6 +211,7 @@ export async function POST(request: Request) {
       // pinned llama.cpp build. Stop our server so Ollama owns the GPU, then
       // use Ollama's OpenAI-compatible endpoint below.
       stopServing();
+      await ensureOllamaCliContext(model);
     } else {
       await ensureServing(model, 32768);
     }

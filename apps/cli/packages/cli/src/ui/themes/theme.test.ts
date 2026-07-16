@@ -88,8 +88,8 @@ describe('themeManager.loadCustomThemes', () => {
     themeManager.loadCustomThemes({ 'Legacy Custom Theme': legacyTheme });
     const result = themeManager.getTheme('Legacy Custom Theme')!;
 
-    // Should use DEFAULT_THEME (QwenDark) values for missing fields
-    expect(result.colors.DiffAdded).toBe('#AAD94C');
+    // Should use DEFAULT_THEME (LALDark) values for missing fields
+    expect(result.colors.DiffAdded).toBe('#55E06F');
     expect(result.colors.DiffRemoved).toBe('#F26D78');
     expect(result.colors.AccentBlue).toBe(legacyTheme.AccentBlue);
     expect(result.name).toBe(legacyTheme.name);

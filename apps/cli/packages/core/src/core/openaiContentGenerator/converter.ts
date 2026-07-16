@@ -22,7 +22,11 @@ import type OpenAI from 'openai';
 import { safeJsonParse } from '../../utils/safeJsonParse.js';
 import { createDebugLogger } from '../../utils/debugLogger.js';
 import { createOpenAIReasoningThoughtPart } from '../../utils/thoughtUtils.js';
-import type { RequestContext, StreamingTextDeltaState } from './types.js';
+import type {
+  RequestContext,
+  StreamingTextDeltaState,
+  ToolCallProgressUpdate,
+} from './types.js';
 import { parseTaggedThinkingText } from './taggedThinkingParser.js';
 import {
   convertSchema,
@@ -202,6 +206,77 @@ function normalizeStreamingTextDelta(
   }
   state.emittedLength += rawDelta.length;
   return rawDelta;
+}
+
+// Documented cross-version Qwen3 failure (Qwen3 GitHub #1817, vLLM #39056):
+// the model sometimes drafts a well-formed <tool_call>{...}</tool_call> block
+// as plain reasoning text instead of emitting the real structured tool_calls
+// delta — the turn then ends in total silence (no error, no tool call), and
+// the model re-emits the same message next turn, producing a repeat loop.
+// Ported from the web tool loop's recovery (web/src/lib/toolloop.ts), which
+// eliminated this failure on the server path. Only explicit tool tags are
+// matched so normal prose can never be mistaken for a workspace mutation.
+const BURIED_TOOL_CALL_RE = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/g;
+const FUNCTION_TOOL_CALL_RE =
+  /<function=([a-zA-Z0-9_-]+)>\s*(\{[\s\S]*?\})\s*<\/function>/g;
+
+/** Bound on the per-stream text tail scanned for buried tool calls. */
+const RECOVERY_TEXT_TAIL_MAX_CHARS = 262_144;
+
+/** Minimum new argument chars between two tool-call progress updates. */
+const TOOL_CALL_PROGRESS_CHUNK_CHARS = 128;
+/** Display tail length carried on each tool-call progress update. */
+const TOOL_CALL_PROGRESS_TAIL_CHARS = 80;
+
+export function appendRecoveryTextTail(
+  context: RequestContext,
+  text: string,
+): void {
+  if (!text) return;
+  const combined = (context.recoveryTextTail ?? '') + text;
+  context.recoveryTextTail =
+    combined.length > RECOVERY_TEXT_TAIL_MAX_CHARS
+      ? combined.slice(-RECOVERY_TEXT_TAIL_MAX_CHARS)
+      : combined;
+}
+
+export function recoverTextToolCalls(
+  ...texts: Array<string | undefined>
+): Array<{ name: string; arguments: string }> {
+  const out: Array<{ name: string; arguments: string }> = [];
+  for (const text of texts) {
+    if (!text) continue;
+    for (const match of text.matchAll(BURIED_TOOL_CALL_RE)) {
+      try {
+        const parsed = JSON.parse(match[1]) as {
+          name?: unknown;
+          arguments?: unknown;
+        };
+        if (parsed && typeof parsed.name === 'string') {
+          out.push({
+            name: parsed.name,
+            arguments: JSON.stringify(parsed.arguments ?? {}),
+          });
+        }
+      } catch {
+        // not valid JSON — skip, don't guess
+      }
+    }
+    for (const match of text.matchAll(FUNCTION_TOOL_CALL_RE)) {
+      try {
+        out.push({ name: match[1], arguments: JSON.stringify(JSON.parse(match[2])) });
+      } catch {
+        // not valid JSON — skip, don't guess
+      }
+    }
+  }
+  return out.filter(
+    (call, index, all) =>
+      all.findIndex(
+        (other) =>
+          other.name === call.name && other.arguments === call.arguments,
+      ) === index,
+  );
 }
 
 /**
@@ -1134,6 +1209,28 @@ export function convertOpenAIResponseToGemini(
           });
         }
       }
+    } else {
+      // No native tool calls: recover any buried textual tool call
+      // (Qwen3 #1817) so the tool actually runs. Same mitigation as the
+      // streaming path and the web tool loop.
+      const recovered = recoverTextToolCalls(
+        typeof choice.message.content === 'string'
+          ? choice.message.content
+          : undefined,
+        typeof reasoningText === 'string' ? reasoningText : undefined,
+      );
+      for (const [recoveredIndex, call] of recovered.entries()) {
+        debugLogger.debug(
+          `convertOpenAIResponseToGemini: recovered buried textual tool call ${call.name}`,
+        );
+        parts.push({
+          functionCall: {
+            id: `recovered_${openaiResponse.id ?? 'response'}_${recoveredIndex}`,
+            name: call.name,
+            args: safeJsonParse(call.arguments, {}),
+          },
+        });
+      }
     }
 
     response.candidates = [
@@ -1243,6 +1340,7 @@ export function convertOpenAIChunkToGemini(
           cumulativeMode: false,
         }),
       );
+      appendRecoveryTextTail(requestContext, normalizedContent);
       // Skip empty-string push mid-stream; still call on finish_reason to
       // flush any buffered tagged-thinking content.
       if (normalizedContent || choice.finish_reason) {
@@ -1285,6 +1383,7 @@ export function convertOpenAIChunkToGemini(
           cumulativeMode: false,
         }),
       );
+      appendRecoveryTextTail(requestContext, normalizedReasoningText);
       if (
         normalizedReasoningText &&
         !requestContext.responseParsingOptions?.taggedThinkingTags
@@ -1377,6 +1476,7 @@ export function convertOpenAIChunkToGemini(
     }
 
     // Handle tool calls using the stream-local parser
+    const toolCallProgressUpdates: ToolCallProgressUpdate[] = [];
     if (choice.delta?.tool_calls) {
       for (const toolCall of choice.delta.tool_calls) {
         const index = toolCall.index ?? 0;
@@ -1397,6 +1497,30 @@ export function convertOpenAIChunkToGemini(
             toolCall.id,
             toolCall.function?.name,
           );
+        }
+
+        // Report argument-streaming progress. Without this, everything the
+        // model generates inside a tool call is invisible until
+        // finish_reason — a big write_file reads as minutes of dead
+        // "Thinking…" followed by the whole file at once. Throttled by
+        // char-count so the UI updates ~once per second at local-model
+        // speeds without re-rendering on every network chunk.
+        const emittedByIndex = (requestContext.toolCallProgressEmittedChars ??=
+          new Map<number, number>());
+        const buffer = toolCallParser.getBuffer(index);
+        const emitted = emittedByIndex.get(index) ?? 0;
+        const name = toolCallParser.getToolCallMeta(index).name;
+        if (
+          buffer.length - emitted >= TOOL_CALL_PROGRESS_CHUNK_CHARS ||
+          (emitted === 0 && name)
+        ) {
+          emittedByIndex.set(index, buffer.length);
+          toolCallProgressUpdates.push({
+            ...(name ? { name } : {}),
+            argsChars: buffer.length,
+            deltaChars: buffer.length - emitted,
+            argsTail: buffer.slice(-TOOL_CALL_PROGRESS_TAIL_CHARS).replace(/\s+/g, ' '),
+          });
         }
       }
     }
@@ -1424,6 +1548,28 @@ export function convertOpenAIChunkToGemini(
           });
         }
       }
+
+      // The stream ended with no native tool calls: check whether the model
+      // buried the call in its text instead (Qwen3 #1817) and recover it so
+      // the tool actually runs instead of the turn dying in silence.
+      if (completedToolCalls.length === 0 && !toolCallsTruncated) {
+        const recovered = recoverTextToolCalls(
+          requestContext.recoveryTextTail,
+        );
+        for (const [recoveredIndex, call] of recovered.entries()) {
+          debugLogger.debug(
+            `convertOpenAIChunkToGemini: recovered buried textual tool call ${call.name}`,
+          );
+          parts.push({
+            functionCall: {
+              id: `recovered_${chunk.id ?? 'stream'}_${recoveredIndex}`,
+              name: call.name,
+              args: safeJsonParse(call.arguments, {}),
+            },
+          });
+        }
+      }
+      requestContext.recoveryTextTail = undefined;
     }
 
     // If tool call JSON was truncated, override to "length" so downstream
@@ -1448,6 +1594,20 @@ export function convertOpenAIChunkToGemini(
       );
     }
     response.candidates = [candidate];
+
+    // Side-channel only: progress rides the response object for the turn
+    // loop to surface as an event; it is never a Part and never enters
+    // history.
+    if (toolCallProgressUpdates.length > 0) {
+      (
+        response as GenerateContentResponse & {
+          toolCallProgress?: ToolCallProgressUpdate[];
+        }
+      ).toolCallProgress = toolCallProgressUpdates;
+    }
+    if (choice.finish_reason) {
+      requestContext.toolCallProgressEmittedChars = undefined;
+    }
   } else {
     response.candidates = [];
   }
@@ -1856,4 +2016,5 @@ export const OpenAIContentConverter = {
   convertGeminiResponseToOpenAI,
   convertOpenAIResponseToGemini,
   convertOpenAIChunkToGemini,
+  recoverTextToolCalls,
 };

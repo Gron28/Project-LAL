@@ -3176,6 +3176,34 @@ describe('Server Config (config.ts)', () => {
       config.setAppendSystemPrompt('scratch note');
       expect(config.getAppendSystemPrompt()).toBe('scratch note');
     });
+
+    it('a pinned /tokens ceiling survives a /mode preset switch; unpinned keys still follow the preset', async () => {
+      const config = new Config(baseParams);
+      await config.refreshAuth(AuthType.USE_GEMINI);
+
+      // User explicitly raises the output ceiling (/tokens 30000).
+      config.setSamplingOverride({ max_tokens: 30_000 }, { pin: true });
+      expect(
+        config.getContentGeneratorConfig().samplingParams?.max_tokens,
+      ).toBe(30_000);
+
+      // Switching modes must NOT silently shrink the user's ceiling back to
+      // the preset budget — this was the "2 lines then cut" regression.
+      config.applyCodeModePreset('quick-edit', preset);
+      expect(
+        config.getContentGeneratorConfig().samplingParams?.max_tokens,
+      ).toBe(30_000);
+      // Unpinned keys still track the preset.
+      expect(
+        config.getContentGeneratorConfig().samplingParams?.temperature,
+      ).toBe(0);
+
+      // An explicit new /tokens value replaces the pinned one.
+      config.setSamplingOverride({ max_tokens: 16_000 }, { pin: true });
+      expect(
+        config.getContentGeneratorConfig().samplingParams?.max_tokens,
+      ).toBe(16_000);
+    });
   });
 
   describe('model switching optimization (QWEN_OAUTH)', () => {

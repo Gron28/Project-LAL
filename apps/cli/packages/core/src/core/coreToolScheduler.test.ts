@@ -5666,7 +5666,9 @@ describe('CoreToolScheduler truncated output protection', () => {
 
     const messages: string[] = [];
 
-    for (let i = 1; i <= 3; i++) {
+    // The first two rejections are fed back to the model as error tool
+    // results so it can self-correct.
+    for (let i = 1; i <= 2; i++) {
       await scheduler.schedule(
         [
           {
@@ -5698,7 +5700,84 @@ describe('CoreToolScheduler truncated output protection', () => {
     expect(messages[0]).toContain('truncated due to max_tokens limit');
     expect(messages[0]).not.toContain('RETRY LOOP DETECTED');
     expect(messages[1]).not.toContain('RETRY LOOP DETECTED');
-    expect(messages[2]).toContain('RETRY LOOP DETECTED');
+
+    // The third identical truncated write throws instead of feeding the
+    // error back — replaying the same malformed call cannot converge, so the
+    // turn is stopped with a visible directive (includes /tokens guidance).
+    await expect(
+      scheduler.schedule(
+        [
+          {
+            callId: 'truncated-write-file-3',
+            name: WriteFileTool.Name,
+            args: { file_path: '/tmp/test.txt', content: 'partial' },
+            isClientInitiated: false,
+            prompt_id: 'prompt-id-write-file-truncated-3',
+            wasOutputTruncated: true,
+          },
+        ],
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/RETRY LOOP DETECTED[\s\S]*\/tokens/);
+  });
+
+  it('refuses an exact-repeat mutation within one prompt but allows it on a new prompt', async () => {
+    const writeFileConfig = {
+      getProjectRoot: () => '/tmp',
+      getTargetDir: () => '/tmp',
+      getFileSystemService: () => ({
+        readTextFile: vi.fn().mockResolvedValue(''),
+        writeTextFile: vi.fn().mockResolvedValue(undefined),
+      }),
+      getDefaultFileEncoding: () => undefined,
+      setApprovalMode: vi.fn(),
+      getFileReadCacheDisabled: () => true,
+    } as unknown as Config;
+    const writeFileTool = new WriteFileTool(writeFileConfig);
+    const { scheduler, onAllToolCallsComplete } = createTruncationTestScheduler(
+      writeFileTool,
+      [WriteFileTool.Name],
+    );
+
+    const request = (callId: string, promptId: string) => ({
+      callId,
+      name: WriteFileTool.Name,
+      args: { file_path: '/tmp/dup-test.txt', content: 'same content' },
+      isClientInitiated: false,
+      prompt_id: promptId,
+    });
+
+    // First call dispatches normally.
+    await scheduler.schedule([request('dup-1', 'prompt-A')], new AbortController().signal);
+    await vi.waitFor(() => {
+      expect(onAllToolCallsComplete).toHaveBeenCalledTimes(1);
+    });
+
+    // Identical repeat in the same prompt is refused with a corrective error
+    // instead of being re-executed (deterministic mutation rut guard).
+    await scheduler.schedule([request('dup-2', 'prompt-A')], new AbortController().signal);
+    await vi.waitFor(() => {
+      expect(onAllToolCallsComplete).toHaveBeenCalledTimes(2);
+    });
+    const repeatCalls = onAllToolCallsComplete.mock.calls.at(-1)?.[0] as ToolCall[];
+    expect(repeatCalls[0].status).toBe('error');
+    if (repeatCalls[0].status === 'error') {
+      expect(repeatCalls[0].response.error?.message).toContain(
+        'already made this exact',
+      );
+    }
+
+    // The same call under a NEW prompt id starts clean (user re-requested it).
+    await scheduler.schedule([request('dup-3', 'prompt-B')], new AbortController().signal);
+    await vi.waitFor(() => {
+      expect(onAllToolCallsComplete).toHaveBeenCalledTimes(3);
+    });
+    const freshCalls = onAllToolCallsComplete.mock.calls.at(-1)?.[0] as ToolCall[];
+    if (freshCalls[0].status === 'error') {
+      expect(freshCalls[0].response.error?.message ?? '').not.toContain(
+        'already made this exact',
+      );
+    }
   });
 });
 
@@ -11834,13 +11913,14 @@ describe('CoreToolScheduler validation retry loop detection', () => {
     msg = getLastErrorMessage(onToolCallsUpdate);
     expect(msg).not.toContain(RETRY_LOOP_STOP_DIRECTIVE);
 
-    // Turn 3: same bad params — should trigger directive
-    await scheduler.schedule(
-      [makeRequest('c3', 'strictStringTool', { value: {} })],
-      new AbortController().signal,
-    );
-    msg = getLastErrorMessage(onToolCallsUpdate);
-    expect(msg).toContain(RETRY_LOOP_STOP_DIRECTIVE);
+    // Turn 3: same bad params — the scheduler now throws (stopping the turn
+    // visibly) instead of feeding a third identical error back to the model.
+    await expect(
+      scheduler.schedule(
+        [makeRequest('c3', 'strictStringTool', { value: {} })],
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(RETRY_LOOP_STOP_DIRECTIVE);
   });
 
   it('should keep retry counts stable when truncation guidance is toggled', async () => {
@@ -11863,13 +11943,14 @@ describe('CoreToolScheduler validation retry loop detection', () => {
     expect(msg).not.toContain('previous response was truncated');
     expect(msg).not.toContain(RETRY_LOOP_STOP_DIRECTIVE);
 
-    await scheduler.schedule(
-      [makeRequest('c3', 'strictStringTool', { value: {} }, true)],
-      new AbortController().signal,
-    );
-    msg = getLastErrorMessage(onToolCallsUpdate);
-    expect(msg).not.toContain('previous response was truncated');
-    expect(msg).toContain(RETRY_LOOP_STOP_DIRECTIVE);
+    // Third identical failure throws — the count reached the threshold even
+    // though truncation guidance was toggled across the attempts.
+    await expect(
+      scheduler.schedule(
+        [makeRequest('c3', 'strictStringTool', { value: {} }, true)],
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(RETRY_LOOP_STOP_DIRECTIVE);
   });
 
   it('should reset retry counter when a different tool is called', async () => {

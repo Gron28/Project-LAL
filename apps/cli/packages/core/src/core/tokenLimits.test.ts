@@ -459,8 +459,8 @@ describe('clampOutputTokensToWindow', () => {
 
 describe('defaultOutputCeiling', () => {
   it('clips a model advertising more than the ceiling down to it', () => {
-    // deepseek-v4 advertises 384K output → clipped to OUTPUT_TOKEN_CEILING.
-    expect(defaultOutputCeiling('deepseek-v4-pro')).toBe(OUTPUT_TOKEN_CEILING);
+    // deepseek-v4 advertises 384K output → leaves it untouched when the ceiling is raised to 1M.
+    expect(defaultOutputCeiling('deepseek-v4-pro')).toBe(384_000);
   });
 
   it('leaves a model below the ceiling untouched', () => {

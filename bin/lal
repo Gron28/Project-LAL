@@ -32,4 +32,8 @@ for item in client-host device-id device-name platform client-version; do
 done
 [ -f "$LAL_HOME/system.md" ] && export QWEN_SYSTEM_MD="$LAL_HOME/system.md"
 
-exec node "$ROOT/apps/cli/dist/cli-entry.js" "$@"
+# The development bundle command recreates apps/cli/dist and intentionally
+# removes the packaged cli-entry wrapper. Use the source-owned wrapper here;
+# it resolves the freshly bundled dist/cli.js itself. Release archives still
+# generate and ship their own dist/cli-entry.js via prepare-package.
+exec node "$ROOT/apps/cli/scripts/cli-entry.js" "$@"
