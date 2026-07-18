@@ -19,4 +19,5 @@ export {
 } from './formatters/html.js';
 export { toJson } from './formatters/json.js';
 export { toJsonl } from './formatters/jsonl.js';
+export { toTxt } from './formatters/txt.js';
 export { generateExportFilename } from './utils.js';

@@ -121,4 +121,11 @@ export interface ExportSessionData {
   messages: ExportMessage[];
   /** Session metadata and statistics */
   metadata?: ExportMetadata;
+  /**
+   * The system prompt active at export time, for forensic formats that show
+   * everything the model was sent. Best-effort: sessions do not record the
+   * prompt per-request, so this is the current one, which may differ from
+   * what early requests saw if memory files changed mid-session.
+   */
+  systemPrompt?: string;
 }

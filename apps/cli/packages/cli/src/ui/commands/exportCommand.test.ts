@@ -16,6 +16,7 @@ import {
   normalizeSessionData,
   toMarkdown,
   toHtml,
+  toTxt,
   toJson,
   toJsonl,
   generateExportFilename,
@@ -58,6 +59,7 @@ vi.mock('../utils/export/index.js', () => ({
   normalizeSessionData: vi.fn(),
   toMarkdown: vi.fn(),
   toHtml: vi.fn(),
+  toTxt: vi.fn(),
   toJson: vi.fn(),
   toJsonl: vi.fn(),
   generateExportFilename: vi.fn(),
@@ -113,6 +115,7 @@ describe('exportCommand', () => {
     });
     vi.mocked(normalizeSessionData).mockImplementation((data) => data);
     vi.mocked(toMarkdown).mockReturnValue('# Test Markdown');
+    vi.mocked(toTxt).mockReturnValue('LAL CLI SESSION REPORT test-body');
     vi.mocked(toHtml).mockReturnValue(
       '<html><script id="chat-data" type="application/json">{"data": "test"}</script></html>',
     );
@@ -133,13 +136,14 @@ describe('exportCommand', () => {
     it('should have correct name and description', () => {
       expect(exportCommand.name).toBe('export');
       expect(exportCommand.description).toBe(
-        'Export current session message history to a file',
+        'Export current session as a full forensic transcript (default: txt)',
       );
     });
 
-    it('should have html, md, json, and jsonl subcommands', () => {
-      expect(exportCommand.subCommands).toHaveLength(4);
+    it('should have txt, html, md, json, and jsonl subcommands', () => {
+      expect(exportCommand.subCommands).toHaveLength(5);
       expect(exportCommand.subCommands?.map((c) => c.name)).toEqual([
+        'txt',
         'html',
         'md',
         'json',
@@ -843,7 +847,7 @@ describe('exportCommand', () => {
       );
     });
 
-    it('should export default HTML to a relative custom directory', async () => {
+    it('should export default TXT to a relative custom directory', async () => {
       if (!exportCommand.action) {
         throw new Error('export command action not found');
       }
@@ -852,14 +856,14 @@ describe('exportCommand', () => {
       const outputDir = path.resolve(mockWorkingDir, './logs');
       const filepath = path.join(
         outputDir,
-        'export-2025-01-01T00-00-00-000Z.html',
+        'export-2025-01-01T00-00-00-000Z.txt',
       );
 
       expect(result).toEqual({
         type: 'message',
         messageType: 'info',
         content: expect.stringContaining(
-          path.join('./logs', 'export-2025-01-01T00-00-00-000Z.html'),
+          path.join('./logs', 'export-2025-01-01T00-00-00-000Z.txt'),
         ),
       });
       expect(fs.mkdir).toHaveBeenCalledWith(outputDir, {
@@ -868,7 +872,7 @@ describe('exportCommand', () => {
       });
       expect(fs.writeFile).toHaveBeenCalledWith(
         filepath,
-        expect.stringContaining('{"data": "test"}'),
+        expect.stringContaining('LAL CLI SESSION REPORT test-body'),
         { encoding: 'utf-8', mode: 0o600 },
       );
     });

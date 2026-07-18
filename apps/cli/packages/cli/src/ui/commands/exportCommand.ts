@@ -14,6 +14,7 @@ import {
 } from './types.js';
 import {
   createDebugLogger,
+  getCoreSystemPrompt,
   isSubpath,
   SessionService,
 } from '@qwen-code/qwen-code-core';
@@ -24,6 +25,7 @@ import {
   toHtml,
   toJson,
   toJsonl,
+  toTxt,
   generateExportFilename,
   type ExportSessionData,
 } from '../utils/export/index.js';
@@ -317,6 +319,22 @@ async function exportSessionAction(
       config,
     );
 
+    // Forensic formats show the system prompt too. Best-effort: this is the
+    // prompt as active NOW, which is what the vast majority of the session's
+    // requests were sent.
+    try {
+      const fullConfig = config as unknown as {
+        getUserMemory?: () => string;
+        getModel?: () => string;
+      };
+      normalizedData.systemPrompt = getCoreSystemPrompt(
+        fullConfig.getUserMemory?.() ?? '',
+        fullConfig.getModel?.(),
+      );
+    } catch (error) {
+      debugLogger.debug('Could not resolve system prompt for export:', error);
+    }
+
     const content = exportFormat.format(normalizedData);
 
     if (target.outputDirKind === 'custom') {
@@ -454,18 +472,46 @@ async function exportJsonlAction(
 }
 
 /**
+ * Action for the 'txt' subcommand — full forensic plain-text transcript
+ * (system prompt, thinking, every tool round-trip, failures, tokens).
+ */
+async function exportTxtAction(
+  context: CommandContext,
+  args: string,
+): Promise<MessageActionReturn> {
+  return exportSessionAction(context, args, {
+    extension: 'txt',
+    displayName: 'TXT',
+    format: toTxt,
+  });
+}
+
+/**
  * Main export command with subcommands.
  */
 export const exportCommand: SlashCommand = {
   name: 'export',
   get description() {
-    return t('Export current session message history to a file');
+    return t(
+      'Export current session as a full forensic transcript (default: txt)',
+    );
   },
-  argumentHint: '[md|html|json|jsonl] [path]',
+  argumentHint: '[txt|md|html|json|jsonl] [path]',
   kind: CommandKind.BUILT_IN,
   supportedModes: ['interactive', 'non_interactive', 'acp'] as const,
-  action: exportHtmlAction,
+  action: exportTxtAction,
   subCommands: [
+    {
+      name: 'txt',
+      get description() {
+        return t(
+          'Export full forensic transcript to plain text (thoughts, tools, errors, tokens)',
+        );
+      },
+      kind: CommandKind.BUILT_IN,
+      supportedModes: ['interactive', 'non_interactive', 'acp'] as const,
+      action: exportTxtAction,
+    },
     {
       name: 'html',
       get description() {
