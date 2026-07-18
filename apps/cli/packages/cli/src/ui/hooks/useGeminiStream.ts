@@ -623,6 +623,14 @@ export const useGeminiStream = (
   const [liveToolCallProgress, setLiveToolCallProgress] = useState<
     string | null
   >(null);
+  // Multi-line live view of the argument buffer for the same streaming tool
+  // call — the "watch the code being written" panel. Null outside arg
+  // generation; cleared everywhere liveToolCallProgress is cleared.
+  const [liveToolArgsPreview, setLiveToolArgsPreview] = useState<{
+    name: string;
+    argsChars: number;
+    preview: string;
+  } | null>(null);
   // Argument chars already counted into streamingResponseLengthRef via
   // progress events; subtracted when the completed call's args are counted
   // at ToolCallRequest so tokens aren't double-counted.
@@ -2081,6 +2089,13 @@ export const useGeminiStream = (
               setLiveToolCallProgress(
                 `▶ ${name} · ${size} chars${tail ? ` · …${tail.slice(-48)}` : ''}`,
               );
+              if (event.value.argsPreview) {
+                setLiveToolArgsPreview({
+                  name,
+                  argsChars: event.value.argsChars,
+                  preview: event.value.argsPreview,
+                });
+              }
               break;
             }
             case ServerGeminiEventType.ToolCallRequest:
@@ -2092,6 +2107,7 @@ export const useGeminiStream = (
               thoughtBuffer = '';
               setThought((prev) => (prev ? null : prev));
               setLiveToolCallProgress(null);
+              setLiveToolArgsPreview(null);
               toolCallRequests.push(event.value);
               // Count tool call args JSON toward token estimation, minus the
               // chars already counted live by ToolCallProgress events.
@@ -2112,11 +2128,13 @@ export const useGeminiStream = (
               flushBufferedStreamEvents();
               toolCallRequests.length = 0;
               setLiveToolCallProgress(null);
+              setLiveToolArgsPreview(null);
               handleUserCancelledEvent(userMessageTimestamp);
               break;
             case ServerGeminiEventType.Error:
               flushBufferedStreamEvents();
               setLiveToolCallProgress(null);
+              setLiveToolArgsPreview(null);
               handleErrorEvent(event.value, userMessageTimestamp);
               break;
             case ServerGeminiEventType.ChatCompressed:
@@ -2160,6 +2178,7 @@ export const useGeminiStream = (
               thoughtBuffer = '';
               setThought(null);
               setLiveToolCallProgress(null);
+              setLiveToolArgsPreview(null);
               break;
             case ServerGeminiEventType.Citation:
               flushBufferedStreamEvents();
@@ -2635,6 +2654,7 @@ export const useGeminiStream = (
           toolArgsProgressCharsRef.current = 0;
         }
         setLiveToolCallProgress(null);
+        setLiveToolArgsPreview(null);
 
         try {
           // Emit user message to dual output sidecar (if enabled).
@@ -3871,5 +3891,6 @@ export const useGeminiStream = (
     streamingResponseLengthRef,
     isReceivingContent,
     liveToolCallProgress,
+    liveToolArgsPreview,
   };
 };

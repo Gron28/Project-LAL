@@ -227,6 +227,34 @@ const RECOVERY_TEXT_TAIL_MAX_CHARS = 262_144;
 const TOOL_CALL_PROGRESS_CHUNK_CHARS = 128;
 /** Display tail length carried on each tool-call progress update. */
 const TOOL_CALL_PROGRESS_TAIL_CHARS = 80;
+/** Multi-line preview tail for the live "code as it's written" panel. */
+const TOOL_CALL_PROGRESS_PREVIEW_CHARS = 2048;
+
+/**
+ * The argument buffer is raw JSON-in-progress, so file contents arrive with
+ * their newlines and quotes escaped. Decode the common escapes best-effort so
+ * the live preview reads like the code being written, not a JSON string.
+ * Unicode escapes are left alone — a wrong guess is worse than a literal.
+ */
+export function decodeJsonStringEscapesForPreview(tail: string): string {
+  // Single pass so an escaped backslash is consumed atomically and can never
+  // corrupt a following character (e.g. `\\t` in a Windows path must decode
+  // to `\t`-the-two-chars, not a tab).
+  return tail.replace(/\\(\\|n|t|r|")/g, (_, c: string) => {
+    switch (c) {
+      case 'n':
+        return '\n';
+      case 't':
+        return '\t';
+      case 'r':
+        return '';
+      case '"':
+        return '"';
+      default:
+        return '\\';
+    }
+  });
+}
 
 export function appendRecoveryTextTail(
   context: RequestContext,
@@ -1520,6 +1548,9 @@ export function convertOpenAIChunkToGemini(
             argsChars: buffer.length,
             deltaChars: buffer.length - emitted,
             argsTail: buffer.slice(-TOOL_CALL_PROGRESS_TAIL_CHARS).replace(/\s+/g, ' '),
+            argsPreview: decodeJsonStringEscapesForPreview(
+              buffer.slice(-TOOL_CALL_PROGRESS_PREVIEW_CHARS),
+            ),
           });
         }
       }

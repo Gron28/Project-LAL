@@ -5,7 +5,10 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { OpenAIContentConverter } from './converter.js';
+import {
+  OpenAIContentConverter,
+  decodeJsonStringEscapesForPreview,
+} from './converter.js';
 import { StreamingToolCallParser } from './streamingToolCallParser.js';
 import { TaggedThinkingParser } from './taggedThinkingParser.js';
 import type { RequestContext } from './types.js';
@@ -5971,5 +5974,25 @@ describe('buried textual tool-call recovery (Qwen3 #1817)', () => {
     expect(recovered).toEqual([
       { name: 'read_file', arguments: '{"p":1}' },
     ]);
+  });
+});
+
+describe('decodeJsonStringEscapesForPreview', () => {
+  it('decodes common JSON string escapes so previews read as code', () => {
+    expect(
+      decodeJsonStringEscapesForPreview(
+        'const a = \\"x\\";\\nif (a) {\\n\\treturn;\\n}',
+      ),
+    ).toBe('const a = "x";\nif (a) {\n\treturn;\n}');
+  });
+
+  it('decodes escaped backslashes without corrupting neighbors', () => {
+    expect(decodeJsonStringEscapesForPreview('C:\\\\temp\\\\x')).toBe(
+      'C:\\temp\\x',
+    );
+  });
+
+  it('leaves unicode escapes untouched', () => {
+    expect(decodeJsonStringEscapesForPreview('\\u00e9')).toBe('\\u00e9');
   });
 });

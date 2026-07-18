@@ -110,6 +110,12 @@ export interface ToolCallProgressUpdate {
   deltaChars: number;
   /** Sanitized tail of the argument buffer for display. */
   argsTail: string;
+  /**
+   * Raw multi-line tail of the argument buffer (JSON string escapes decoded
+   * best-effort) for the live "code as it's written" panel. Larger than
+   * argsTail; bounded, not the full buffer.
+   */
+  argsPreview?: string;
 }
 
 export interface ErrorHandler {

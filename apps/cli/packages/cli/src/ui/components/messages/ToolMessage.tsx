@@ -755,11 +755,15 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   // Defensive: clamp non-negative integers; treat negatives / NaN / fractions
   // as the user's clear intent (0 = disable, otherwise floor to whole rows).
   const shellOutputMaxLines = Math.max(0, Math.floor(rawShellCap || 0));
+  // While the command is still running, show as much live output as the
+  // terminal allows (availableHeight still bounds it); the N-line cap only
+  // applies to completed output so scrollback stays compact.
   const isCappingShell =
     isShellTool &&
     shellOutputMaxLines > 0 &&
     !forceShowResult &&
-    !isThisShellFocused;
+    !isThisShellFocused &&
+    status !== ToolCallStatus.Executing;
   const shellCapHeight = isCappingShell
     ? Math.min(availableHeight ?? shellOutputMaxLines, shellOutputMaxLines)
     : availableHeight;
@@ -781,15 +785,14 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
     renderOutputAsMarkdown = false;
   }
 
-  // §4.9: in transcript full-detail mode, collapsible tools (read/search/list)
-  // swap the summary `resultDisplay` for the complete `detailedDisplay` derived
-  // from the persisted functionResponse. Only a non-empty string detail
-  // qualifies; everything else (and all main-view rendering) keeps the summary.
+  // §4.9: in transcript full-detail mode, ANY tool swaps its summary
+  // `resultDisplay` for the complete `detailedDisplay` derived from the
+  // persisted functionResponse — the exact text the model received. Only a
+  // non-empty string detail qualifies; everything else (and all main-view
+  // rendering) keeps the summary. Structured displays (diff/todo/task) fall
+  // through to their regular renderers when detail extraction yields nothing.
   const usingDetailedDisplay =
-    fullDetail &&
-    isCollapsibleTool(name) &&
-    typeof detailedDisplay === 'string' &&
-    detailedDisplay.length > 0;
+    fullDetail && typeof detailedDisplay === 'string' && detailedDisplay.length > 0;
   // `detailedDisplay` is RAW, un-sanitized tool output (file contents, grep
   // hits, directory listings). A malicious repo could embed terminal control
   // codes that execute when the transcript renders the full content unfiltered.

@@ -7,6 +7,7 @@
 import { Box, Text, useIsScreenReaderEnabled } from 'ink';
 import { useCallback, useRef, useState } from 'react';
 import { LoadingIndicator } from './LoadingIndicator.js';
+import { LiveToolArgsPanel } from './LiveToolArgsPanel.js';
 import { InputPrompt } from './InputPrompt.js';
 import { Footer } from './Footer.js';
 import { QueuedMessageDisplay } from './QueuedMessageDisplay.js';
@@ -75,6 +76,16 @@ export const Composer = () => {
 
   return (
     <Box flexDirection="column" marginTop={1}>
+      {/* Live view of a streaming tool call's argument buffer — code/plans
+          visibly being written instead of a silent spinner. */}
+      {!uiState.embeddedShellFocused &&
+        !suppressBottomLoadingIndicator &&
+        uiState.liveToolArgsPreview && (
+          <LiveToolArgsPanel
+            data={uiState.liveToolArgsPreview}
+            terminalWidth={uiState.terminalWidth}
+          />
+        )}
       {!uiState.embeddedShellFocused && !suppressBottomLoadingIndicator && (
         <LoadingIndicator
           // Hide loading phrases when enableLoadingPhrases is explicitly false.

@@ -414,21 +414,23 @@ describe('<ToolMessage />', () => {
       expect(output).not.toContain('full file contents here');
     });
 
-    it('keeps the summary for a non-collapsible tool even in fullDetail mode', () => {
+    it('shows the exact tool response for a non-collapsible tool in fullDetail mode', () => {
+      // Full observability: the transcript shows precisely what the model
+      // received for EVERY tool, not just read/search/list summaries.
       const { lastFrame } = renderWithContext(
         <ToolMessage
           {...baseProps}
           name="test-tool"
           resultDisplay="Test result"
-          detailedDisplay="should not appear"
+          detailedDisplay="exact functionResponse text"
           fullDetail
           forceShowResult
         />,
         StreamingState.Idle,
       );
       const output = lastFrame();
-      expect(output).toContain('MockMarkdown:Test result');
-      expect(output).not.toContain('should not appear');
+      expect(output).toContain('exact functionResponse text');
+      expect(output).not.toContain('MockMarkdown:Test result');
     });
 
     it('falls back to the summary when fullDetail is set but no detailedDisplay exists', () => {
@@ -1152,7 +1154,43 @@ describe('<ToolMessage />', () => {
     expect(lastFrame()).toContain('width=');
   });
 
-  it('caps shell ANSI output to default 5 lines when not forced', () => {
+  it('caps completed shell ANSI output to default 5 lines when not forced', () => {
+    const ansiOutputDisplay: AnsiOutputDisplay = {
+      ansiOutput: [
+        [
+          {
+            text: 'a',
+            fg: '',
+            bg: '',
+            bold: false,
+            italic: false,
+            underline: false,
+            dim: false,
+            inverse: false,
+          },
+        ],
+      ],
+      totalLines: 50,
+    };
+    const { lastFrame } = renderWithContext(
+      <ToolMessage
+        {...baseProps}
+        name="Shell"
+        status={ToolCallStatus.Success}
+        resultDisplay={ansiOutputDisplay}
+        availableTerminalHeight={100}
+      />,
+      StreamingState.Idle,
+    );
+    const output = lastFrame()!;
+    expect(output).toContain('height=5');
+    expect(output).toContain('MockShellStatsBar:displayHeight=5');
+  });
+
+  it('does not cap live shell ANSI output while the command is executing', () => {
+    // Real-time visibility: while running, show as much as the terminal
+    // allows (bounded by availableHeight); the 5-line cap only applies to
+    // completed output in scrollback.
     const ansiOutputDisplay: AnsiOutputDisplay = {
       ansiOutput: [
         [
@@ -1181,8 +1219,9 @@ describe('<ToolMessage />', () => {
       StreamingState.Idle,
     );
     const output = lastFrame()!;
-    expect(output).toContain('height=5');
-    expect(output).toContain('MockShellStatsBar:displayHeight=5');
+    // availableHeight = 100 - STATIC_HEIGHT(1) - RESERVED_LINE_COUNT(5) = 94
+    expect(output).toContain('height=94');
+    expect(output).toContain('MockShellStatsBar:displayHeight=94');
   });
 
   it('does not cap non-shell ANSI output', () => {
@@ -1316,7 +1355,7 @@ describe('<ToolMessage />', () => {
           <ToolMessage
             {...baseProps}
             name="Shell"
-            status={ToolCallStatus.Executing}
+            status={ToolCallStatus.Success}
             resultDisplay={ansiOutputDisplay}
             availableTerminalHeight={100}
           />
@@ -1341,7 +1380,7 @@ describe('<ToolMessage />', () => {
         {...baseProps}
         name="Shell"
         resultDisplay={longString}
-        status={ToolCallStatus.Executing}
+        status={ToolCallStatus.Success}
         availableTerminalHeight={100}
       />,
       StreamingState.Idle,
@@ -1463,7 +1502,7 @@ describe('<ToolMessage />', () => {
           <ToolMessage
             {...baseProps}
             name="Shell"
-            status={ToolCallStatus.Executing}
+            status={ToolCallStatus.Success}
             resultDisplay={ansiOutputDisplay}
             availableTerminalHeight={100}
           />

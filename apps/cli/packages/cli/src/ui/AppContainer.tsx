@@ -1889,6 +1889,7 @@ export const AppContainer = (props: AppContainerProps) => {
     streamingResponseLengthRef,
     isReceivingContent,
     liveToolCallProgress,
+    liveToolArgsPreview,
   } = useGeminiStream(
     config.getGeminiClient(),
     historyManager.history,
@@ -4116,6 +4117,7 @@ export const AppContainer = (props: AppContainerProps) => {
       isFocused,
       elapsedTime,
       currentLoadingPhrase,
+      liveToolArgsPreview,
       certaintyWave,
       historyRemountKey,
       messageQueue,
@@ -4260,6 +4262,7 @@ export const AppContainer = (props: AppContainerProps) => {
       isFocused,
       elapsedTime,
       currentLoadingPhrase,
+      liveToolArgsPreview,
       certaintyWave,
       historyRemountKey,
       messageQueue,

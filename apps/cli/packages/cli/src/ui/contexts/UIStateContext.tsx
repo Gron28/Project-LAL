@@ -122,6 +122,12 @@ export interface UIState {
   showEscapePrompt: boolean;
   elapsedTime: number;
   currentLoadingPhrase: string;
+  /** Live multi-line view of a streaming tool call's argument buffer. */
+  liveToolArgsPreview: {
+    name: string;
+    argsChars: number;
+    preview: string;
+  } | null;
   /** Recent token probabilities for the live J-space certainty trace. */
   certaintyWave: number[];
   historyRemountKey: number;

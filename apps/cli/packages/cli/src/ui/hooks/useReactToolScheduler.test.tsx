@@ -39,10 +39,11 @@ describe('mapToDisplay — detailedDisplay (§4.9 live path)', () => {
     expect(tool.detailedDisplay).toBe('FULL FILE CONTENT');
   });
 
-  it('leaves detailedDisplay undefined for a non-collapsible tool', () => {
-    // 'Edit' → 'edit' category → not collapsible, so the extraction is skipped
-    // (the transcript never reads it for edit/write/command/agent tools).
+  it('extracts detailedDisplay for non-collapsible tools too', () => {
+    // Every tool stores its exact functionResponse text so the Ctrl+O
+    // transcript can show precisely what the model received — the primary
+    // debugging surface for small local models.
     const group = mapToDisplay(makeSuccess('Edit'));
-    expect(group.tools[0].detailedDisplay).toBeUndefined();
+    expect(group.tools[0].detailedDisplay).toBe('FULL FILE CONTENT');
   });
 });
