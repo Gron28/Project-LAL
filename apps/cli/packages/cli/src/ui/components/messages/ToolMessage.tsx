@@ -43,7 +43,10 @@ import {
   sanitizeMultilineForDisplay,
   toCodePoints,
 } from '../../utils/textUtils.js';
-import { TOOL_DISPLAY_BY_NAME } from '../../utils/tool-display-map.js';
+import {
+  TOOL_DISPLAY_BY_NAME,
+  getToolIcon,
+} from '../../utils/tool-display-map.js';
 
 import {
   ToolStatusIndicator,
@@ -956,6 +959,7 @@ const ToolInfo: React.FC<ToolInfo> = ({
   return (
     <Box flexGrow={1}>
       <Text wrap="wrap" strikethrough={status === ToolCallStatus.Canceled}>
+        <Text color={theme.text.secondary}>{getToolIcon(name)} </Text>
         <Text color={nameColor} bold>
           {localizeToolDisplayName(name)}
         </Text>{' '}
