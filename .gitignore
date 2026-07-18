@@ -34,3 +34,10 @@ node_modules/
 /data/*.jsonl
 /data/*.json
 /data/sovereign_batches/
+
+# Local session config and CLI test-run side-effect directories
+/.qwen/
+/apps/cli/packages/cli/custom/
+/apps/cli/packages/cli/first/
+/apps/cli/packages/cli/from-env/
+/apps/cli/packages/cli/workspace/
