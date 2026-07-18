@@ -18,6 +18,9 @@ export interface GatewayStats {
   servingModel: string | null;
   /** Context size the resident server was started with. */
   activeContext: number | null;
+  backend: string | null;
+  gpuOffload: string | null;
+  runAlive: boolean;
 }
 
 const POLL_INTERVAL_MS = 5_000;
@@ -72,7 +75,16 @@ export function useGatewayStats(): GatewayStats | null {
           vramTotalGb?: number | null;
           vramPct?: number | null;
           serving?: { model?: string | null };
-          runtime?: { serving?: { model?: string | null; context?: number | null } };
+          runLive?: boolean;
+          runtime?: {
+            serving?: {
+              model?: string | null;
+              context?: number | null;
+              backend?: string | null;
+              gpuOffload?: string | null;
+            };
+            activeRuns?: unknown[];
+          };
         };
         if (cancelled) return;
         setStats({
@@ -83,6 +95,11 @@ export function useGatewayStats(): GatewayStats | null {
           servingModel:
             body.runtime?.serving?.model ?? body.serving?.model ?? null,
           activeContext: body.runtime?.serving?.context ?? null,
+          backend: body.runtime?.serving?.backend ?? null,
+          gpuOffload: body.runtime?.serving?.gpuOffload ?? null,
+          runAlive:
+            body.runLive === true ||
+            (body.runtime?.activeRuns?.length ?? 0) > 0,
         });
       } catch {
         if (!cancelled) setStats(null);

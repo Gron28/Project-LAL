@@ -9,6 +9,7 @@ import type {
   ConfigInitializeOptions,
 } from '@qwen-code/qwen-code-core';
 import {
+  AgentEventEmitter,
   createDebugLogger,
   buildSessionRecoveryPlanFromApiHistory,
   SendMessageType,
@@ -47,6 +48,7 @@ import {
   settleChatRecording,
   subscribeToHeadlessChatRecordingFailures,
 } from '../utils/chat-recording-failure.js';
+import { RemoteRunMirror } from '../lal/remote-run/remote-run-mirror.js';
 
 const debugLogger = createDebugLogger('NON_INTERACTIVE_SESSION');
 
@@ -91,6 +93,8 @@ class Session {
   private monitorRegistrationsRegistered: boolean = false;
   private settings: LoadedSettings;
   private readonly unsubscribeRecordingFailure: () => void;
+  private readonly agentEventEmitter = new AgentEventEmitter();
+  private remoteMirror: RemoteRunMirror | null = null;
 
   // Single initialization promise that resolves when session is ready for user messages.
   // Created lazily once initialization actually starts.
@@ -198,9 +202,47 @@ class Session {
       this.configInitialized = true;
       this.registerMonitorRegistrations();
       this.registerMonitorNotifications();
+      await this.startManagedRemoteControl();
     } catch (error) {
       debugLogger.error('[Session] Failed to initialize config:', error);
       throw error;
+    }
+  }
+
+  private async startManagedRemoteControl(): Promise<void> {
+    if (process.env['LAL_MANAGED'] !== '1' || this.remoteMirror) return;
+    const mirror = new RemoteRunMirror({
+      emitter: this.agentEventEmitter,
+      conversationId: this.sessionId,
+      projectLabel: this.config.getTargetDir?.(),
+      model: this.config.getModel(),
+      mode: this.config.getActiveCodeMode?.(),
+      contextWindow:
+        this.config.getContentGeneratorConfig()?.contextWindowSize ?? 32_768,
+      onCommand: (command) => {
+        if (this.isShuttingDown || this.abortController.signal.aborted) {
+          return false;
+        }
+        this.enqueueUserMessage({
+          type: 'user',
+          session_id: this.sessionId,
+          message: { role: 'user', content: command.text },
+          parent_tool_use_id: null,
+        });
+        return true;
+      },
+      onCancel: () => this.handleInterrupt(),
+    });
+    try {
+      const status = await mirror.start();
+      this.remoteMirror = mirror;
+      process.stderr.write(
+        `[lal] managed headless remote control active: run=${status.runId} session=${this.sessionId}\n`,
+      );
+    } catch (error) {
+      debugLogger.warn(
+        `[Session] managed remote control unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -472,6 +514,7 @@ class Session {
         controlService: this.controlService ?? undefined,
         captureMonitorNotifications: false,
         captureMonitorRegistrations: false,
+        agentEventEmitter: this.agentEventEmitter,
       });
     } catch (error) {
       debugLogger.error('[Session] Query execution error:', error);
@@ -564,6 +607,7 @@ class Session {
         onResultEmitted: () => {
           resultAlreadyEmitted = true;
         },
+        agentEventEmitter: this.agentEventEmitter,
       });
     } catch (error) {
       debugLogger.error('[Session] Continue turn execution error:', error);
@@ -614,6 +658,7 @@ class Session {
         notificationDisplayText: combinedDisplayText,
         captureMonitorNotifications: false,
         captureMonitorRegistrations: false,
+        agentEventEmitter: this.agentEventEmitter,
       },
     );
   }
@@ -805,6 +850,7 @@ class Session {
     this.abortTaskRegistries();
 
     this.finishShutdown();
+    await this.stopRemoteMirror('stopped');
   }
 
   private async drainAndShutdown(): Promise<void> {
@@ -818,6 +864,17 @@ class Session {
     this.abortTaskRegistries();
 
     this.finishShutdown();
+    await this.stopRemoteMirror(
+      this.abortController.signal.aborted ? 'stopped' : 'done',
+    );
+  }
+
+  private async stopRemoteMirror(
+    status: 'done' | 'error' | 'stopped',
+  ): Promise<void> {
+    const mirror = this.remoteMirror;
+    this.remoteMirror = null;
+    await mirror?.stop(status);
   }
 
   private abortTaskRegistries(): void {

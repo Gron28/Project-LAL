@@ -1,4 +1,4 @@
-import { allModels, ensureServing, SERVE_PORT, stopServing, touchServing } from "@/lib/lab";
+import { activatePublicModel, allModels, isPublicModelName, OLLAMA_CLI_CONTEXT, SERVE_PORT, touchServing } from "@/lib/lab";
 import { appendHostObservationForClientDevice } from "@/lib/runs";
 import { acquireCliGpuLease, cliAuthenticatedDeviceId, cliAuthorized, recordCliAccess, streamWithRelease, unauthorizedResponse } from "@/lib/lal-cli";
 
@@ -27,6 +27,13 @@ const LAL_TERMINAL_TOOLS = new Set([
   "task_stop",
   "web_search",
   "web_fetch",
+  // Browser acceptance tools remain lazy behind tool_search; admitting them
+  // here lets their eventual schemas and results stay in the same turn.
+  "launch_app",
+  "list_windows",
+  "get_window_state",
+  "page",
+  "screenshot",
 ]);
 
 // Budget guards, not documentation removal: a small local model needs the
@@ -47,17 +54,6 @@ function trimDescription(value: unknown, max: number): string | null {
 
 function asCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
-}
-
-const OLLAMA_CLI_CONTEXT = 16384;
-const OLLAMA_CLI_PROFILE_SUFFIX = "-lal-cli-16k";
-
-/** The OpenAI-compatible Ollama endpoint has no request-level context option.
- * A model created from a tiny Modelfile is the documented persistent way to
- * keep an agent's tool schemas and output budget out of the 4K default. */
-function managedOllamaModel(model: string): string {
-  const candidate = `${model}${OLLAMA_CLI_PROFILE_SUFFIX}`;
-  return allModels().some((item) => item.name === candidate) ? candidate : model;
 }
 
 /** Keep the executable tool contract AND its meaning. Tool names, parameter
@@ -116,7 +112,7 @@ export async function POST(request: Request) {
 
   const model = typeof payload.model === "string" ? payload.model : "";
   const deviceId = cliAuthenticatedDeviceId(request);
-  const modelInfo = allModels().find((item) => item.name === model);
+  const modelInfo = isPublicModelName(model) ? allModels().find((item) => item.name === model) : undefined;
   const available = Boolean(modelInfo);
   if (!available) {
     return Response.json(
@@ -126,6 +122,7 @@ export async function POST(request: Request) {
   }
 
   const startedAt = Date.now();
+  let observedContext = modelInfo?.source === "ollama" ? OLLAMA_CLI_CONTEXT : 32768;
   let streamText = "";
   let lastUsage: Usage | null = null;
   const decoder = new TextDecoder();
@@ -163,25 +160,21 @@ export async function POST(request: Request) {
     const elapsedSeconds = Math.max(0.001, (Date.now() - startedAt) / 1000);
     appendHostObservationForClientDevice(deviceId, {
       k: "usage",
-      v: { promptTokens, completionTokens, totalTokens, tokPerSec: completionTokens ? Number((completionTokens / elapsedSeconds).toFixed(1)) : null, ctx: 32768, conf: null },
+      v: { promptTokens, completionTokens, totalTokens, tokPerSec: completionTokens ? Number((completionTokens / elapsedSeconds).toFixed(1)) : null, ctx: observedContext, conf: null },
     });
   };
 
   appendHostObservationForClientDevice(deviceId, { k: "model_loading", v: { model, ctx: modelInfo?.source === "ollama" ? 16384 : 32768 } });
   const release = await acquireCliGpuLease();
   try {
-    const isOllama = modelInfo?.source === "ollama";
-    const upstreamModel = isOllama ? managedOllamaModel(model) : model;
-    if (isOllama) {
-      // Gemma and other Ollama-only architectures must never be handed to the
-      // pinned llama.cpp build. Stop our server so Ollama owns the GPU, then
-      // use Ollama's OpenAI-compatible endpoint below.
-      stopServing();
-    } else {
-      await ensureServing(model, 32768);
-    }
+    const runtime = await activatePublicModel(model, 32768);
+    const isOllama = runtime.backend === "ollama";
+    const upstreamModel = runtime.runtimeProfile;
+    const runtimeContext = runtime.context;
+    const runtimeOffload = runtime.gpuOffload;
+    observedContext = runtimeContext;
     touchServing();
-    appendHostObservationForClientDevice(deviceId, { k: "model_ready", v: { model, ctx: isOllama ? 16384 : 32768, backend: isOllama ? "ollama" : "llama.cpp" } });
+    appendHostObservationForClientDevice(deviceId, { k: "model_ready", v: { model, ctx: runtimeContext, backend: runtime.backend, gpuOffload: runtimeOffload, ...(upstreamModel !== model ? { runtimeProfile: upstreamModel } : {}) } });
     // llama.cpp rejects logprobs together with streamed tool definitions. Keep
     // the terminal agent's tool loop working first; request token confidence
     // only for plain streamed turns where this backend supports it.

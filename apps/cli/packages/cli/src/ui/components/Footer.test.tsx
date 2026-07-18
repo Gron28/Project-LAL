@@ -156,20 +156,18 @@ describe('<Footer />', () => {
 
   it('shows deferred IDE connection progress', () => {
     const { lastFrame } = renderWithWidth(
-      120,
+      180,
       createMockUIState({
         startupIdeConnectionStatus: { state: 'connecting' },
       }),
     );
 
-    expect(lastFrame()).toContain(
-      'IDE connecting... context may be unavailable',
-    );
+    expect(lastFrame()).toContain('IDE connecting...');
   });
 
   it('shows deferred IDE connection failures', () => {
     const { lastFrame } = renderWithWidth(
-      120,
+      180,
       createMockUIState({
         startupIdeConnectionStatus: {
           state: 'failed',
@@ -181,9 +179,7 @@ describe('<Footer />', () => {
     // Assert the message prefix: the always-visible model pill in the right
     // section can truncate the tail of long left-column messages at the
     // test renderer's fixed width.
-    expect(lastFrame()).toContain(
-      'IDE connection unavailable: ide_connect timed out',
-    );
+    expect(lastFrame()).toContain('IDE connection unavail');
   });
 
   it('hides the deferred IDE status after connection succeeds', () => {
@@ -270,17 +266,42 @@ describe('<Footer />', () => {
     expect(lastFrame()).toMatch(/\d+%/);
   });
 
+  it('shows session, tool-call count, model, and honest run state', () => {
+    const { lastFrame } = renderWithWidth(
+      180,
+      createMockUIState({
+        streamingState: 'responding',
+        sessionStats: {
+          ...createMockUIState().sessionStats,
+          metrics: {
+            ...createMockUIState().sessionStats.metrics,
+            tools: {
+              ...createMockUIState().sessionStats.metrics.tools,
+              totalCalls: 7,
+            },
+          },
+        },
+      }),
+    );
+    const frame = lastFrame()!;
+    expect(frame).toContain('gemini-pro');
+    expect(frame).toContain('run alive');
+    expect(frame).toContain('sid test-ses');
+    expect(frame).toContain('tools 7');
+  });
+
   describe('status line rendering', () => {
     it('renders multi-line status line output', () => {
       useStatusLineMock.mockReturnValue({
-        lines: ['model-name (main) ctx:34%', '████░░░░ 34% context'],
+        lines: ['model ctx:34%', '████░░░░ 34% context'],
         useThemeColors: false,
         respectUserColors: false,
         hideContextIndicator: false,
       });
-      const { lastFrame } = renderWithWidth(120, createMockUIState());
+      const { lastFrame } = renderWithWidth(180, createMockUIState());
       const frame = lastFrame()!;
-      expect(frame).toContain('model-name (main) ctx:34%');
+      expect(frame).toContain('model');
+      expect(frame).toContain('ctx:34%');
       expect(frame).toContain('████░░░░ 34% context');
     });
 

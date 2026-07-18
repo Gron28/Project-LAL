@@ -1109,6 +1109,38 @@ describe('loadCliConfig', () => {
     expect(config.getIncludePartialMessages()).toBe(true);
   });
 
+  it('defaults broad loop heuristics on for interactive sessions', async () => {
+    process.argv = [
+      'node',
+      'script.js',
+      '--prompt-interactive',
+      'continue this project',
+    ];
+    const argv = await parseArguments();
+    const config = await loadCliConfig({}, argv);
+
+    expect(config.getSkipLoopDetection()).toBe(false);
+  });
+
+  it('defaults broad loop heuristics on for unattended headless runs', async () => {
+    process.argv = ['node', 'script.js', '--prompt', 'finish this project'];
+    const argv = await parseArguments();
+    const config = await loadCliConfig({}, argv);
+
+    expect(config.getSkipLoopDetection()).toBe(false);
+  });
+
+  it('honors an explicit loop heuristic opt-out in interactive mode', async () => {
+    process.argv = ['node', 'script.js', '-i', 'continue this project'];
+    const argv = await parseArguments();
+    const config = await loadCliConfig(
+      { model: { skipLoopDetection: true } },
+      argv,
+    );
+
+    expect(config.getSkipLoopDetection()).toBe(true);
+  });
+
   it('should prefer CLI fallback models over settings fallback models', async () => {
     process.argv = ['node', 'script.js', '--fallback-model', 'cli-a,cli-b'];
     const argv = await parseArguments();

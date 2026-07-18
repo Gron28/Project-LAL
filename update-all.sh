@@ -80,6 +80,52 @@ refresh_tailscale_ui() {
   tailscale serve status
 }
 
+verify_tailnet_routes() {
+  if ! command -v tailscale >/dev/null 2>&1; then
+    echo "Tailnet route verification failed: tailscale is not installed." >&2
+    return 1
+  fi
+
+  local status root_url lal_url
+  status="$(tailscale serve status 2>&1)" || {
+    echo "Tailnet route verification failed: cannot read Tailscale Serve status." >&2
+    echo "$status" >&2
+    return 1
+  }
+  root_url="$(printf '%s\n' "$status" | sed -nE 's#^[[:space:]]*(https://[^/:[:space:]]+)(/)?[[:space:]].*#\1#p' | head -n1)"
+  [ -n "$root_url" ] || root_url="$(printf '%s\n' "$status" | sed -nE 's#^[[:space:]]*(https://[^/:[:space:]]+)(/)?$#\1#p' | head -n1)"
+  [ -n "$root_url" ] || {
+    echo "Tailnet route verification failed: root HTTPS listener is missing." >&2
+    echo "$status" >&2
+    return 1
+  }
+  lal_url="${root_url}:8443"
+
+  if ! printf '%s\n' "$status" | node -e '
+    let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => {
+      const blocks = s.split(/(?=https:\/\/)/g);
+      const root = blocks.find(b => /^https:\/\/[^\s/:]+\/?(?:\s|$)/.test(b.trim()));
+      const lal = blocks.find(b => /^https:\/\/[^\s/]+:8443\/?(?:\s|$)/.test(b.trim()));
+      if (!root || !/(?:127\.0\.0\.1|localhost):3000\b/.test(root)) {
+        console.error("Inbox root 443 is not mapped to :3000"); process.exit(1);
+      }
+      if (!lal || !/(?:127\.0\.0\.1|localhost):8770\b/.test(lal)) {
+        console.error("LAL 8443 is not mapped to :8770"); process.exit(1);
+      }
+    });
+  '; then
+    echo "Tailnet route verification failed. Current Serve configuration:" >&2
+    echo "$status" >&2
+    return 1
+  fi
+
+  echo "==> Smoke-testing Inbox root 443 -> :3000"
+  curl --max-time 15 --silent --show-error --fail-with-body "$root_url/" >/dev/null
+  echo "==> Smoke-testing LAL 8443 -> :8770"
+  curl --max-time 15 --silent --show-error --fail-with-body "$lal_url/api/sysinfo" |
+    node -e 'let s=""; process.stdin.on("data",d=>s+=d); process.stdin.on("end",()=>{const x=JSON.parse(s); if (!x.runtime) throw new Error("LAL sysinfo response has no runtime status");});'
+}
+
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/update-all-local-ai-lab-${UID}.lock"
 exec 9>"$LOCK"
 if ! flock -n 9; then
@@ -137,6 +183,7 @@ echo "==> Safely building and deploying the web UI/API"
 OPEN_BROWSER="$OPEN_BROWSER" "$ROOT/scripts/rebuild-local-ai-lab.sh"
 
 refresh_tailscale_ui
+verify_tailnet_routes
 
 echo "==> Refreshing this machine's CLI, managed settings, and system prompt"
 LAL_SKIP_CLI_BUILD=1 "$ROOT/scripts/install-local-lal.sh"

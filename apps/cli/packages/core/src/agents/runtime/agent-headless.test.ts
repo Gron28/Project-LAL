@@ -1239,6 +1239,88 @@ describe('subagent.ts', () => {
         expect(scope.getTerminateMode()).toBe(AgentTerminateMode.GOAL);
       });
 
+      it('should execute different calls when a provider reuses one raw call id', async () => {
+        const listFilesToolDef: FunctionDeclaration = {
+          name: 'list_files',
+          description: 'Lists files',
+          parameters: { type: Type.OBJECT, properties: {} },
+        };
+
+        const { config } = await createMockConfig({
+          getFunctionDeclarationsFiltered: vi
+            .fn()
+            .mockReturnValue([listFilesToolDef]),
+          getTool: vi.fn().mockReturnValue(undefined),
+        });
+        const [reusedIdPart] = normalizeModelToolCallIds(
+          [
+            {
+              functionCall: {
+                id: 'call_1',
+                name: 'list_files',
+                args: { path: 'src' },
+              },
+            },
+          ],
+          new Set(['call_1']),
+          new Set<string>(),
+        );
+
+        mockSendMessageStream.mockImplementation(
+          createMockStream([
+            [
+              {
+                id: 'call_1',
+                name: 'list_files',
+                args: { path: '.' },
+              },
+            ],
+            [reusedIdPart!.functionCall!],
+            'stop',
+          ]),
+        );
+
+        const listFilesInvocation = {
+          params: { path: '.' },
+          getDescription: vi.fn().mockReturnValue('List files'),
+          toolLocations: vi.fn().mockReturnValue([]),
+          getDefaultPermission: vi.fn().mockResolvedValue('allow'),
+          execute: vi.fn().mockResolvedValue({
+            llmContent: 'files',
+            returnDisplay: 'Listed files',
+          }),
+        };
+        const listFilesTool = {
+          name: 'list_files',
+          displayName: 'List Files',
+          description: 'List files in directory',
+          kind: 'READ' as const,
+          schema: listFilesToolDef,
+          build: vi.fn().mockReturnValue(listFilesInvocation),
+          canUpdateOutput: false,
+          isOutputMarkdown: true,
+        } as unknown as AnyDeclarativeTool;
+        vi.mocked(
+          (config.getToolRegistry() as unknown as ToolRegistry).getTool,
+        ).mockImplementation((name: string) =>
+          name === 'list_files' ? listFilesTool : undefined,
+        );
+
+        const scope = await AgentHeadless.create(
+          'test-agent',
+          config,
+          promptConfig,
+          defaultModelConfig,
+          defaultRunConfig,
+          { tools: ['list_files'] },
+        );
+
+        await scope.execute(new ContextState());
+
+        expect(listFilesInvocation.execute).toHaveBeenCalledTimes(2);
+        expect(scope.getTerminateMode()).toBe(AgentTerminateMode.GOAL);
+      });
+
       it('should stop repeated duplicate provider tool-call responses', async () => {
         const listFilesToolDef: FunctionDeclaration = {
           name: 'list_files',
@@ -1421,7 +1503,7 @@ describe('subagent.ts', () => {
         expect(scope.getTerminateMode()).toBe(AgentTerminateMode.LOOP_DETECTED);
       });
 
-      it('should ignore duplicate provider tool-call ids already present in chat history', async () => {
+      it('should execute the first semantic call after legacy raw history ids', async () => {
         const listFilesToolDef: FunctionDeclaration = {
           name: 'list_files',
           description: 'Lists files',
@@ -1502,22 +1584,18 @@ describe('subagent.ts', () => {
 
         await scope.execute(new ContextState());
 
-        expect(listFilesInvocation.execute).not.toHaveBeenCalled();
+        expect(listFilesInvocation.execute).toHaveBeenCalledTimes(1);
         expect(toolCallEvents).toHaveLength(1);
         expect(toolResultEvents).toHaveLength(1);
-        expect(toolCallEvents[0].callId).toMatch(
-          /^call_1__qwen_dup_2:duplicate:/,
-        );
+        expect(toolCallEvents[0].callId).toBe('call_1__qwen_dup_2');
         expect(toolResultEvents[0].callId).toBe(toolCallEvents[0].callId);
-        expect(toolResultEvents[0].error).toContain(
-          'Duplicate provider tool call id "call_1"',
-        );
+        expect(toolResultEvents[0].error).toBeUndefined();
 
         const secondCallArgs = mockSendMessageStream.mock.calls[1][1];
         const parts = secondCallArgs.message as Part[];
         expect(parts[0].functionResponse?.id).toBe('call_1__qwen_dup_2');
-        expect(parts[0].functionResponse?.response?.['error']).toContain(
-          'Duplicate provider tool call id "call_1"',
+        expect(parts[0].functionResponse?.response?.['output']).toContain(
+          'file1.txt',
         );
         expect(scope.getTerminateMode()).toBe(AgentTerminateMode.GOAL);
       });

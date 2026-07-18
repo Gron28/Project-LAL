@@ -9,7 +9,7 @@ import { AgentEventEmitter, AgentEventType } from '@qwen-code/qwen-code-core';
 import { GatewayClient } from '../attach/gateway-client.js';
 import { RemoteRunMirror } from './remote-run-mirror.js';
 
-function gateway() {
+function gateway(heartbeatResponse?: { cancelRequested?: boolean }) {
   return {
     registerClientRun: vi.fn(async () => ({
       runId: 'run-local-1',
@@ -17,7 +17,7 @@ function gateway() {
       writerToken: 'writer-secret',
     })),
     appendClientRunEvents: vi.fn(async () => undefined),
-    heartbeatClientRun: vi.fn(async () => undefined),
+    heartbeatClientRun: vi.fn(async () => heartbeatResponse),
     settleClientRun: vi.fn(async () => undefined),
   } as unknown as GatewayClient;
 }
@@ -26,57 +26,205 @@ describe('RemoteRunMirror', () => {
   it('registers the client-owned run and maps native observable events', async () => {
     const emitter = new AgentEventEmitter();
     const client = gateway();
-    const mirror = new RemoteRunMirror({ emitter, client, model: 'local-model' });
+    const mirror = new RemoteRunMirror({
+      emitter,
+      client,
+      model: 'local-model',
+    });
     await mirror.start();
 
     emitter.emit(AgentEventType.STREAM_TEXT, {
-      subagentId: 'a', round: 1, text: 'hello', thought: false, timestamp: 1,
+      subagentId: 'a',
+      round: 1,
+      text: 'hello',
+      thought: false,
+      timestamp: 1,
     });
     emitter.emit(AgentEventType.TOOL_CALL, {
-      subagentId: 'a', round: 1, callId: 'call-1', name: 'read_file', args: { path: 'x' }, description: 'read', timestamp: 2,
+      subagentId: 'a',
+      round: 1,
+      callId: 'call-1',
+      name: 'read_file',
+      args: { path: 'x' },
+      description: 'read',
+      timestamp: 2,
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(client.registerClientRun).toHaveBeenCalledWith({
-      conversationId: undefined, projectLabel: undefined, model: 'local-model', mode: undefined,
+      conversationId: undefined,
+      projectLabel: undefined,
+      model: 'local-model',
+      mode: undefined,
     });
     expect(client.appendClientRunEvents).toHaveBeenNthCalledWith(
-      1, 'run-local-1', 'writer-secret', expect.arrayContaining([
+      1,
+      'run-local-1',
+      'writer-secret',
+      expect.arrayContaining([
         expect.objectContaining({ event: { k: 'text', v: 'hello' } }),
       ]),
     );
     expect(client.appendClientRunEvents).toHaveBeenNthCalledWith(
-      2, 'run-local-1', 'writer-secret', expect.arrayContaining([
-        expect.objectContaining({ event: { k: 'tool_request', v: { id: 'call-1', name: 'read_file', args: { path: 'x' } } } }),
+      2,
+      'run-local-1',
+      'writer-secret',
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: {
+            k: 'tool_request',
+            v: { id: 'call-1', name: 'read_file', args: { path: 'x' } },
+          },
+        }),
       ]),
     );
-    expect(mirror.status()).toMatchObject({ state: 'active', runId: 'run-local-1' });
+    expect(mirror.status()).toMatchObject({
+      state: 'active',
+      runId: 'run-local-1',
+    });
     await mirror.stop();
   });
 
-  it('settles and detaches when the native agent finishes', async () => {
+  it('keeps the shared run active when one model reply finishes', async () => {
     const emitter = new AgentEventEmitter();
     const client = gateway();
-    const mirror = new RemoteRunMirror({ emitter, client, model: 'local-model' });
+    const mirror = new RemoteRunMirror({
+      emitter,
+      client,
+      model: 'local-model',
+    });
     await mirror.start();
     emitter.emit(AgentEventType.FINISH, {
-      subagentId: 'a', terminateReason: 'done', timestamp: 1,
+      subagentId: 'a',
+      terminateReason: 'done',
+      timestamp: 1,
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(client.settleClientRun).toHaveBeenCalledWith('run-local-1', 'writer-secret', 'done', undefined);
+    expect(client.settleClientRun).not.toHaveBeenCalled();
+    expect(mirror.status().state).toBe('active');
+    await mirror.stop();
+  });
+
+  it('reports progress as changed files and mechanical check outcomes', async () => {
+    const emitter = new AgentEventEmitter();
+    const client = gateway();
+    const mirror = new RemoteRunMirror({
+      emitter,
+      client,
+      model: 'local-model',
+    });
+    await mirror.start();
+
+    emitter.emit(AgentEventType.TOOL_CALL, {
+      subagentId: 'a',
+      round: 1,
+      callId: 'edit-1',
+      name: 'edit',
+      args: { file_path: '/project/game.js' },
+      description: 'edit',
+      timestamp: 1,
+    });
+    emitter.emit(AgentEventType.TOOL_RESULT, {
+      subagentId: 'a',
+      round: 1,
+      callId: 'edit-1',
+      name: 'edit',
+      success: true,
+      timestamp: 2,
+    });
+    emitter.emit(AgentEventType.TOOL_CALL, {
+      subagentId: 'a',
+      round: 2,
+      callId: 'test-1',
+      name: 'run_shell_command',
+      args: { command: 'npm test' },
+      description: 'test',
+      timestamp: 3,
+    });
+    emitter.emit(AgentEventType.TOOL_RESULT, {
+      subagentId: 'a',
+      round: 2,
+      callId: 'test-1',
+      name: 'run_shell_command',
+      success: true,
+      timestamp: 4,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const sent = (
+      client.appendClientRunEvents as ReturnType<typeof vi.fn>
+    ).mock.calls
+      .flatMap((call) => call[2] as Array<{ event: { k: string; v: unknown } }>)
+      .map((entry) => entry.event);
+    expect(sent).toContainEqual({
+      k: 'artifact',
+      v: { path: '/project/game.js', kind: 'file_change' },
+    });
+    expect(sent).toContainEqual({
+      k: 'phase',
+      v: { name: 'check passed: npm test' },
+    });
+    await mirror.stop();
+  });
+
+  it('cancels and settles the owning native session from a heartbeat', async () => {
+    const emitter = new AgentEventEmitter();
+    const client = gateway({ cancelRequested: true });
+    const onCancel = vi.fn();
+    const mirror = new RemoteRunMirror({
+      emitter,
+      client,
+      model: 'local-model',
+      onCancel,
+    });
+    await mirror.start();
+    await (
+      mirror as unknown as { sendHeartbeat(): Promise<void> }
+    ).sendHeartbeat();
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(client.settleClientRun).toHaveBeenCalledWith(
+      'run-local-1',
+      'writer-secret',
+      'stopped',
+      undefined,
+    );
     expect(mirror.status().state).toBe('stopped');
   });
 
   it('does not duplicate cumulative stream buffers in the remote transcript', async () => {
     const emitter = new AgentEventEmitter();
     const client = gateway();
-    const mirror = new RemoteRunMirror({ emitter, client, model: 'local-model' });
+    const mirror = new RemoteRunMirror({
+      emitter,
+      client,
+      model: 'local-model',
+    });
     await mirror.start();
-    emitter.emit(AgentEventType.STREAM_TEXT, { subagentId: 'a', round: 1, text: "Let's", thought: false, timestamp: 1 });
-    emitter.emit(AgentEventType.STREAM_TEXT, { subagentId: 'a', round: 1, text: "Let's begin", thought: false, timestamp: 2 });
-    emitter.emit(AgentEventType.ROUND_TEXT, { subagentId: 'a', round: 1, text: "Let's begin", thoughtText: '', timestamp: 3 });
+    emitter.emit(AgentEventType.STREAM_TEXT, {
+      subagentId: 'a',
+      round: 1,
+      text: "Let's",
+      thought: false,
+      timestamp: 1,
+    });
+    emitter.emit(AgentEventType.STREAM_TEXT, {
+      subagentId: 'a',
+      round: 1,
+      text: "Let's begin",
+      thought: false,
+      timestamp: 2,
+    });
+    emitter.emit(AgentEventType.ROUND_TEXT, {
+      subagentId: 'a',
+      round: 1,
+      text: "Let's begin",
+      thoughtText: '',
+      timestamp: 3,
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const sent = (client.appendClientRunEvents as ReturnType<typeof vi.fn>).mock.calls
+    const sent = (
+      client.appendClientRunEvents as ReturnType<typeof vi.fn>
+    ).mock.calls
       .flatMap((call) => call[2] as Array<{ event: { k: string; v: string } }>)
       .filter((entry) => entry.event.k === 'text')
       .map((entry) => entry.event.v)

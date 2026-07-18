@@ -208,6 +208,65 @@ function duplicateProviderToolCallMessage(providerCallId: string): string {
   return `Duplicate provider tool call id "${providerCallId}" was already handled. The duplicate tool call was ignored and not executed again.`;
 }
 
+/**
+ * Identity used only for suppressing a provider replay of the same logical
+ * tool call. Some OpenAI-compatible local servers reuse the response id as
+ * every tool-call id in a conversation. The normalized call id is unique, but
+ * `providerCallId` intentionally preserves that raw value for diagnostics.
+ * Keying only on the raw id therefore discarded legitimate read A -> read B
+ * sequences and starved the model of the second result. Include the semantic
+ * call shape so only an actually repeated call is treated as a duplicate.
+ */
+export function getToolCallDedupIdentity(request: {
+  callId?: string;
+  providerCallId?: string;
+  name?: string;
+  args?: unknown;
+}): string | undefined {
+  if (!request.providerCallId) return request.callId || undefined;
+  let args = '';
+  try {
+    args = JSON.stringify(request.args ?? {}) ?? '';
+  } catch {
+    args = String(request.args ?? '');
+  }
+  return `${request.providerCallId}\u0000${request.name ?? ''}\u0000${args}`;
+}
+
+/**
+ * A successful state-changing tool makes earlier read/call results stale.
+ * Retain the mutation's own identity (so an immediate provider replay is
+ * still suppressed) but forget prior semantic identities, allowing the model
+ * to inspect what it just changed. Raw legacy ids contain no semantic shape
+ * and are intentionally left untouched.
+ */
+export function resetSemanticToolCallDedupAfterMutation(
+  request: {
+    callId?: string;
+    providerCallId?: string;
+    name?: string;
+    args?: unknown;
+  },
+  handledIds: Set<string>,
+  duplicateResponseIds: Set<string>,
+): void {
+  if (!isMutationBoundaryTool(request.name)) return;
+  const currentIdentity = getToolCallDedupIdentity(request);
+  for (const identity of handledIds) {
+    if (identity.includes('\u0000') && identity !== currentIdentity) {
+      handledIds.delete(identity);
+      duplicateResponseIds.delete(identity);
+    }
+  }
+}
+
+function isMutationBoundaryTool(name: string | undefined): boolean {
+  if (!name) return false;
+  return /(?:^|_)(?:write|edit|replace|patch|delete|remove|move|copy|create|execute|run_shell|todo|memory|deploy|install)(?:_|$)/i.test(
+    name,
+  );
+}
+
 export function createDuplicateProviderToolCallResponse(
   request: ToolCallRequestInfo,
 ): ToolCallResponseInfo {

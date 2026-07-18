@@ -1,4 +1,4 @@
-import { allModels, servingModel, servingRuntimeStatus } from "@/lib/lab";
+import { publicModels, servingModel, servingRuntimeStatus } from "@/lib/lab";
 import { cliAuthorized, cliDeviceCustomHeaders, recordCliAccess, unauthorizedResponse } from "@/lib/lal-cli";
 
 export const dynamic = "force-dynamic";
@@ -46,11 +46,7 @@ export function GET(request: Request) {
   // here hid every Gemma model from the picker even though they're legitimate,
   // selectable chat models. The web /chat route's silent image-attachment
   // auto-routing to a Gemma vision model is a separate, unrelated concern.
-  const models = allModels()
-    // Managed context profiles are internal runtime variants. The terminal
-    // should present the familiar base model once, not make the user choose a
-    // cache/window implementation detail.
-    .filter((model) => !model.name.endsWith("-lal-cli-16k"))
+  const models = publicModels()
     .map((model) => {
       const family = inferFamily(model.name);
       const role = inferRole(model.name);
@@ -114,7 +110,9 @@ export function GET(request: Request) {
         // Desktop automation contributes 35 schemas and exhausted Gemma's
         // effective request window before it could emit a useful token. A
         // coding project run does not need OS-level mouse/keyboard control.
-        computerUse: { enabled: false },
+        // Registered lazily behind tool_search. This gives the same agent an
+        // in-context browser acceptance path without prefilling 35 schemas.
+        computerUse: { enabled: true },
         core: [
           "read_file",
           "edit",

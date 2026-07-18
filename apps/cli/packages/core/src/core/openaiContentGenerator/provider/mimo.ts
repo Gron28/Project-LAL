@@ -34,6 +34,11 @@ export function isMiMoProvider(
 }
 
 export class MiMoOpenAICompatibleProvider extends DefaultOpenAICompatibleProvider {
+  // MiMo accepts reasoning_content on input; native replay, no inlining.
+  protected override shouldReplayReasoningInline(): boolean {
+    return false;
+  }
+
   constructor(
     contentGeneratorConfig: ContentGeneratorConfig,
     cliConfig: Config,

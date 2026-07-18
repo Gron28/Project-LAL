@@ -690,7 +690,7 @@ describe('runNonInteractive', () => {
     expect(mockCoreExecuteToolCall).not.toHaveBeenCalled();
     expect(processStdoutSpy).not.toHaveBeenCalled();
     expect(processStderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Loop detection halted the run'),
+      expect.stringContaining('Loop recovery halted the run'),
     );
   });
 
@@ -730,7 +730,7 @@ describe('runNonInteractive', () => {
     // which cannot disable it.
     expect(processStderrSpy).toHaveBeenCalledWith(
       expect.stringContaining(
-        'always-on guard and cannot be disabled via `model.skipLoopDetection`',
+        'exact-repeat guard remains enabled in every mode',
       ),
     );
     expect(processStderrSpy).not.toHaveBeenCalledWith(
@@ -740,7 +740,7 @@ describe('runNonInteractive', () => {
     );
   });
 
-  it('shows the skipLoopDetection escape hint for a heuristic loop type', async () => {
+  it('shows a bounded recovery handoff for a heuristic loop type', async () => {
     setupMetricsMock();
     const toolCallEvent: ServerGeminiStreamEvent = {
       type: GeminiEventType.ToolCallRequest,
@@ -771,16 +771,15 @@ describe('runNonInteractive', () => {
     );
 
     expect(exitCode).toBe(1);
-    // A heuristic loop IS gated by skipLoopDetection, so the message must offer
-    // that escape hatch and must NOT claim it is an always-on guard. (Mutation
-    // guard: routing all types into the always-on hint would fail here.)
+    // A repeated heuristic recovery preserves context and keeps detection
+    // enabled; it must not offer a whole-session disable escape hatch.
     expect(processStderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining('bounded recovery attempt repeated this pattern'),
+    );
+    expect(processStderrSpy).not.toHaveBeenCalledWith(
       expect.stringContaining(
         'Set the `model.skipLoopDetection` setting to true',
       ),
-    );
-    expect(processStderrSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining('always-on guard'),
     );
   });
 
@@ -855,7 +854,7 @@ describe('runNonInteractive', () => {
     const resultMessage = parsed.find((msg) => msg.type === 'result');
     expect(resultMessage?.is_error).toBe(true);
     expect(resultMessage?.error?.message).toContain(
-      'Loop detection halted the run',
+      'Loop recovery halted the run',
     );
   });
 
@@ -1048,6 +1047,67 @@ describe('runNonInteractive', () => {
     ).toHaveBeenCalled();
   });
 
+  it('continues with acceptance checks after a successful file mutation', async () => {
+    setupMetricsMock();
+    const editCall: ServerGeminiStreamEvent = {
+      type: GeminiEventType.ToolCallRequest,
+      value: {
+        callId: 'edit-1',
+        name: 'edit',
+        args: {
+          file_path: '/tmp/game.js',
+          old_string: 'broken',
+          new_string: 'fixed',
+        },
+        isClientInitiated: false,
+        prompt_id: 'prompt-acceptance',
+      },
+    };
+    mockCoreExecuteToolCall.mockResolvedValue({
+      responseParts: [{ text: 'edit applied' }],
+    });
+    mockGeminiClient.sendMessageStream
+      .mockReturnValueOnce(createStreamFromEvents([editCall]))
+      .mockReturnValueOnce(
+        createStreamFromEvents([
+          { type: GeminiEventType.Content, value: 'The edit is done.' },
+        ]),
+      )
+      .mockReturnValueOnce(
+        createStreamFromEvents([
+          { type: GeminiEventType.Content, value: 'Acceptance passed.' },
+          {
+            type: GeminiEventType.Finished,
+            value: {
+              reason: undefined,
+              usageMetadata: { totalTokenCount: 12 },
+            },
+          },
+        ]),
+      );
+
+    await runNonInteractive(
+      mockConfig,
+      mockSettings,
+      'Fix the game',
+      'prompt-acceptance',
+    );
+
+    expect(mockGeminiClient.sendMessageStream).toHaveBeenCalledTimes(3);
+    expect(mockGeminiClient.sendMessageStream).toHaveBeenNthCalledWith(
+      3,
+      [
+        expect.objectContaining({
+          text: expect.stringContaining('agent exit is not completion'),
+        }),
+      ],
+      expect.any(AbortSignal),
+      'prompt-acceptance',
+      { type: SendMessageType.Retry },
+    );
+    expect(processStdoutSpy).toHaveBeenCalledWith('Acceptance passed.\n');
+  });
+
   it('should ignore duplicate provider tool-call ids across rounds', async () => {
     setupMetricsMock();
     vi.mocked(mockConfig.getMaxToolCalls).mockReturnValue(1);
@@ -1097,6 +1157,70 @@ describe('runNonInteractive', () => {
       'Duplicate provider tool call id "tool-1"',
     );
     expect(processStdoutSpy).toHaveBeenCalledWith('Final answer\n');
+  });
+
+  it('executes different calls when a local provider reuses one raw call id', async () => {
+    setupMetricsMock();
+    const first: ServerGeminiStreamEvent = {
+      type: GeminiEventType.ToolCallRequest,
+      value: {
+        callId: 'response-id',
+        providerCallId: 'response-id',
+        name: 'read_file',
+        args: { file_path: 'index.html' },
+        isClientInitiated: false,
+        prompt_id: 'prompt-id-reused-provider-id',
+      },
+    };
+    const second: ServerGeminiStreamEvent = {
+      type: GeminiEventType.ToolCallRequest,
+      value: {
+        callId: 'response-id__qwen_dup_2',
+        providerCallId: 'response-id',
+        name: 'read_file',
+        args: { file_path: 'src/constants.js' },
+        isClientInitiated: false,
+        prompt_id: 'prompt-id-reused-provider-id',
+      },
+    };
+    mockCoreExecuteToolCall.mockResolvedValue({
+      responseParts: [{ text: 'file contents' }],
+    });
+    mockGeminiClient.sendMessageStream
+      .mockReturnValueOnce(createStreamFromEvents([first]))
+      .mockReturnValueOnce(createStreamFromEvents([second]))
+      .mockReturnValueOnce(
+        createStreamFromEvents([
+          { type: GeminiEventType.Content, value: 'Both files inspected' },
+          {
+            type: GeminiEventType.Finished,
+            value: {
+              reason: undefined,
+              usageMetadata: { totalTokenCount: 10 },
+            },
+          },
+        ]),
+      );
+
+    const exitCode = await runNonInteractive(
+      mockConfig,
+      mockSettings,
+      'Inspect the project',
+      'prompt-id-reused-provider-id',
+    );
+
+    expect(exitCode).toBe(0);
+    expect(mockCoreExecuteToolCall).toHaveBeenCalledTimes(2);
+    expect(mockCoreExecuteToolCall).toHaveBeenNthCalledWith(
+      2,
+      mockConfig,
+      expect.objectContaining({
+        callId: 'response-id__qwen_dup_2',
+        args: { file_path: 'src/constants.js' },
+      }),
+      expect.any(AbortSignal),
+      expect.any(Object),
+    );
   });
 
   it('should stop repeated duplicate provider tool-call responses', async () => {
@@ -1155,9 +1279,7 @@ describe('runNonInteractive', () => {
       expect.stringContaining(LoopType.GLOBAL_TOOL_CALL_DUPLICATE),
     );
     expect(processStderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'always-on guard and cannot be disabled via `model.skipLoopDetection`',
-      ),
+      expect.stringContaining('bounded recovery attempt repeated this pattern'),
     );
     expect(processStderrSpy).not.toHaveBeenCalledWith(
       expect.stringContaining(
@@ -1168,6 +1290,9 @@ describe('runNonInteractive', () => {
 
   it('should stop repeated duplicate provider tool-call responses from drain items', async () => {
     setupMetricsMock();
+    mockCoreExecuteToolCall.mockResolvedValue({
+      responseParts: [{ text: 'Tool response' }],
+    });
     mockGeminiClient.getHistoryFunctionResponseIds.mockReturnValue(
       new Set(['tool-drain']),
     );
@@ -1227,6 +1352,7 @@ describe('runNonInteractive', () => {
         ]),
       )
       .mockReturnValueOnce(createStreamFromEvents([duplicateToolCallEvent]))
+      .mockReturnValueOnce(createStreamFromEvents([duplicateToolCallEvent]))
       .mockReturnValueOnce(
         createStreamFromEvents([duplicateToolCallEvent, freshToolCallEvent]),
       );
@@ -1239,11 +1365,11 @@ describe('runNonInteractive', () => {
     );
 
     expect(exitCode).toBe(1);
-    expect(mockGeminiClient.sendMessageStream).toHaveBeenCalledTimes(3);
-    expect(mockCoreExecuteToolCall).not.toHaveBeenCalled();
+    expect(mockGeminiClient.sendMessageStream).toHaveBeenCalledTimes(4);
+    expect(mockCoreExecuteToolCall).toHaveBeenCalledTimes(1);
 
     const duplicateParts = mockGeminiClient.sendMessageStream.mock
-      .calls[2][0] as Part[];
+      .calls[3][0] as Part[];
     expect(duplicateParts[0].functionResponse?.response?.['error']).toContain(
       'Duplicate provider tool call id "tool-drain"',
     );
@@ -1252,8 +1378,11 @@ describe('runNonInteractive', () => {
     );
   });
 
-  it('should ignore duplicate provider tool-call ids already present in chat history', async () => {
+  it('should execute the first semantic call after legacy raw history ids', async () => {
     setupMetricsMock();
+    mockCoreExecuteToolCall.mockResolvedValue({
+      responseParts: [{ text: 'Tool response' }],
+    });
     mockGeminiClient.getHistoryFunctionResponseIds.mockReturnValue(
       new Set(['tool-history']),
     );
@@ -1292,16 +1421,11 @@ describe('runNonInteractive', () => {
     );
 
     expect(mockGeminiClient.sendMessageStream).toHaveBeenCalledTimes(2);
-    expect(mockCoreExecuteToolCall).not.toHaveBeenCalled();
-    expect(mockGeminiClient.recordCompletedToolCall).not.toHaveBeenCalled();
+    expect(mockCoreExecuteToolCall).toHaveBeenCalledTimes(1);
+    expect(mockGeminiClient.recordCompletedToolCall).toHaveBeenCalledTimes(1);
 
-    const duplicateParts = mockGeminiClient.sendMessageStream.mock.calls[1][0];
-    expect(duplicateParts[0].functionResponse?.id).toBe(
-      'tool-history__qwen_dup_2',
-    );
-    expect(duplicateParts[0].functionResponse?.response?.['error']).toContain(
-      'Duplicate provider tool call id "tool-history"',
-    );
+    const toolResultParts = mockGeminiClient.sendMessageStream.mock.calls[1][0];
+    expect(toolResultParts[0].text).toBe('Tool response');
     expect(processStdoutSpy).toHaveBeenCalledWith('Final answer\n');
   });
 
@@ -4307,7 +4431,10 @@ describe('runNonInteractive', () => {
           callId: 'tool-side',
           providerCallId: 'tool-side',
           name: 'side_effect_tool',
-          args: { path: '/tmp/second' },
+          // A provider replay is a duplicate only when the semantic call is
+          // identical. Local OpenAI-compatible servers may reuse this raw id
+          // for a different tool/argument tuple, which must remain executable.
+          args: { path: '/tmp/first' },
           isClientInitiated: false,
           prompt_id: 'prompt-id-dup-structured',
         },

@@ -61,7 +61,7 @@ type LiveRun = {
 
 type ClientLiveRun = { meta: RunMeta; subscribers: Set<(line: Line) => void> };
 type ClientCommand = { id: string; type: "submit"; text: string; requestedByDeviceId: string; createdAt: number; leaseId?: string; leaseExpiresAt?: number };
-type ClientRunCapability = { version: 1; ownerDeviceId: string; tokenHash: string; controlTokenHash: string; lastHeartbeatAt: number; commands?: ClientCommand[] };
+type ClientRunCapability = { version: 1; ownerDeviceId: string; tokenHash: string; controlTokenHash: string; lastHeartbeatAt: number; cancelRequested?: boolean; commands?: ClientCommand[] };
 export type ClientRunInit = { kind: RunKind; conversationId?: string; projectLabel?: string; model?: string; mode?: string };
 export type ClientEventInput = { clientEventId: string; event: RunEvent };
 export type ClientEventReceipt = { clientEventId: string; seq: number };
@@ -336,7 +336,7 @@ export function heartbeatClientRun(meta: RunMeta, ack?: { id?: unknown; leaseId?
     writeCapability(meta.id, cap);
   }
   writeMeta(meta);
-  return { cancelRequested: false, ...(command ? { command } : {}) };
+  return { cancelRequested: cap?.cancelRequested === true, ...(command ? { command } : {}) };
 }
 
 /** Queue a deliberately tiny inbound control surface for a paired terminal.
@@ -443,7 +443,15 @@ export function startRun(
 
 export function stopRun(id: string): boolean {
   const lr = live.get(id);
-  if (!lr) return false;
+  if (!lr) {
+    const meta = getRun(id);
+    if (!meta || meta.executionLocation !== "client" || meta.status !== "running") return false;
+    const cap = readCapability(id);
+    if (!cap) return false;
+    cap.cancelRequested = true;
+    writeCapability(id, cap);
+    return true;
+  }
   // resolve pending approvals as denied first — a loop parked on an approval
   // promise can't observe the abort signal until that promise settles
   for (const [cid, resolve] of lr.approvals) { try { resolve(false); } catch {} lr.approvals.delete(cid); }
@@ -456,9 +464,16 @@ export function stopRun(id: string): boolean {
 // observe the same signal before the next model/tool step; pending approvals are
 // also denied by stopRun so nothing remains parked in memory waiting for a click.
 export function stopAllRuns(): string[] {
-  const ids = [...live.keys()];
+  sweepClientRuns();
+  const ids = new Set([
+    ...live.keys(),
+    ...clientLive.keys(),
+    ...listRuns(500)
+      .filter((run) => run.status === "running")
+      .map((run) => run.id),
+  ]);
   for (const id of ids) stopRun(id);
-  return ids;
+  return [...ids];
 }
 
 export function getRun(id: string): RunMeta | null {

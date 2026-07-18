@@ -121,8 +121,23 @@ export const Footer: React.FC = () => {
   );
 
   const gatewayStats = useGatewayStats();
-  const isRunning = uiState.streamingState !== 'idle';
+  // Either source can be ahead of the other by one polling interval. Treat a
+  // live local turn or a gateway-owned run as alive; neither implies that the
+  // requested work has passed acceptance.
+  const isRunning =
+    uiState.streamingState !== 'idle' || gatewayStats?.runAlive === true;
   const configuredModel = config.getModel();
+  const sessionId = config.getSessionId();
+  const toolCallCount = uiState.sessionStats.metrics.tools.totalCalls;
+  let lastLoopType: string | null = null;
+  try {
+    lastLoopType = config
+      .getGeminiClient()
+      .getLoopDetectionService()
+      .getLastLoopType();
+  } catch {
+    // The footer can render during startup before the client is initialized.
+  }
   // Host truth beats client assumption: flag when the gateway is serving a
   // different model than the one this session is configured for.
   const modelMismatch =
@@ -154,6 +169,42 @@ export const Footer: React.FC = () => {
           ) : null}
         </Text>
       ),
+    });
+  }
+  rightItems.push({
+    key: 'run',
+    node: (
+      <Text color={isRunning ? theme.status.success : theme.text.secondary}>
+        {isRunning ? 'run alive' : 'run idle'}
+      </Text>
+    ),
+  });
+  rightItems.push({
+    key: 'session',
+    node: (
+      <Text
+        color={theme.text.secondary}
+      >{`sid ${sessionId.slice(0, 8)}`}</Text>
+    ),
+  });
+  rightItems.push({
+    key: 'tools',
+    node: <Text color={theme.text.secondary}>{`tools ${toolCallCount}`}</Text>,
+  });
+  if (gatewayStats?.backend) {
+    rightItems.push({
+      key: 'backend',
+      node: (
+        <Text color={theme.text.secondary}>
+          {`${gatewayStats.backend}${gatewayStats.gpuOffload ? ` ${gatewayStats.gpuOffload}` : ''}${gatewayStats.activeContext ? ` ${Math.round(gatewayStats.activeContext / 1024)}k` : ''}`}
+        </Text>
+      ),
+    });
+  }
+  if (lastLoopType) {
+    rightItems.push({
+      key: 'loop',
+      node: <Text color={theme.status.warning}>{`loop ${lastLoopType}`}</Text>,
     });
   }
   if (gatewayStats && gatewayStats.vramUsedGb != null) {

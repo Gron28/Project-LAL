@@ -34,6 +34,8 @@ import {
 import {
   createDuplicateProviderToolCallResponse,
   findRepeatedDuplicateProviderToolCall,
+  getToolCallDedupIdentity,
+  resetSemanticToolCallDedupAfterMutation,
   GeminiEventType,
   markDuplicateProviderToolCallResponseSent,
   type ServerGeminiStreamEvent,
@@ -911,9 +913,15 @@ export class AgentCore {
                   text: txt,
                   thought: isThought,
                   ...(() => {
-                    const signal = p as typeof p & { p?: number; alts?: [string, number][] };
+                    const signal = p as typeof p & {
+                      p?: number;
+                      alts?: [string, number][];
+                    };
                     return typeof signal.p === 'number'
-                      ? { p: signal.p, ...(signal.alts?.length ? { alts: signal.alts } : {}) }
+                      ? {
+                          p: signal.p,
+                          ...(signal.alts?.length ? { alts: signal.alts } : {}),
+                        }
                       : {};
                   })(),
                   timestamp: Date.now(),
@@ -1364,12 +1372,21 @@ export class AgentCore {
   }> {
     const toolResponseParts: Part[] = [];
     const uniqueFunctionCalls = dedupeToolCallsById(functionCalls);
+    const dedupIdentity = (fc: FunctionCall): string | undefined => {
+      const rawProviderCallId = getProviderToolCallId(fc) ?? fc.id;
+      return getToolCallDedupIdentity({
+        callId: fc.id,
+        providerCallId: rawProviderCallId,
+        name: fc.name,
+        args: fc.args,
+      });
+    };
 
     // Build allowed tool names set for filtering
     const allowedToolNames = new Set(toolsList.map((t) => t.name));
     const repeatedDuplicateCall = findRepeatedDuplicateProviderToolCall(
       uniqueFunctionCalls,
-      (fc) => getProviderToolCallId(fc) ?? fc.id,
+      dedupIdentity,
       handledProviderToolCallIds,
       duplicateProviderToolCallResponseIds,
     );
@@ -1394,6 +1411,7 @@ export class AgentCore {
     for (const fc of uniqueFunctionCalls) {
       const callId = fc.id ?? `${fc.name}-${Date.now()}`;
       const providerCallId = getProviderToolCallId(fc) ?? fc.id;
+      const toolCallIdentity = dedupIdentity(fc);
       const toolName = String(fc.name);
       const args = (fc.args ?? {}) as Record<string, unknown>;
 
@@ -1425,10 +1443,10 @@ export class AgentCore {
         continue;
       }
 
-      if (providerCallId) {
-        if (handledProviderToolCallIds.has(providerCallId)) {
+      if (toolCallIdentity) {
+        if (handledProviderToolCallIds.has(toolCallIdentity)) {
           markDuplicateProviderToolCallResponseSent(
-            providerCallId,
+            toolCallIdentity,
             duplicateProviderToolCallResponseIds,
           );
 
@@ -1467,7 +1485,7 @@ export class AgentCore {
           toolResponseParts.push(...response.responseParts);
           continue;
         }
-        handledProviderToolCallIds.add(providerCallId);
+        handledProviderToolCallIds.add(toolCallIdentity);
       }
       authorizedCalls.push(fc);
     }
@@ -1508,6 +1526,14 @@ export class AgentCore {
             call.status === 'error' || call.status === 'cancelled'
               ? call.response.error?.message
               : undefined;
+
+          if (success) {
+            resetSemanticToolCallDedupAfterMutation(
+              call.request,
+              handledProviderToolCallIds,
+              duplicateProviderToolCallResponseIds,
+            );
+          }
 
           // Record stats
           this.recordToolCallStats(toolName, success, duration, errorMessage);

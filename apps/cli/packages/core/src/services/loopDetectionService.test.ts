@@ -230,8 +230,8 @@ describe('LoopDetectionService', () => {
     });
   });
 
-  describe('Shell Command Stagnation (Always-On Circuit Breaker)', () => {
-    it('halts repeated git inspection command variants via the always-on guard', () => {
+  describe('Shell Command Stagnation (Headless Heuristic)', () => {
+    it('does not halt repeated git inspection variants via the always-on guard', () => {
       const commands = [
         'git status --short',
         'git status --short && git diff --stat',
@@ -244,24 +244,20 @@ describe('LoopDetectionService', () => {
       ];
 
       for (const command of commands.slice(0, -1)) {
-        expect(
-          service.checkAlwaysOnSafeties(
-            createToolCallRequestEvent('run_shell_command', {
-              command,
-              description: 'Inspect repository changes',
-            }),
-          ),
-        ).toBe(false);
+        const event = createToolCallRequestEvent('run_shell_command', {
+          command,
+          description: 'Inspect repository changes',
+        });
+        expect(service.checkAlwaysOnSafeties(event)).toBe(false);
+        expect(service.addAndCheckHeuristicLoops(event)).toBe(false);
       }
 
-      expect(
-        service.checkAlwaysOnSafeties(
-          createToolCallRequestEvent('run_shell_command', {
-            command: commands.at(-1),
-            description: 'Inspect repository changes',
-          }),
-        ),
-      ).toBe(true);
+      const finalEvent = createToolCallRequestEvent('run_shell_command', {
+        command: commands.at(-1),
+        description: 'Inspect repository changes',
+      });
+      expect(service.checkAlwaysOnSafeties(finalEvent)).toBe(false);
+      expect(service.addAndCheckHeuristicLoops(finalEvent)).toBe(true);
       expect(service.getLastLoopType()).toBe(LoopType.SHELL_COMMAND_STAGNATION);
       expect(loggers.logLoopDetected).toHaveBeenCalledWith(
         mockConfig,
@@ -442,7 +438,7 @@ describe('LoopDetectionService', () => {
       );
     });
 
-    it('halts newline-separated git inspection command variants', () => {
+    it('halts newline-separated git inspection variants only heuristically', () => {
       const commands = [
         'git diff --stat\ngit status --short',
         'git diff --name-only HEAD\ngit ls-files --modified',
@@ -455,24 +451,20 @@ describe('LoopDetectionService', () => {
       ];
 
       for (const command of commands.slice(0, -1)) {
-        expect(
-          service.checkAlwaysOnSafeties(
-            createToolCallRequestEvent('run_shell_command', {
-              command,
-              description: 'Inspect repository changes',
-            }),
-          ),
-        ).toBe(false);
+        const event = createToolCallRequestEvent('run_shell_command', {
+          command,
+          description: 'Inspect repository changes',
+        });
+        expect(service.checkAlwaysOnSafeties(event)).toBe(false);
+        expect(service.addAndCheckHeuristicLoops(event)).toBe(false);
       }
 
-      expect(
-        service.checkAlwaysOnSafeties(
-          createToolCallRequestEvent('run_shell_command', {
-            command: commands.at(-1),
-            description: 'Inspect repository changes',
-          }),
-        ),
-      ).toBe(true);
+      const finalEvent = createToolCallRequestEvent('run_shell_command', {
+        command: commands.at(-1),
+        description: 'Inspect repository changes',
+      });
+      expect(service.checkAlwaysOnSafeties(finalEvent)).toBe(false);
+      expect(service.addAndCheckHeuristicLoops(finalEvent)).toBe(true);
       expect(service.getLastLoopType()).toBe(LoopType.SHELL_COMMAND_STAGNATION);
     });
 
@@ -1548,6 +1540,25 @@ describe('LoopDetectionService', () => {
   });
 
   describe('Global Tool Call Duplicate Detection', () => {
+    it('starts a fresh duplicate epoch after a mutation before re-reading', () => {
+      service.reset('');
+      const read = createToolCallRequestEvent('read_file', {
+        file_path: '/tmp/game.js',
+      });
+      const edit = createToolCallRequestEvent('edit', {
+        file_path: '/tmp/game.js',
+        old_string: 'a',
+        new_string: 'b',
+      });
+
+      for (let i = 0; i < GLOBAL_DUPLICATE_THRESHOLD - 1; i++) {
+        expect(service.addAndCheckHeuristicLoops(read)).toBe(false);
+      }
+      expect(service.addAndCheckHeuristicLoops(edit)).toBe(false);
+      expect(service.addAndCheckHeuristicLoops(read)).toBe(false);
+      expect(service.getLastLoopType()).toBeNull();
+    });
+
     it('should not fire when same call appears fewer than threshold times', () => {
       service.reset('');
       const event = createToolCallRequestEvent('stuck_tool', {

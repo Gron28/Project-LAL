@@ -15,6 +15,8 @@ import {
   Turn,
   GeminiEventType,
   findRepeatedDuplicateProviderToolCall,
+  getToolCallDedupIdentity,
+  resetSemanticToolCallDedupAfterMutation,
 } from './turn.js';
 import type {
   GenerateContentResponse,
@@ -98,6 +100,29 @@ describe('findRepeatedDuplicateProviderToolCall', () => {
         new Set<string>(),
       ),
     ).toBeUndefined();
+  });
+});
+
+describe('resetSemanticToolCallDedupAfterMutation', () => {
+  it('allows post-edit verification reads while retaining the edit replay guard', () => {
+    const readIdentity = getToolCallDedupIdentity({
+      providerCallId: 'shared-response',
+      name: 'read_file',
+      args: { file_path: '/tmp/game.js' },
+    })!;
+    const editRequest = {
+      providerCallId: 'shared-response',
+      name: 'edit',
+      args: { file_path: '/tmp/game.js', old_string: 'a', new_string: 'b' },
+    };
+    const editIdentity = getToolCallDedupIdentity(editRequest)!;
+    const handled = new Set(['legacy-raw-id', readIdentity, editIdentity]);
+    const responded = new Set([readIdentity]);
+
+    resetSemanticToolCallDedupAfterMutation(editRequest, handled, responded);
+
+    expect(handled).toEqual(new Set(['legacy-raw-id', editIdentity]));
+    expect(responded).toEqual(new Set());
   });
 });
 

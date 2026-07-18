@@ -5,6 +5,7 @@
  */
 
 import type {
+  AgentEventEmitter,
   BackgroundTaskStatus,
   Config,
   CronJob,
@@ -40,6 +41,9 @@ import {
   isSystemReminderContent,
   markDuplicateProviderToolCallResponseSent,
   findRepeatedDuplicateProviderToolCall,
+  getToolCallDedupIdentity,
+  resetSemanticToolCallDedupAfterMutation,
+  AgentEventType,
 } from '@qwen-code/qwen-code-core';
 import type { Content, Part, PartListUnion } from '@google/genai';
 import type { CLIUserMessage, PermissionMode } from './nonInteractive/types.js';
@@ -154,16 +158,14 @@ function formatLoopDetectedMessage(loopType: LoopType | undefined): string {
   // dedicated hint instead of membership in this list.
   const isAlwaysOn =
     loopType === LoopType.CONSECUTIVE_IDENTICAL_TOOL_CALLS ||
-    loopType === LoopType.SHELL_COMMAND_STAGNATION ||
-    loopType === LoopType.GLOBAL_TOOL_CALL_DUPLICATE ||
     loopType === LoopType.INVALID_TOOL_PARAMS_STAGNATION;
   const hint =
     loopType === LoopType.TURN_TOOL_CALL_CAP
       ? ' Raise the `model.maxToolCallsPerTurn` setting to allow longer turns, or set it to 0 to disable the cap.'
       : isAlwaysOn
-        ? ' This is an always-on guard and cannot be disabled via `model.skipLoopDetection`.'
-        : ' Set the `model.skipLoopDetection` setting to true to disable.';
-  return `Loop detection halted the run${detail}.${hint}`;
+        ? ' This exact-repeat guard remains enabled in every mode.'
+        : ' The bounded recovery attempt repeated this pattern.';
+  return `Loop recovery halted the run${detail}.${hint} Conversation context and prior tool results were preserved.`;
 }
 
 /**
@@ -288,6 +290,8 @@ export interface RunNonInteractiveOptions {
   captureMonitorNotifications?: boolean;
   captureMonitorRegistrations?: boolean;
   onResultEmitted?: () => void;
+  /** Observable event surface used by the managed same-process /rc bridge. */
+  agentEventEmitter?: AgentEventEmitter;
   /**
    * Continue the most recent unfinished turn from chat history instead of
    * submitting `input` (which is ignored). No new user message enters the
@@ -885,6 +889,9 @@ export async function runNonInteractive(
 
       let isFirstTurn = true;
       let hasUnsentToolResponse = false;
+      let nextSyntheticSendType: SendMessageType | undefined;
+      let mutationGeneration = 0;
+      let acceptedMutationGeneration = 0;
       let modelOverride: string | undefined = inlineModelOverride;
       // An explicit inline `/model <id> <prompt>` override wins for the whole
       // turn: while active, skill-tool `modelOverride` writes (including the
@@ -1031,9 +1038,18 @@ export async function runNonInteractive(
           batchRequests.some((r) => r.name === ToolNames.STRUCTURED_OUTPUT);
         const getProviderResponseId = (
           request: ToolCallRequestInfo,
-        ): string | undefined =>
-          request.providerCallId ??
-          (structuredOutputActive ? undefined : request.callId || undefined);
+        ): string | undefined => {
+          // Always use semantic identity for newly received calls. A resumed
+          // transcript can contain legacy raw ids, but matching those here is
+          // unsafe: local OpenAI-compatible servers often reuse one response
+          // id for every later tool call. At worst an identical call is
+          // executed once after resume; the exact-call loop guard still bounds
+          // repetition without discarding legitimate continuation work.
+          return getToolCallDedupIdentity({
+            ...request,
+            callId: structuredOutputActive ? undefined : request.callId,
+          });
+        };
         const seenBatchCallIds = new Set<string>();
         const duplicateBatchRequests: ToolCallRequestInfo[] = [];
         const uniqueBatchRequests = batchRequests.filter((request) => {
@@ -1211,6 +1227,33 @@ export async function runNonInteractive(
           }
 
           adapter.emitToolResult(requestInfo, toolResponse);
+          if (!toolResponse.error) {
+            resetSemanticToolCallDedupAfterMutation(
+              requestInfo,
+              handledProviderToolCallIds,
+              duplicateProviderToolCallResponseIds,
+            );
+            if (
+              requestInfo.name === 'edit' ||
+              requestInfo.name === 'write_file' ||
+              requestInfo.name === 'agent'
+            ) {
+              mutationGeneration++;
+            }
+          }
+          options.agentEventEmitter?.emit(AgentEventType.TOOL_RESULT, {
+            subagentId: 'main',
+            round: turnCount,
+            callId: requestInfo.callId,
+            name: requestInfo.name,
+            success: !toolResponse.error,
+            ...(toolResponse.error
+              ? { error: String(toolResponse.error) }
+              : {}),
+            resultDisplay: toolResponse.resultDisplay,
+            responseParts: toolResponse.responseParts,
+            timestamp: Date.now(),
+          });
           config
             .getGeminiClient()
             .recordCompletedToolCall(
@@ -1344,7 +1387,10 @@ export async function runNonInteractive(
         }
 
         let sendType: SendMessageType;
-        if (isFirstTurn) {
+        if (nextSyntheticSendType) {
+          sendType = nextSyntheticSendType;
+          nextSyntheticSendType = undefined;
+        } else if (isFirstTurn) {
           sendType =
             continueSendType ??
             options.sendMessageType ??
@@ -1386,10 +1432,42 @@ export async function runNonInteractive(
           }
           // Use adapter for all event processing
           adapter.processEvent(event);
+          if (event.type === GeminiEventType.Content) {
+            options.agentEventEmitter?.emit(AgentEventType.STREAM_TEXT, {
+              subagentId: 'main',
+              round: turnCount,
+              text: String(event.value),
+              timestamp: Date.now(),
+            });
+          } else if (event.type === GeminiEventType.Thought) {
+            options.agentEventEmitter?.emit(AgentEventType.STREAM_TEXT, {
+              subagentId: 'main',
+              round: turnCount,
+              text: event.value.description,
+              thought: true,
+              timestamp: Date.now(),
+            });
+          } else if (event.type === GeminiEventType.ToolCallRequest) {
+            options.agentEventEmitter?.emit(AgentEventType.TOOL_CALL, {
+              subagentId: 'main',
+              round: turnCount,
+              callId: event.value.callId,
+              name: event.value.name,
+              args: event.value.args as Record<string, unknown>,
+              description: event.value.name,
+              timestamp: Date.now(),
+            });
+          }
           if (event.type === GeminiEventType.ToolCallRequest) {
             toolCallRequests.push(event.value);
           }
-          if (event.type === GeminiEventType.ModelFallback) {
+          if (
+            event.type === GeminiEventType.ModelFallback ||
+            event.type === GeminiEventType.Retry
+          ) {
+            // A retry starts a replacement continuation inside the same
+            // conversation. Never execute tool requests collected from the
+            // abandoned attempt after its recovery instruction arrives.
             toolCallRequests.length = 0;
           }
           if (
@@ -1553,6 +1631,36 @@ export async function runNonInteractive(
             continue;
           }
 
+          // A model stopping after a write is a handoff point, never proof of
+          // completion. Continue inside this same session with one compact
+          // acceptance instruction for every new mutation generation. If the
+          // verifier edits again, the increment causes one more inspection
+          // pass after that final edit; if it only tests successfully, the next
+          // tool-free reply may finish normally.
+          if (
+            !config.getJsonSchema() &&
+            mutationGeneration > acceptedMutationGeneration
+          ) {
+            acceptedMutationGeneration = mutationGeneration;
+            const acceptanceInstruction =
+              'Automatic acceptance continuation: agent exit is not completion. ' +
+              'Inspect the files changed since the last check and run the relevant ' +
+              'mechanical tests now. For browser, UI, or game work, exercise the ' +
+              'actual behavior with available browser/computer tools (discover them ' +
+              'with tool_search if needed); an HTTP status alone is not a browser ' +
+              'test. Use exact failures as feedback, fix them, and rerun acceptance ' +
+              'after the final edit. Finish only when observable checks pass.';
+            adapter.emitSystemMessage('acceptance_required', {
+              mutationGeneration,
+              instruction: acceptanceInstruction,
+            });
+            currentMessages = [
+              { role: 'user', parts: [{ text: acceptanceInstruction }] },
+            ];
+            nextSyntheticSendType = SendMessageType.Retry;
+            continue;
+          }
+
           // Drain-turns count toward getMaxSessionTurns() for symmetry with the main
           // loop — otherwise a looping cron or a model that keeps replying to
           // notifications could exceed the cap silently in headless runs.
@@ -1644,8 +1752,38 @@ export async function runNonInteractive(
                   await routeAbort();
                 }
                 adapter.processEvent(event);
-                if (event.type === GeminiEventType.ToolCallRequest) {
+                if (event.type === GeminiEventType.Content) {
+                  options.agentEventEmitter?.emit(AgentEventType.STREAM_TEXT, {
+                    subagentId: 'main',
+                    round: turnCount,
+                    text: String(event.value),
+                    timestamp: Date.now(),
+                  });
+                } else if (event.type === GeminiEventType.Thought) {
+                  options.agentEventEmitter?.emit(AgentEventType.STREAM_TEXT, {
+                    subagentId: 'main',
+                    round: turnCount,
+                    text: event.value.description,
+                    thought: true,
+                    timestamp: Date.now(),
+                  });
+                } else if (event.type === GeminiEventType.ToolCallRequest) {
+                  options.agentEventEmitter?.emit(AgentEventType.TOOL_CALL, {
+                    subagentId: 'main',
+                    round: turnCount,
+                    callId: event.value.callId,
+                    name: event.value.name,
+                    args: event.value.args as Record<string, unknown>,
+                    description: event.value.name,
+                    timestamp: Date.now(),
+                  });
                   itemToolCallRequests.push(event.value);
+                }
+                if (
+                  event.type === GeminiEventType.ModelFallback ||
+                  event.type === GeminiEventType.Retry
+                ) {
+                  itemToolCallRequests.length = 0;
                 }
                 if (event.type === GeminiEventType.LoopDetected) {
                   if (!loopDetected) {

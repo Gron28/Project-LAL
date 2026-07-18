@@ -57,7 +57,7 @@ const DEFAULT_SERVE_IDLE_MINUTES = 10;
 export function readSettings() {
   let s: SettingsFile = {};
   try { s = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")); } catch {}
-  const models = allModels();
+  const models = publicModels();
   const model = s.model && models.find((m) => m.name === s.model) ? s.model! : models[0]?.name ?? "";
   return {
     model, options: { ...DEFAULT_OPTIONS, ...(s.options || {}) }, system: s.system ?? "", web: !!s.web, groundDocs: !!s.groundDocs,
@@ -119,6 +119,14 @@ export function renameModel(oldName: string, newName: string): { ok: boolean; er
 }
 
 export type ModelInfo = { name: string; source: "local" | "ollama"; path: string; gb: number };
+export const MANAGED_MODEL_PROFILE_SUFFIX = "-lal-cli-16k";
+export const OLLAMA_CLI_CONTEXT = 16384;
+export function isPublicModelName(name: string): boolean {
+  return !name.endsWith(MANAGED_MODEL_PROFILE_SUFFIX);
+}
+export function publicModels(): ModelInfo[] {
+  return allModels().filter((model) => isPublicModelName(model.name));
+}
 export type ServingLora = { key: string; path: string };
 export type LoraRequest = { id: number; scale: number }[];
 export function allModels(): ModelInfo[] {
@@ -160,7 +168,7 @@ export function allModels(): ModelInfo[] {
 }
 
 // ---- llama-server singleton (persists across requests in one Node process) ----
-type Srv = { proc: ChildProcess | null; model: string | null; ollamaModel: string | null; lastUsedAt?: number; loras: ServingLora[]; ctx: number };
+type Srv = { proc: ChildProcess | null; model: string | null; ollamaModel: string | null; ollamaCtx?: number; ollamaOffload?: string | null; lastUsedAt?: number; loras: ServingLora[]; ctx: number; offload?: string | null };
 const g = globalThis as unknown as { __lab_srv?: Srv; __lab_idle_reaper?: ReturnType<typeof setInterval> };
 if (!g.__lab_srv) g.__lab_srv = { proc: null, model: null, ollamaModel: null, loras: [], ctx: 0 };
 const srv = g.__lab_srv;
@@ -170,11 +178,24 @@ if (!Number.isFinite(srv.ctx)) srv.ctx = 0;
 async function health(): Promise<boolean> {
   try { return (await fetch(`http://127.0.0.1:${SERVE_PORT}/health`)).ok; } catch { return false; }
 }
-export function servingModel() { return srv.model; }
+export function servingModel() { return srv.model ?? srv.ollamaModel; }
 export function stopServing() {
   try { srv.proc?.kill("SIGKILL"); } catch {}
   try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
-  srv.proc = null; srv.model = null; srv.loras = []; srv.ctx = 0;
+  srv.proc = null; srv.model = null; srv.loras = []; srv.ctx = 0; srv.offload = null;
+}
+
+export function markOllamaServing(model: string, context: number, offload: string | null) {
+  srv.ollamaModel = model;
+  srv.ollamaCtx = context;
+  srv.ollamaOffload = offload;
+  touchServing();
+}
+
+export function clearOllamaServing() {
+  srv.ollamaModel = null;
+  srv.ollamaCtx = undefined;
+  srv.ollamaOffload = null;
 }
 
 // llama.cpp assigns adapter ids in command-line order. Supplying the complete
@@ -202,9 +223,10 @@ export function runsAreLive(): boolean { return idleHold?.() ?? false; }
 
 export function servingInfo(): { model: string | null; idleSec: number | null; idleLimitMin: number; loras: string[] } {
   const idleLimitMin = readSettings().serveIdleMinutes;
+  const model = servingModel();
   return {
-    model: srv.model,
-    idleSec: srv.model && srv.lastUsedAt ? Math.round((Date.now() - srv.lastUsedAt) / 1000) : null,
+    model,
+    idleSec: model && srv.lastUsedAt ? Math.round((Date.now() - srv.lastUsedAt) / 1000) : null,
     idleLimitMin, loras: srv.loras.map((adapter) => adapter.key),
   };
 }
@@ -215,9 +237,11 @@ export function servingInfo(): { model: string | null; idleSec: number | null; i
 export function servingRuntimeStatus() {
   return {
     pid: srv.proc?.pid ?? null,
-    alive: !!srv.proc && srv.proc.exitCode === null,
-    model: srv.model,
-    context: srv.ctx || null,
+    alive: (!!srv.proc && srv.proc.exitCode === null) || !!srv.ollamaModel,
+    model: servingModel(),
+    context: srv.model ? srv.ctx || null : srv.ollamaCtx ?? null,
+    backend: srv.model ? "llama.cpp" : srv.ollamaModel ? "ollama" : null,
+    gpuOffload: srv.model ? srv.offload ?? null : srv.ollamaOffload ?? null,
     loras: srv.loras.map((adapter) => adapter.key),
     lastUsedAt: srv.lastUsedAt ?? null,
     logPath: path.join(ROOT, "out", "llama-server.log"),
@@ -278,6 +302,90 @@ async function unloadOllamaAll(): Promise<void> {
 export async function stopAllServing(): Promise<void> {
   stopServing();
   await unloadOllamaAll();
+  clearOllamaServing();
+}
+
+export type ActivatedModelRuntime = {
+  model: string;
+  runtimeProfile: string;
+  backend: "ollama" | "llama.cpp";
+  context: number;
+  gpuOffload: string;
+};
+
+export function managedOllamaModel(model: string): string {
+  const candidate = `${model}${MANAGED_MODEL_PROFILE_SUFFIX}`;
+  if (model.toLowerCase().includes("gemma")) {
+    if (!allModels().some((item) => item.name === candidate)) {
+      throw new Error(`managed 16K profile is missing for ${model}; run update-all.sh`);
+    }
+    return candidate;
+  }
+  return model;
+}
+
+export async function verifyOllamaRuntime(model: string): Promise<{ context: number; offload: string }> {
+  const loaded = await fetch("http://127.0.0.1:11434/api/generate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model, prompt: "", stream: false, keep_alive: "10m" }),
+    signal: AbortSignal.timeout(180_000),
+  });
+  if (!loaded.ok) throw new Error(`Ollama failed to load ${model}: HTTP ${loaded.status}`);
+  const ps = await fetch("http://127.0.0.1:11434/api/ps", { signal: AbortSignal.timeout(10_000) });
+  if (!ps.ok) throw new Error(`Ollama runtime verification failed: HTTP ${ps.status}`);
+  const body = await ps.json() as { models?: Array<{ name?: string; context_length?: number; size?: number; size_vram?: number }> };
+  const runtime = body.models?.find((item) => item.name === model || item.name?.startsWith(`${model}:`));
+  if (!runtime) throw new Error(`Ollama reported a successful load but ${model} is not resident`);
+  const context = runtime.context_length ?? 0;
+  if (model.endsWith(MANAGED_MODEL_PROFILE_SUFFIX) && context < OLLAMA_CLI_CONTEXT) {
+    throw new Error(`Ollama loaded ${model} with ${context || "unknown"} context, expected at least ${OLLAMA_CLI_CONTEXT}`);
+  }
+  const size = runtime.size ?? 0;
+  const sizeVram = runtime.size_vram ?? 0;
+  const offload = sizeVram > 0 ? `gpu:${Math.round((sizeVram / Math.max(1, size)) * 100)}%` : "cpu";
+  return { context: context || OLLAMA_CLI_CONTEXT, offload };
+}
+
+/** Single-GPU model handoff used by both settings switches and inference. */
+export async function activatePublicModel(model: string, minContext = 32768): Promise<ActivatedModelRuntime> {
+  const info = publicModels().find((item) => item.name === model);
+  if (!info) throw new Error(`unknown or internal model: ${model}`);
+  const current = servingRuntimeStatus();
+  const expectedBackend = info.source === "ollama" ? "ollama" : "llama.cpp";
+  // Gemma is exposed by its public name but deliberately runs through the
+  // visible managed 16K Ollama profile. Do not compare that profile against
+  // the generic 32K llama.cpp request or it will be unloaded on every turn.
+  const requiredContext = info.source === "ollama" ? OLLAMA_CLI_CONTEXT : minContext;
+  const canReuseCurrent =
+    current.alive &&
+    current.model === model &&
+    current.backend === expectedBackend &&
+    (current.context ?? 0) >= requiredContext;
+  if (!canReuseCurrent) {
+    await stopAllServing();
+  }
+
+  if (info.source === "ollama") {
+    // llama.cpp and Ollama share one GPU. Ensure the old local process is gone
+    // before asking Ollama to make the requested profile resident.
+    if (servingRuntimeStatus().backend === "llama.cpp") await stopAllServing();
+    const runtimeProfile = managedOllamaModel(model);
+    const verified = await verifyOllamaRuntime(runtimeProfile);
+    markOllamaServing(model, verified.context, verified.offload);
+    return { model, runtimeProfile, backend: "ollama", context: verified.context, gpuOffload: verified.offload };
+  }
+
+  await ensureServing(model, requiredContext);
+  const verified = servingRuntimeStatus();
+  if (!verified.alive || verified.model !== model || verified.backend !== "llama.cpp") {
+    throw new Error(`llama.cpp reported ready without the requested model ${model}`);
+  }
+  if ((verified.context ?? 0) < requiredContext) {
+    throw new Error(`llama.cpp loaded ${model} with ${verified.context ?? "unknown"} context, expected at least ${requiredContext}`);
+  }
+  if (!verified.gpuOffload) throw new Error(`llama.cpp did not report GPU/offload state for ${model}`);
+  return { model, runtimeProfile: model, backend: "llama.cpp", context: verified.context!, gpuOffload: verified.gpuOffload };
 }
 
 export async function ensureServing(model: string, minCtx = 0, loras: ServingLora[] = []): Promise<void> {
@@ -297,6 +405,7 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
   // Ollama has no relationship to our singleton state, so it may still hold a
   // previous Gemma after a cancelled Hive run.
   await unloadOllamaAll();
+  clearOllamaServing();
   if (srv.model === model && requestedLoras === loadedLoras && srv.ctx >= ctx && srv.proc && srv.proc.exitCode === null && (await health())) return;
   // The lens tool needs the whole card to itself, same as training (see runLensScript).
   if (lensState.running) throw new Error("GPU is busy: a lens run is in progress. Try again after it finishes.");
@@ -348,6 +457,7 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
       { env, stdio: logFd === undefined ? "ignore" : ["ignore", logFd, logFd] });
     if (logFd !== undefined) try { fs.closeSync(logFd); } catch {}
     srv.proc = proc; srv.model = model; srv.loras = normalizedLoras; srv.ctx = ctx;
+    srv.offload = ngl === 0 ? "cpu" : `gpu:${ngl}-layers`;
     const deadline = Date.now() + waitMs;
     while (Date.now() < deadline) {
       if (proc.exitCode !== null) return false;            // exited (OOM/error) → caller falls back
@@ -366,7 +476,7 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
   for (const ngl of ladder) {
     if (await tryServe(ngl, ngl === 0 ? 300000 : 60000)) return;
   }
-  srv.model = null; srv.loras = []; srv.ctx = 0;
+  srv.model = null; srv.loras = []; srv.ctx = 0; srv.offload = null;
   throw new Error("could not start the model (GPU busy, and CPU load failed/timed out)");
 }
 

@@ -26,6 +26,8 @@ describe('JsonOutputAdapter', () => {
   let mockConfig: Config;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let stdoutWriteSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let stderrWriteSpy: any;
 
   beforeEach(() => {
     mockConfig = createMockConfig();
@@ -33,10 +35,62 @@ describe('JsonOutputAdapter', () => {
     stdoutWriteSpy = vi
       .spyOn(process.stdout, 'write')
       .mockImplementation(() => true);
+    stderrWriteSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
   });
 
   afterEach(() => {
     stdoutWriteSpy.mockRestore();
+    stderrWriteSpy.mockRestore();
+  });
+
+  it('shows tool arguments and full results live in text mode', () => {
+    vi.mocked(mockConfig.getOutputFormat).mockReturnValue(OutputFormat.TEXT);
+    adapter.startAssistantMessage();
+    adapter.processEvent({
+      type: GeminiEventType.ToolCallRequest,
+      value: {
+        callId: 'tool-visible',
+        name: 'read_file',
+        args: { file_path: '/tmp/example.txt' },
+        isClientInitiated: false,
+        prompt_id: 'prompt-visible',
+      },
+    });
+    adapter.finalizeAssistantMessage();
+    adapter.emitToolResult(
+      {
+        callId: 'tool-visible',
+        name: 'read_file',
+        args: { file_path: '/tmp/example.txt' },
+        isClientInitiated: false,
+        prompt_id: 'prompt-visible',
+      },
+      {
+        callId: 'tool-visible',
+        responseParts: [
+          {
+            functionResponse: {
+              id: 'tool-visible',
+              name: 'read_file',
+              response: { output: 'first line\nsecond line' },
+            },
+          },
+        ],
+        resultDisplay: undefined,
+        error: undefined,
+        errorType: undefined,
+      },
+    );
+
+    const terminalOutput = stderrWriteSpy.mock.calls
+      .map((call: unknown[]) => String(call[0]))
+      .join('');
+    expect(terminalOutput).toContain('[tool call] read_file (tool-visible)');
+    expect(terminalOutput).toContain('"file_path": "/tmp/example.txt"');
+    expect(terminalOutput).toContain('[tool success] read_file (tool-visible)');
+    expect(terminalOutput).toContain('first line\nsecond line');
   });
 
   describe('startAssistantMessage', () => {

@@ -65,6 +65,8 @@ import {
   createDuplicateProviderToolCallResponse,
   markDuplicateProviderToolCallResponseSent,
   findRepeatedDuplicateProviderToolCall,
+  getToolCallDedupIdentity,
+  resetSemanticToolCallDedupAfterMutation,
   AutonomousLoopTickResolver,
   refreshMemoryAfterManagedWrite,
 } from '@qwen-code/qwen-code-core';
@@ -676,6 +678,7 @@ export const useGeminiStream = (
   }, [toolCalls]);
 
   const loopDetectedRef = useRef(false);
+  const loopDetectedTypeRef = useRef<string | null>(null);
   const [
     loopDetectionConfirmationRequest,
     setLoopDetectionConfirmationRequest,
@@ -1834,38 +1837,22 @@ export const useGeminiStream = (
     [addItem],
   );
 
-  const handleLoopDetectionConfirmation = useCallback(
-    (result: { userSelection: 'disable' | 'keep' }) => {
+  const handleLoopDetectedEvent = useCallback(
+    (loopType: string | null) => {
       setLoopDetectionConfirmationRequest(null);
-
-      if (result.userSelection === 'disable') {
-        config.getGeminiClient().getLoopDetectionService().disableForSession();
-        addItem(
-          {
-            type: 'info',
-            text: `Loop detection has been disabled for this session. Please try your request again.`,
-          },
-          Date.now(),
-        );
-      } else {
-        addItem(
-          {
-            type: 'info',
-            text: `A potential loop was detected. This can happen due to repetitive tool calls or other model behavior. The request has been halted.`,
-          },
-          Date.now(),
-        );
-      }
+      addItem(
+        {
+          type: 'info',
+          text:
+            `Loop recovery stopped after the pattern repeated` +
+            `${loopType ? ` (${loopType})` : ''}. The conversation and prior tool results are preserved. ` +
+            `Review the visible trace and give a different next step; detection remains enabled.`,
+        },
+        Date.now(),
+      );
     },
-    [config, addItem],
+    [addItem],
   );
-
-  const handleLoopDetectedEvent = useCallback(() => {
-    // Show the confirmation dialog to choose whether to disable loop detection
-    setLoopDetectionConfirmationRequest({
-      onComplete: handleLoopDetectionConfirmation,
-    });
-  }, [handleLoopDetectionConfirmation]);
 
   const handleUserPromptSubmitBlockedEvent = useCallback(
     (
@@ -2183,6 +2170,7 @@ export const useGeminiStream = (
               // handle later because we want to move pending history to history
               // before we add loop detected message to history
               loopDetectedRef.current = true;
+              loopDetectedTypeRef.current = event.value?.loopType ?? null;
               break;
             case ServerGeminiEventType.Retry:
               // On fresh restart (escalation / rate-limit / invalid stream),
@@ -2311,9 +2299,16 @@ export const useGeminiStream = (
           ...handledProviderToolCallIdsRef.current,
           ...historyCallIdsWithResponse,
         ]);
+        // Key on the semantic call shape (id + name + args), not the raw
+        // provider id: local OpenAI-compatible servers reuse one response id
+        // for every tool call, and raw-id matching starved the model of every
+        // result after the first. Mirrors the non-interactive runner.
         const repeatedDuplicateRequest = findRepeatedDuplicateProviderToolCall(
           toolCallRequests,
-          (request) => request.providerCallId,
+          (request) =>
+            request.providerCallId
+              ? getToolCallDedupIdentity(request)
+              : undefined,
           handledProviderIds,
           duplicateProviderToolCallResponseIdsRef.current,
         );
@@ -2326,24 +2321,28 @@ export const useGeminiStream = (
         }
 
         for (const request of toolCallRequests) {
-          const providerCallId = request.providerCallId;
-          if (!providerCallId) {
+          // Calls without a provider id are TUI-normalized and unique; they
+          // are never provider replays, so they bypass dedup entirely.
+          const dedupIdentity = request.providerCallId
+            ? getToolCallDedupIdentity(request)
+            : undefined;
+          if (!dedupIdentity) {
             executableToolCallRequests.push(request);
             continue;
           }
 
           if (
-            handledProviderToolCallIdsRef.current.has(providerCallId) ||
-            historyCallIdsWithResponse.has(providerCallId)
+            handledProviderToolCallIdsRef.current.has(dedupIdentity) ||
+            historyCallIdsWithResponse.has(dedupIdentity)
           ) {
             markDuplicateProviderToolCallResponseSent(
-              providerCallId,
+              dedupIdentity,
               duplicateProviderToolCallResponseIdsRef.current,
             );
 
             const response = createDuplicateProviderToolCallResponse(request);
             debugLogger.debug(
-              `[processGeminiStreamEvents] Suppressing duplicate provider tool-call id: ${providerCallId} (tool: ${request.name})`,
+              `[processGeminiStreamEvents] Suppressing duplicate provider tool-call id: ${request.providerCallId ?? request.callId} (tool: ${request.name})`,
             );
             dualOutput?.emitToolResult(request, response);
             duplicateResponseParts.push(...response.responseParts);
@@ -2351,7 +2350,7 @@ export const useGeminiStream = (
             continue;
           }
 
-          handledProviderToolCallIdsRef.current.add(providerCallId);
+          handledProviderToolCallIdsRef.current.add(dedupIdentity);
           executableToolCallRequests.push(request);
         }
 
@@ -2456,6 +2455,7 @@ export const useGeminiStream = (
       // continuation never carries a pending loop (a detected loop schedules
       // nothing), so clearing it here is a no-op for those paths.
       loopDetectedRef.current = false;
+      loopDetectedTypeRef.current = null;
 
       // Reset turn-local ownership trackers at the very top of every
       // top-level submit (UserQuery, Retry, Cron, Notification, etc.).
@@ -2701,7 +2701,8 @@ export const useGeminiStream = (
           }
           if (loopDetectedRef.current) {
             loopDetectedRef.current = false;
-            handleLoopDetectedEvent();
+            handleLoopDetectedEvent(loopDetectedTypeRef.current);
+            loopDetectedTypeRef.current = null;
           }
 
           if (lastPromptErroredRef.current) {
@@ -2920,6 +2921,20 @@ export const useGeminiStream = (
             return false;
           },
         );
+
+      // A successful state-changing tool makes earlier read results stale.
+      // Forget prior semantic dedup identities so the model may re-inspect
+      // what it just changed without receiving a duplicate-call error.
+      // Mirrors the non-interactive runner.
+      for (const tc of completedAndReadyToSubmitTools) {
+        if (tc.status === 'success') {
+          resetSemanticToolCallDedupAfterMutation(
+            tc.request,
+            handledProviderToolCallIdsRef.current,
+            duplicateProviderToolCallResponseIdsRef.current,
+          );
+        }
+      }
 
       // History-based dedup MUST run before the active-stream early-return.
       // If a synthetic `functionResponse` for this callId is already in

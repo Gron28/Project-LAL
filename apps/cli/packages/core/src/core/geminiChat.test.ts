@@ -421,6 +421,100 @@ describe('GeminiChat', async () => {
       expect(chat.getUserContentPushCount()).toBe(before + 1);
     });
 
+    it('sends the complete prior tool call, decision, and failed result on the next round', async () => {
+      vi.mocked(mockContentGenerator.generateContentStream)
+        .mockResolvedValueOnce(
+          streamResponse({
+            candidates: [
+              {
+                content: {
+                  role: 'model',
+                  parts: [
+                    { text: 'I will inspect the existing configuration first.' },
+                    {
+                      functionCall: {
+                        id: 'read-config-1',
+                        name: 'read_file',
+                        args: { path: 'missing-config.json' },
+                      },
+                    },
+                  ],
+                },
+                finishReason: 'STOP',
+              },
+            ],
+          } as unknown as GenerateContentResponse),
+        )
+        .mockResolvedValueOnce(
+          streamResponse(
+            stopResponse([{ text: 'The first path failed, so I will use the project settings.' }]),
+          ),
+        );
+
+      const first = await chat.sendMessageStream(
+        'test-model',
+        { message: 'Fix the project configuration.' },
+        'prompt-continuity-1',
+      );
+      for await (const _ of first) {
+        /* consume the tool-call round */
+      }
+
+      const second = await chat.sendMessageStream(
+        'test-model',
+        {
+          message: [
+            {
+              functionResponse: {
+                id: 'read-config-1',
+                name: 'read_file',
+                response: { error: 'ENOENT: missing-config.json' },
+              },
+            },
+          ],
+        },
+        'prompt-continuity-2',
+      );
+      for await (const _ of second) {
+        /* consume the post-tool continuation */
+      }
+
+      const secondRequest = vi.mocked(
+        mockContentGenerator.generateContentStream,
+      ).mock.calls[1]?.[0];
+      expect(secondRequest?.contents).toEqual([
+        {
+          role: 'user',
+          parts: [{ text: 'Fix the project configuration.' }],
+        },
+        {
+          role: 'model',
+          parts: [
+            { text: 'I will inspect the existing configuration first.' },
+            {
+              functionCall: {
+                id: 'read-config-1',
+                name: 'read_file',
+                args: { path: 'missing-config.json' },
+              },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'read-config-1',
+                name: 'read_file',
+                response: { error: 'ENOENT: missing-config.json' },
+              },
+            },
+          ],
+        },
+      ]);
+    });
+
     it('releases the sleep inhibitor when the stream errors', async () => {
       vi.mocked(mockContentGenerator.generateContentStream).mockResolvedValue(
         (async function* () {

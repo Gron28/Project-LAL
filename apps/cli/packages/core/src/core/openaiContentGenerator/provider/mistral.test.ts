@@ -41,6 +41,9 @@ function createReasoningRequest(): OpenAI.Chat.ChatCompletionCreateParams {
         reasoning_content: string;
       },
       { role: 'user', content: 'Say OK again' },
+      // Trailing assistant turn without reasoning keeps the inline-replay
+      // pass out of these strip/preserve assertions on messages[1].
+      { role: 'assistant', content: 'OK again' },
     ],
     max_tokens: 1000,
   };
@@ -103,6 +106,39 @@ describe('Mistral provider outbound compatibility filtering', () => {
       (result.messages?.[1] as { reasoning_content?: string })
         .reasoning_content,
     ).toBe('User asked for a short response.');
+  });
+
+  it('inlines the latest assistant reasoning into content instead of deleting it outright', () => {
+    // The Ministral amnesia fix: without inlining, the strip pass erased the
+    // model's most recent reasoning entirely.
+    const provider = determineProvider(
+      createProviderConfig({
+        baseUrl: 'https://strict-proxy.example.com/v1',
+        model: 'ministral-8b',
+      }),
+      createCliConfig(),
+    );
+    const request: OpenAI.Chat.ChatCompletionCreateParams = {
+      model: 'ministral-8b',
+      messages: [
+        { role: 'user', content: 'Say OK' },
+        {
+          role: 'assistant',
+          content: 'OK',
+          reasoning_content: 'Latest reasoning.',
+        } as OpenAI.Chat.ChatCompletionAssistantMessageParam & {
+          reasoning_content: string;
+        },
+      ],
+    };
+
+    const result = provider.buildRequest(request, 'prompt-123');
+
+    expect(result.messages?.[1]).toEqual({
+      role: 'assistant',
+      content:
+        '<recalled_thinking>\nLatest reasoning.\n</recalled_thinking>\n\nOK',
+    });
   });
 
   it('does not treat hostile hostnames containing api.mistral.ai as Mistral', () => {

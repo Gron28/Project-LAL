@@ -168,6 +168,8 @@ export interface SendMessageOptions {
   notificationDisplayText?: string;
   /** Model override from skill execution. When present, overrides the session model for this turn. */
   modelOverride?: string;
+  /** Prevents a loop-recovery continuation from recursively recovering again. */
+  loopRecoveryAttempted?: boolean;
 }
 
 const EMPTY_RELEVANT_AUTO_MEMORY_RESULT: RelevantAutoMemoryPromptResult = {
@@ -2407,8 +2409,8 @@ export class GeminiClient {
             didUpdateIdeContextState = true;
           }
 
-          // Always-on safety checks (consecutive-identical tool-call guard,
-          // shell inspection stagnation, and per-turn tool-call cap). These fire
+          // Always-on safety checks (consecutive-identical tool-call guard and
+          // per-turn tool-call cap). These fire
           // before the skipLoopDetection gate so they cannot be bypassed by
           // configuration.
           const alwaysOnLoop = this.loopDetector.checkAlwaysOnSafeties(event);
@@ -2421,6 +2423,31 @@ export class GeminiClient {
             // ToolCallRequest events and stop on LoopDetected.
             turn.pendingToolCalls.length = 0;
             const loopType = this.loopDetector.getLastLoopType();
+            if (!options?.loopRecoveryAttempted && loopType) {
+              const recovery =
+                `Loop guard detected ${loopType}. Preserve the existing conversation and tool results. ` +
+                `Change approach now: do not repeat the detected pattern, use the evidence already gathered, ` +
+                `and take the next concrete verification or implementation step.`;
+              yield {
+                type: GeminiEventType.HookSystemMessage,
+                value: recovery,
+              };
+              yield { type: GeminiEventType.Retry, isContinuation: true };
+              this.loopDetector.reset(prompt_id);
+              const recoveryTurn = yield* this.sendMessageStream(
+                [{ text: recovery }],
+                signal,
+                prompt_id,
+                {
+                  type: SendMessageType.Hook,
+                  modelOverride: options?.modelOverride,
+                  loopRecoveryAttempted: true,
+                },
+                boundedTurns - 1,
+              );
+              normalCompletion = true;
+              return recoveryTurn;
+            }
             yield {
               type: GeminiEventType.LoopDetected,
               ...(loopType && { value: { loopType } }),
@@ -2435,21 +2462,41 @@ export class GeminiClient {
             return turn;
           }
 
-          // Heuristic loop detection is opt-in: `model.skipLoopDetection`
-          // defaults to true (see settingsSchema) to avoid false-positive
-          // interruptions. Only the historically false-positive-prone heuristics
-          // (content/thought repetition, read-file and action stagnation,
-          // global-duplicate and alternating tool-call patterns) sit behind this
-          // flag. The precise consecutive-identical guard, shell inspection
-          // stagnation guard, and per-turn cap run unconditionally in
-          // checkAlwaysOnSafeties above, so the documented escape hatch only
-          // relaxes the heuristics (see nonInteractiveCli.ts).
+          // Broad heuristics are for unattended runs only. Interactive users
+          // retain exact-repeat and hard-cap protection above without being
+          // halted for legitimate exploration or review.
           const skipLoopDetection = this.config.getSkipLoopDetection();
           const heuristicLoop =
             !skipLoopDetection &&
             this.loopDetector.addAndCheckHeuristicLoops(event);
           if (heuristicLoop) {
             const loopType = this.loopDetector.getLastLoopType();
+            turn.pendingToolCalls.length = 0;
+            if (!options?.loopRecoveryAttempted && loopType) {
+              const recovery =
+                `Loop guard detected ${loopType}. Preserve the existing conversation and tool results. ` +
+                `Change approach now: do not repeat the detected pattern, use the evidence already gathered, ` +
+                `and take the next concrete verification or implementation step.`;
+              yield {
+                type: GeminiEventType.HookSystemMessage,
+                value: recovery,
+              };
+              yield { type: GeminiEventType.Retry, isContinuation: true };
+              this.loopDetector.reset(prompt_id);
+              const recoveryTurn = yield* this.sendMessageStream(
+                [{ text: recovery }],
+                signal,
+                prompt_id,
+                {
+                  type: SendMessageType.Hook,
+                  modelOverride: options?.modelOverride,
+                  loopRecoveryAttempted: true,
+                },
+                boundedTurns - 1,
+              );
+              normalCompletion = true;
+              return recoveryTurn;
+            }
             yield {
               type: GeminiEventType.LoopDetected,
               ...(loopType && { value: { loopType } }),

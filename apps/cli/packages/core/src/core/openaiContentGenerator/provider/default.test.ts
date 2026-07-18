@@ -502,6 +502,9 @@ describe('DefaultOpenAICompatibleProvider', () => {
             reasoning?: string;
           },
           { role: 'user', content: 'Second turn' },
+          // Last assistant carries no reasoning, so the replay pass leaves
+          // history untouched and the qwen3 mirror is observable above.
+          { role: 'assistant', content: 'Final answer' },
         ],
       };
 
@@ -531,6 +534,7 @@ describe('DefaultOpenAICompatibleProvider', () => {
             reasoning_content: string;
             reasoning: string;
           },
+          { role: 'assistant', content: 'Final answer' },
         ],
       };
 
@@ -556,6 +560,7 @@ describe('DefaultOpenAICompatibleProvider', () => {
             reasoning_content: string;
             reasoning?: string;
           },
+          { role: 'assistant', content: 'Final answer' },
         ],
       };
 
@@ -567,6 +572,153 @@ describe('DefaultOpenAICompatibleProvider', () => {
 
       expect(assistant.reasoning_content).toBe('Preserved chain of thought');
       expect(assistant.reasoning).toBeUndefined();
+    });
+  });
+
+  describe('replayLatestAssistantReasoning via buildRequest', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('inlines the last assistant reasoning into visible content and drops the reasoning fields', () => {
+      const originalRequest: OpenAI.Chat.ChatCompletionCreateParams = {
+        model: 'gpt-4o',
+        messages: [
+          { role: 'user', content: 'Do the thing' },
+          {
+            role: 'assistant',
+            content: 'Visible answer',
+            reasoning_content: 'I decided to use approach B because of X.',
+          } as OpenAI.Chat.ChatCompletionAssistantMessageParam & {
+            reasoning_content: string;
+          },
+          { role: 'user', content: 'Continue' },
+        ],
+      };
+
+      const result = provider.buildRequest(originalRequest, 'prompt-id');
+      const assistant = result.messages?.[1] as {
+        content?: string;
+        reasoning_content?: string;
+        reasoning?: string;
+      };
+
+      expect(assistant.content).toBe(
+        '<recalled_thinking>\nI decided to use approach B because of X.\n</recalled_thinking>\n\nVisible answer',
+      );
+      expect(assistant.reasoning_content).toBeUndefined();
+      expect(assistant.reasoning).toBeUndefined();
+      // Source request untouched.
+      expect(
+        (originalRequest.messages[1] as { content?: string }).content,
+      ).toBe('Visible answer');
+    });
+
+    it('replays reasoning as the whole content when the assistant message only carried tool calls', () => {
+      const originalRequest: OpenAI.Chat.ChatCompletionCreateParams = {
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-1',
+                type: 'function',
+                function: { name: 'shell', arguments: '{}' },
+              },
+            ],
+            reasoning_content: 'Need to inspect the directory first.',
+          } as OpenAI.Chat.ChatCompletionAssistantMessageParam & {
+            reasoning_content: string;
+          },
+          { role: 'tool', tool_call_id: 'call-1', content: 'ok' },
+        ],
+      };
+
+      const result = provider.buildRequest(originalRequest, 'prompt-id');
+      const assistant = result.messages?.[0] as {
+        content?: string;
+        tool_calls?: unknown[];
+      };
+
+      expect(assistant.content).toBe(
+        '<recalled_thinking>\nNeed to inspect the directory first.\n</recalled_thinking>',
+      );
+      expect(assistant.tool_calls).toHaveLength(1);
+    });
+
+    it('keeps only the reasoning tail when it exceeds the configured cap', () => {
+      vi.stubEnv('LAL_REPLAY_REASONING_CHARS', '10');
+      const originalRequest: OpenAI.Chat.ChatCompletionCreateParams = {
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'assistant',
+            content: 'Answer',
+            reasoning_content: 'AAAAAAAAAAAAAAAAAAAAconclusion',
+          } as OpenAI.Chat.ChatCompletionAssistantMessageParam & {
+            reasoning_content: string;
+          },
+        ],
+      };
+
+      const result = provider.buildRequest(originalRequest, 'prompt-id');
+      const assistant = result.messages?.[0] as { content?: string };
+
+      expect(assistant.content).toBe(
+        '<recalled_thinking>\n…conclusion\n</recalled_thinking>\n\nAnswer',
+      );
+    });
+
+    it('is disabled when LAL_REPLAY_REASONING_CHARS is 0', () => {
+      vi.stubEnv('LAL_REPLAY_REASONING_CHARS', '0');
+      const originalRequest: OpenAI.Chat.ChatCompletionCreateParams = {
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'assistant',
+            content: 'Answer',
+            reasoning_content: 'Chain of thought',
+          } as OpenAI.Chat.ChatCompletionAssistantMessageParam & {
+            reasoning_content: string;
+          },
+        ],
+      };
+
+      const result = provider.buildRequest(originalRequest, 'prompt-id');
+      const assistant = result.messages?.[0] as {
+        content?: string;
+        reasoning_content?: string;
+      };
+
+      expect(assistant.content).toBe('Answer');
+      expect(assistant.reasoning_content).toBe('Chain of thought');
+    });
+
+    it('does not replay older reasoning when the last assistant message has none', () => {
+      const originalRequest: OpenAI.Chat.ChatCompletionCreateParams = {
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'assistant',
+            content: 'Old answer',
+            reasoning_content: 'Old reasoning',
+          } as OpenAI.Chat.ChatCompletionAssistantMessageParam & {
+            reasoning_content: string;
+          },
+          { role: 'user', content: 'Next' },
+          { role: 'assistant', content: 'New answer' },
+        ],
+      };
+
+      const result = provider.buildRequest(originalRequest, 'prompt-id');
+      expect((result.messages?.[0] as { content?: string }).content).toBe(
+        'Old answer',
+      );
+      expect((result.messages?.[2] as { content?: string }).content).toBe(
+        'New answer',
+      );
     });
   });
 });

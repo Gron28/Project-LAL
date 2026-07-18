@@ -2464,7 +2464,54 @@ describe('useGeminiStream', () => {
     expect(mockScheduleToolCalls).not.toHaveBeenCalled();
   });
 
-  it('suppresses duplicate provider tool-call ids before TUI scheduling', async () => {
+  it('schedules both calls when a provider reuses one id for different calls', async () => {
+    mockSendMessageStream.mockReturnValueOnce(
+      (async function* () {
+        yield {
+          type: ServerGeminiEventType.ToolCallRequest,
+          value: {
+            callId: 'tool-reused-1',
+            providerCallId: 'tool-reused',
+            name: 'shell',
+            args: { command: 'echo first' },
+            isClientInitiated: false,
+            prompt_id: 'prompt-tui-reused',
+          },
+        };
+        yield {
+          type: ServerGeminiEventType.ToolCallRequest,
+          value: {
+            callId: 'tool-reused-2',
+            providerCallId: 'tool-reused',
+            name: 'shell',
+            args: { command: 'echo second' },
+            isClientInitiated: false,
+            prompt_id: 'prompt-tui-reused',
+          },
+        };
+        yield {
+          type: ServerGeminiEventType.Finished,
+          value: { reason: undefined, usageMetadata: { totalTokenCount: 1 } },
+        };
+      })(),
+    );
+
+    const { result } = renderTestHook();
+
+    await act(async () => {
+      await result.current.submitQuery('run shell');
+    });
+
+    await waitFor(() => {
+      expect(mockScheduleToolCalls).toHaveBeenCalledTimes(1);
+    });
+    expect(mockScheduleToolCalls.mock.calls[0][0]).toEqual([
+      expect.objectContaining({ args: { command: 'echo first' } }),
+      expect.objectContaining({ args: { command: 'echo second' } }),
+    ]);
+  });
+
+  it('suppresses replayed identical provider tool calls before TUI scheduling', async () => {
     let capturedOnComplete:
       | ((completedTools: TrackedToolCall[]) => Promise<void>)
       | null = null;
@@ -2493,7 +2540,7 @@ describe('useGeminiStream', () => {
               callId: 'tool-dup',
               providerCallId: 'tool-dup',
               name: 'shell',
-              args: { command: 'echo second' },
+              args: { command: 'echo first' },
               isClientInitiated: false,
               prompt_id: 'prompt-tui-dup',
             },
@@ -2612,36 +2659,30 @@ describe('useGeminiStream', () => {
     expect(client.recordCompletedToolCall).toHaveBeenCalledTimes(1);
   });
 
-  it('submits a synthetic response for history-paired duplicate provider ids without scheduling', async () => {
+  it('executes a call whose raw provider id collides with a history response id', async () => {
+    // Legacy raw history ids never match semantic dedup identities. Local
+    // servers reuse one id for every call, so matching raw ids here starved
+    // the model of results; at worst an identical call re-runs once.
     const client = new MockedGeminiClientClass(mockConfig);
     client.getHistoryFunctionResponseIds = vi
       .fn()
       .mockReturnValue(new Set(['tool-history']));
 
-    mockSendMessageStream
-      .mockReturnValueOnce(
-        (async function* () {
-          yield {
-            type: ServerGeminiEventType.ToolCallRequest,
-            value: {
-              callId: 'tool-history',
-              providerCallId: 'tool-history',
-              name: 'shell',
-              args: { command: 'echo duplicate' },
-              isClientInitiated: false,
-              prompt_id: 'prompt-tui-history',
-            },
-          };
-        })(),
-      )
-      .mockReturnValueOnce(
-        (async function* () {
-          yield {
-            type: ServerGeminiEventType.Finished,
-            value: { reason: undefined, usageMetadata: { totalTokenCount: 1 } },
-          };
-        })(),
-      );
+    mockSendMessageStream.mockReturnValueOnce(
+      (async function* () {
+        yield {
+          type: ServerGeminiEventType.ToolCallRequest,
+          value: {
+            callId: 'tool-history',
+            providerCallId: 'tool-history',
+            name: 'shell',
+            args: { command: 'echo duplicate' },
+            isClientInitiated: false,
+            prompt_id: 'prompt-tui-history',
+          },
+        };
+      })(),
+    );
 
     const { result } = renderTestHook([], client);
 
@@ -2649,88 +2690,71 @@ describe('useGeminiStream', () => {
       await result.current.submitQuery('run shell');
     });
 
-    expect(mockScheduleToolCalls).not.toHaveBeenCalled();
-    expect(mockSendMessageStream).toHaveBeenCalledTimes(2);
-    const toolResultParts = mockSendMessageStream.mock.calls[1][0] as Part[];
-    expect(toolResultParts[0].functionResponse?.id).toBe('tool-history');
-    expect(toolResultParts[0].functionResponse?.response?.['error']).toContain(
-      'Duplicate provider tool call id "tool-history"',
-    );
+    expect(mockScheduleToolCalls).toHaveBeenCalledTimes(1);
+    expect(mockScheduleToolCalls.mock.calls[0][0]).toEqual([
+      expect.objectContaining({ callId: 'tool-history' }),
+    ]);
+    expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
     expect(client.recordCompletedToolCall).not.toHaveBeenCalled();
   });
 
-  it('drops repeated history-paired duplicate provider ids after the first synthetic response', async () => {
-    const client = new MockedGeminiClientClass(mockConfig);
-    client.getHistoryFunctionResponseIds = vi
-      .fn()
-      .mockReturnValue(new Set(['tool-history']));
+  it('suppresses only true replays and still schedules fresh calls in the same batch', async () => {
+    mockSendMessageStream.mockReturnValueOnce(
+      (async function* () {
+        yield {
+          type: ServerGeminiEventType.ToolCallRequest,
+          value: {
+            callId: 'tool-loop-1',
+            providerCallId: 'tool-loop',
+            name: 'shell',
+            args: { command: 'echo duplicate' },
+            isClientInitiated: false,
+            prompt_id: 'prompt-tui-history-loop',
+          },
+        };
+        yield {
+          type: ServerGeminiEventType.ToolCallRequest,
+          value: {
+            callId: 'tool-loop-2',
+            providerCallId: 'tool-loop',
+            name: 'shell',
+            args: { command: 'echo duplicate' },
+            isClientInitiated: false,
+            prompt_id: 'prompt-tui-history-loop',
+          },
+        };
+        yield {
+          type: ServerGeminiEventType.ToolCallRequest,
+          value: {
+            callId: 'tool-fresh',
+            providerCallId: 'tool-fresh',
+            name: 'shell',
+            args: { command: 'echo fresh' },
+            isClientInitiated: false,
+            prompt_id: 'prompt-tui-history-loop',
+          },
+        };
+        yield {
+          type: ServerGeminiEventType.Finished,
+          value: { reason: undefined, usageMetadata: { totalTokenCount: 1 } },
+        };
+      })(),
+    );
 
-    mockSendMessageStream
-      .mockReturnValueOnce(
-        (async function* () {
-          yield {
-            type: ServerGeminiEventType.ToolCallRequest,
-            value: {
-              callId: 'tool-history',
-              providerCallId: 'tool-history',
-              name: 'shell',
-              args: { command: 'echo duplicate' },
-              isClientInitiated: false,
-              prompt_id: 'prompt-tui-history-loop',
-            },
-          };
-        })(),
-      )
-      .mockReturnValueOnce(
-        (async function* () {
-          yield {
-            type: ServerGeminiEventType.ToolCallRequest,
-            value: {
-              callId: 'tool-history',
-              providerCallId: 'tool-history',
-              name: 'shell',
-              args: { command: 'echo duplicate again' },
-              isClientInitiated: false,
-              prompt_id: 'prompt-tui-history-loop',
-            },
-          };
-          yield {
-            type: ServerGeminiEventType.ToolCallRequest,
-            value: {
-              callId: 'tool-fresh',
-              providerCallId: 'tool-fresh',
-              name: 'shell',
-              args: { command: 'echo fresh' },
-              isClientInitiated: false,
-              prompt_id: 'prompt-tui-history-loop',
-            },
-          };
-          yield {
-            type: ServerGeminiEventType.Finished,
-            value: { reason: undefined, usageMetadata: { totalTokenCount: 1 } },
-          };
-        })(),
-      );
-
-    const { result } = renderTestHook([], client);
+    const { result } = renderTestHook();
 
     await act(async () => {
       await result.current.submitQuery('run shell');
     });
 
     await waitFor(() => {
-      expect(result.current.streamingState).toBe(StreamingState.Idle);
+      expect(mockScheduleToolCalls).toHaveBeenCalledTimes(1);
     });
-
-    expect(mockScheduleToolCalls).not.toHaveBeenCalled();
-    expect(mockSendMessageStream).toHaveBeenCalledTimes(2);
-    const toolResultParts = mockSendMessageStream.mock.calls[1][0] as Part[];
-    expect(toolResultParts).toHaveLength(1);
-    expect(toolResultParts[0].functionResponse?.id).toBe('tool-history');
-    expect(toolResultParts[0].functionResponse?.response?.['error']).toContain(
-      'Duplicate provider tool call id "tool-history"',
-    );
-    expect(client.recordCompletedToolCall).not.toHaveBeenCalled();
+    expect(mockScheduleToolCalls.mock.calls[0][0]).toEqual([
+      expect.objectContaining({ callId: 'tool-loop-1' }),
+      expect.objectContaining({ callId: 'tool-fresh' }),
+    ]);
+    expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
   });
 
   it('does not deduplicate tool calls without provider ids in the TUI stream', async () => {
@@ -8479,229 +8503,8 @@ describe('useGeminiStream', () => {
     });
   });
 
-  // --- New tests focused on recent modifications ---
-  describe('Loop Detection Confirmation', () => {
-    beforeEach(() => {
-      // Add mock for getLoopDetectionService to the config
-      const mockLoopDetectionService = {
-        disableForSession: vi.fn(),
-      };
-      mockConfig.getGeminiClient = vi.fn().mockReturnValue({
-        ...new MockedGeminiClientClass(mockConfig),
-        getLoopDetectionService: () => mockLoopDetectionService,
-      });
-    });
-
-    it('should set loopDetectionConfirmationRequest when LoopDetected event is received', async () => {
-      mockSendMessageStream.mockReturnValue(
-        (async function* () {
-          yield {
-            type: ServerGeminiEventType.Content,
-            value: 'Some content',
-          };
-          yield {
-            type: ServerGeminiEventType.LoopDetected,
-          };
-        })(),
-      );
-
-      const { result } = renderTestHook();
-
-      await act(async () => {
-        await result.current.submitQuery('test query');
-      });
-
-      await waitFor(() => {
-        expect(result.current.loopDetectionConfirmationRequest).not.toBeNull();
-        expect(
-          typeof result.current.loopDetectionConfirmationRequest?.onComplete,
-        ).toBe('function');
-      });
-    });
-
-    it('should disable loop detection and show message when user selects "disable"', async () => {
-      const mockLoopDetectionService = {
-        disableForSession: vi.fn(),
-      };
-      const mockClient = {
-        ...new MockedGeminiClientClass(mockConfig),
-        getLoopDetectionService: () => mockLoopDetectionService,
-      };
-      mockConfig.getGeminiClient = vi.fn().mockReturnValue(mockClient);
-
-      mockSendMessageStream.mockReturnValueOnce(
-        (async function* () {
-          yield {
-            type: ServerGeminiEventType.LoopDetected,
-          };
-        })(),
-      );
-
-      const { result } = renderTestHook([], mockClient);
-
-      await act(async () => {
-        await result.current.submitQuery('test query');
-      });
-
-      // Wait for confirmation request to be set
-      await waitFor(() => {
-        expect(result.current.loopDetectionConfirmationRequest).not.toBeNull();
-      });
-
-      // Simulate user selecting "disable"
-      await act(async () => {
-        result.current.loopDetectionConfirmationRequest?.onComplete({
-          userSelection: 'disable',
-        });
-      });
-
-      // Verify loop detection was disabled
-      expect(mockLoopDetectionService.disableForSession).toHaveBeenCalledTimes(
-        1,
-      );
-
-      // Verify confirmation request was cleared
-      expect(result.current.loopDetectionConfirmationRequest).toBeNull();
-
-      // Verify appropriate message was added
-      expect(mockAddItem).toHaveBeenCalledWith(
-        {
-          type: 'info',
-          text: 'Loop detection has been disabled for this session. Please try your request again.',
-        },
-        expect.any(Number),
-      );
-    });
-
-    it('should keep loop detection enabled and show message when user selects "keep"', async () => {
-      const mockLoopDetectionService = {
-        disableForSession: vi.fn(),
-      };
-      const mockClient = {
-        ...new MockedGeminiClientClass(mockConfig),
-        getLoopDetectionService: () => mockLoopDetectionService,
-      };
-      mockConfig.getGeminiClient = vi.fn().mockReturnValue(mockClient);
-
-      mockSendMessageStream.mockReturnValue(
-        (async function* () {
-          yield {
-            type: ServerGeminiEventType.LoopDetected,
-          };
-        })(),
-      );
-
-      const { result } = renderTestHook();
-
-      await act(async () => {
-        await result.current.submitQuery('test query');
-      });
-
-      // Wait for confirmation request to be set
-      await waitFor(() => {
-        expect(result.current.loopDetectionConfirmationRequest).not.toBeNull();
-      });
-
-      // Simulate user selecting "keep"
-      await act(async () => {
-        result.current.loopDetectionConfirmationRequest?.onComplete({
-          userSelection: 'keep',
-        });
-      });
-
-      // Verify loop detection was NOT disabled
-      expect(mockLoopDetectionService.disableForSession).not.toHaveBeenCalled();
-
-      // Verify confirmation request was cleared
-      expect(result.current.loopDetectionConfirmationRequest).toBeNull();
-
-      // Verify appropriate message was added
-      expect(mockAddItem).toHaveBeenCalledWith(
-        {
-          type: 'info',
-          text: 'A potential loop was detected. This can happen due to repetitive tool calls or other model behavior. The request has been halted.',
-        },
-        expect.any(Number),
-      );
-    });
-
-    it('should handle multiple loop detection events properly', async () => {
-      const { result } = renderTestHook();
-
-      // First loop detection - set up fresh mock for first call
-      mockSendMessageStream.mockReturnValueOnce(
-        (async function* () {
-          yield {
-            type: ServerGeminiEventType.LoopDetected,
-          };
-        })(),
-      );
-
-      // First loop detection
-      await act(async () => {
-        await result.current.submitQuery('first query');
-      });
-
-      await waitFor(() => {
-        expect(result.current.loopDetectionConfirmationRequest).not.toBeNull();
-      });
-
-      // Simulate user selecting "keep" for first request
-      await act(async () => {
-        result.current.loopDetectionConfirmationRequest?.onComplete({
-          userSelection: 'keep',
-        });
-      });
-
-      expect(result.current.loopDetectionConfirmationRequest).toBeNull();
-
-      // Verify first message was added
-      expect(mockAddItem).toHaveBeenCalledWith(
-        {
-          type: 'info',
-          text: 'A potential loop was detected. This can happen due to repetitive tool calls or other model behavior. The request has been halted.',
-        },
-        expect.any(Number),
-      );
-
-      // Second loop detection - set up fresh mock for second call
-      mockSendMessageStream.mockReturnValueOnce(
-        (async function* () {
-          yield {
-            type: ServerGeminiEventType.LoopDetected,
-          };
-        })(),
-      );
-
-      // Second loop detection
-      await act(async () => {
-        await result.current.submitQuery('second query');
-      });
-
-      await waitFor(() => {
-        expect(result.current.loopDetectionConfirmationRequest).not.toBeNull();
-      });
-
-      // Simulate user selecting "disable" for second request
-      await act(async () => {
-        result.current.loopDetectionConfirmationRequest?.onComplete({
-          userSelection: 'disable',
-        });
-      });
-
-      expect(result.current.loopDetectionConfirmationRequest).toBeNull();
-
-      // Verify second message was added
-      expect(mockAddItem).toHaveBeenCalledWith(
-        {
-          type: 'info',
-          text: 'Loop detection has been disabled for this session. Please try your request again.',
-        },
-        expect.any(Number),
-      );
-    });
-
-    it('should process LoopDetected event after moving pending history to history', async () => {
+  describe('Loop recovery handoff', () => {
+    it('keeps detection enabled and shows the typed repeated pattern', async () => {
       mockSendMessageStream.mockReturnValue(
         (async function* () {
           yield {
@@ -8710,6 +8513,7 @@ describe('useGeminiStream', () => {
           };
           yield {
             type: ServerGeminiEventType.LoopDetected,
+            value: { loopType: 'consecutive_identical_tool_calls' },
           };
         })(),
       );
@@ -8720,7 +8524,6 @@ describe('useGeminiStream', () => {
         await result.current.submitQuery('test query');
       });
 
-      // Verify that the content was added to history before the loop detection dialog
       await waitFor(() => {
         expect(mockAddItem).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -8730,11 +8533,18 @@ describe('useGeminiStream', () => {
           expect.any(Number),
         );
       });
-
-      // Then verify loop detection confirmation request was set
-      await waitFor(() => {
-        expect(result.current.loopDetectionConfirmationRequest).not.toBeNull();
-      });
+      expect(result.current.loopDetectionConfirmationRequest).toBeNull();
+      expect(mockAddItem).toHaveBeenCalledWith(
+        {
+          type: 'info',
+          text:
+            'Loop recovery stopped after the pattern repeated ' +
+            '(consecutive_identical_tool_calls). The conversation and prior ' +
+            'tool results are preserved. Review the visible trace and give a ' +
+            'different next step; detection remains enabled.',
+        },
+        expect.any(Number),
+      );
     });
   });
 

@@ -2170,9 +2170,11 @@ export async function loadCliConfig(
     preventSystemSleep: settings.general?.preventSystemSleep ?? true,
     skipNextSpeakerCheck: settings.model?.skipNextSpeakerCheck,
     skipWorkflowUsageWarning: settings.model?.skipWorkflowUsageWarning ?? false,
-    // A local unattended run must prefer a clean, observable stop over
-    // silently consuming the entire context window in read/edit churn. Users
-    // can still opt out for unusual exploratory workflows.
+    // Heuristics stay on in BOTH modes: local models loop with slightly
+    // varied args far below the always-on caps, and detection now recovers
+    // with a nudge + single retry instead of halting, so a false positive on
+    // legitimate long exploration costs one system message, while an
+    // undetected loop costs the whole context window.
     skipLoopDetection: settings.model?.skipLoopDetection ?? false,
     maxToolCallsPerTurn: settings.model?.maxToolCallsPerTurn,
     skipStartupContext: settings.model?.skipStartupContext ?? false,

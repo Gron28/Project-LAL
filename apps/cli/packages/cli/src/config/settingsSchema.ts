@@ -1447,7 +1447,7 @@ const SETTINGS_SCHEMA = {
         requiresRestart: false,
         default: false,
         description:
-          'Skip the streaming loop-detection heuristics (content/thought repetition, read-file and action stagnation, global-duplicate and alternating tool-call patterns). Defaults to false so unattended runs stop instead of consuming context without progress. Set to true only when a legitimate workflow needs to opt out. A minimal always-on guard (consecutive identical tool calls plus a per-turn tool-call cap, see model.maxToolCallsPerTurn) still runs regardless of this setting.',
+          'Skip headless loop heuristics (content/thought repetition, read/action/shell stagnation, global duplicates, and alternating calls). Interactive sessions always skip these broad heuristics. Headless runs default to false. Exact consecutive calls and the per-turn cap remain active in every mode.',
         showInDialog: false,
       },
       maxToolCallsPerTurn: {

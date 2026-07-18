@@ -22,6 +22,7 @@ export class JsonOutputAdapter
   implements JsonOutputAdapterInterface
 {
   private readonly messages: CLIMessage[] = [];
+  private readonly terminalToolNames = new Map<string, string>();
 
   constructor(config: Config) {
     super(config);
@@ -32,6 +33,7 @@ export class JsonOutputAdapter
    * Tracks the last assistant message for efficient result text extraction.
    */
   protected emitMessageImpl(message: CLIMessage): void {
+    this.emitTextModeToolVisibility(message);
     this.messages.push(message);
     // Track assistant messages for result generation
     if (
@@ -41,6 +43,33 @@ export class JsonOutputAdapter
       message.type === 'assistant'
     ) {
       this.updateLastAssistantMessage(message as CLIAssistantMessage);
+    }
+  }
+
+  /**
+   * Text-mode headless runs historically printed only the model's final prose,
+   * making an active tool-driven run indistinguishable from a hung process.
+   * Mirror every tool boundary to stderr in real time while keeping stdout's
+   * final-answer contract intact. JSON modes already expose these blocks.
+   */
+  private emitTextModeToolVisibility(message: CLIMessage): void {
+    if (this.config.getOutputFormat() !== 'text') return;
+    if (message.type !== 'assistant' && message.type !== 'user') return;
+    if (!Array.isArray(message.message.content)) return;
+
+    for (const block of message.message.content) {
+      if (block.type === 'tool_use') {
+        this.terminalToolNames.set(block.id, block.name);
+        process.stderr.write(
+          `[tool call] ${block.name} (${block.id})\nargs:\n${terminalValue(block.input)}\n`,
+        );
+      } else if (block.type === 'tool_result') {
+        const name = this.terminalToolNames.get(block.tool_use_id) ?? 'unknown';
+        const status = block.is_error ? 'error' : 'success';
+        process.stderr.write(
+          `[tool ${status}] ${name} (${block.tool_use_id})\nresult:\n${terminalValue(block.content ?? '')}\n`,
+        );
+      }
     }
   }
 
@@ -84,4 +113,25 @@ export class JsonOutputAdapter
     // but can also be called directly for user/tool/system messages
     this.messages.push(message);
   }
+}
+
+function terminalValue(value: unknown): string {
+  let rendered: string;
+  if (typeof value === 'string') {
+    rendered = value;
+  } else {
+    try {
+      rendered = JSON.stringify(value, null, 2) ?? String(value);
+    } catch {
+      rendered = String(value);
+    }
+  }
+  // Preserve the complete payload while preventing tool output from injecting
+  // terminal control sequences. Newlines and tabs remain readable.
+  return rendered
+    .replace(/\u001b/g, '\\u001b')
+    .replace(
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001a\u001c-\u001f\u007f]/g,
+      (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    );
 }

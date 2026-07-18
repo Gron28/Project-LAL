@@ -4,7 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs';
 import {
   DEFAULT_GATEWAY_ORIGIN,
   GatewayClient,
@@ -13,6 +16,16 @@ import {
   resolveGatewayOrigin,
   resolveGatewayToken,
 } from './gateway-client.js';
+
+// The resolvers fall back to ~/.lal/{client-host,.env} on disk, so on a
+// paired developer machine real credentials leak into "nothing configured"
+// assertions. Point homedir at an empty temp dir to keep this file hermetic.
+beforeAll(() => {
+  const emptyHome = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'lal-gateway-client-test-'),
+  );
+  vi.spyOn(os, 'homedir').mockReturnValue(emptyHome);
+});
 
 describe('gateway origin/token resolution', () => {
   it('defaults to the known dev gateway origin when nothing is configured', () => {

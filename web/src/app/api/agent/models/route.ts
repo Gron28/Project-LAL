@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { allModels, readSettings, writeSettings, servingModel, deleteModel, renameModel } from "@/lib/lab";
+import { activatePublicModel, allModels, publicModels, readSettings, writeSettings, servingModel, deleteModel, renameModel } from "@/lib/lab";
+import { stopAllRuns } from "@/lib/runs";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 // + system prompt + serveIdleMinutes; PUT patches any subset.
 export function GET() {
   const s = readSettings();
-  const infos = allModels();
+  const infos = publicModels();
   return NextResponse.json({
     models: infos.map((m) => m.name),
     modelInfos: infos,              // name/source/gb — richer than names alone for the new UI
@@ -28,14 +29,37 @@ export function GET() {
 export async function PUT(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
   const patch: Parameters<typeof writeSettings>[0] = {};
-  if (typeof b.model === "string") patch.model = b.model;
+  const previous = readSettings();
+  let runtime: Awaited<ReturnType<typeof activatePublicModel>> | undefined;
+  if (typeof b.model === "string") {
+    if (!publicModels().some((model) => model.name === b.model)) {
+      return NextResponse.json({ ok: false, error: `unknown or internal model: ${b.model}` }, { status: 400 });
+    }
+    patch.model = b.model;
+    if (b.model !== previous.model) {
+      // A model switch is a single-GPU ownership handoff, not a settings-only
+      // rename. Abort server and managed-client runs first, unload the old
+      // backend, then persist the choice only after the requested runtime has
+      // been observed resident with its context/offload state.
+      const stoppedRuns = stopAllRuns();
+      try {
+        runtime = await activatePublicModel(b.model, 32768);
+      } catch (error) {
+        return NextResponse.json({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          stoppedRuns,
+        }, { status: 503 });
+      }
+    }
+  }
   if (typeof b.system === "string") patch.system = b.system;
   if (typeof b.web === "boolean") patch.web = b.web;
   if (typeof b.groundDocs === "boolean") patch.groundDocs = b.groundDocs;
   if (typeof b.serveIdleMinutes === "number") patch.serveIdleMinutes = b.serveIdleMinutes;
   if (b.options && typeof b.options === "object") patch.options = b.options;
   const s = writeSettings(patch);
-  return NextResponse.json({ ok: true, model: s.model });
+  return NextResponse.json({ ok: true, model: s.model, ...(runtime ? { runtime } : {}) });
 }
 
 export async function PATCH(req: NextRequest) {

@@ -40,9 +40,7 @@ const MAX_THOUGHT_HISTORY = 50;
 // project" legitimately opens with `list_directory` + several parallel
 // `read_file` calls in a single turn, which previously tripped the detector
 // on its first productive move. 8/15 leaves enough headroom for that shape
-// while still catching pathological read-only churn. Opening exploration gets
-// a bounded allowance below; a model must not be able to consume an entire
-// context window by reading forever before its first edit or command.
+// while still catching pathological read-only churn in unattended runs.
 const FILE_READ_THRESHOLD = 8;
 const FILE_READ_WINDOW = 15;
 const MAX_INITIAL_READS = 12;
@@ -50,10 +48,8 @@ const MAX_INITIAL_READS = 12;
 // Action stagnation tracking
 const STAGNATION_THRESHOLD = 8;
 
-// Similar shell inspection commands are precise enough to guard always-on
-// when the model keeps rewriting overview-style repository checks instead of
-// making progress. Use the same threshold as the heuristic action-stagnation
-// guard to leave room for legitimate branch-review inspection.
+// Similar shell inspection commands are a headless stagnation heuristic, not
+// an interactive hard stop. Use the same threshold as action stagnation.
 const SHELL_COMMAND_STAGNATION_THRESHOLD = STAGNATION_THRESHOLD;
 
 // Global tool call duplicate tracking: how many times the same (tool, args)
@@ -186,8 +182,8 @@ export class LoopDetectionService {
 
   /**
    * Convenience aggregate that runs every tier in order: the always-on
-   * safeties (consecutive-identical guard, shell inspection-command
-   * stagnation guard, and per-turn cap) followed by the opt-in heuristics.
+   * safeties (consecutive-identical guard and per-turn cap) followed by the
+   * opt-in heuristics.
    * Intended as a single "check everything" entry point for unit tests.
    * Production code (client.ts) intentionally calls the tiers separately so
    * the `skipLoopDetection` gate can sit between them — a new guard added here
@@ -220,14 +216,28 @@ export class LoopDetectionService {
         this.thoughtHistory = [];
 
         this.trackToolCall(event.value);
+        // A state-changing action is observable progress and invalidates the
+        // result of earlier reads. Start a fresh stagnation epoch so a normal
+        // read -> edit -> re-read verification cycle is not classified as a
+        // global duplicate or AB loop. Consecutive-identical protection and
+        // the hard per-turn cap remain active in the always-on tier.
+        if (this.isMutationBoundaryTool(event.value.name)) {
+          this.globalToolCallCounts.clear();
+          this.recentToolCallKeys = [];
+        }
         const toolCallKey = this.getToolCallKey(event.value);
         const globalDup = this.checkGlobalDuplicate(toolCallKey);
         const alternating = this.checkAlternatingPattern(toolCallKey);
         const readFileLoop = this.checkReadFileLoop();
         const actionStagnation = this.checkActionStagnation();
+        const shellStagnation = this.checkShellCommandStagnation(event.value);
 
         this.loopDetected =
-          globalDup || alternating || readFileLoop || actionStagnation;
+          globalDup ||
+          alternating ||
+          readFileLoop ||
+          actionStagnation ||
+          shellStagnation;
         break;
       }
       case GeminiEventType.Retry: {
@@ -259,10 +269,9 @@ export class LoopDetectionService {
 
   /**
    * Always-on safety checks that fire regardless of the `skipLoopDetection`
-   * config default. Enforces three guards: the consecutive-identical tool-call
-   * loop, the shell inspection-command stagnation loop, and the per-turn
-   * tool-call cap. Call this before the gated heuristic checks so none of the
-   * guards can be bypassed by `skipLoopDetection`. All three honor an
+   * config default. Enforces two guards: the consecutive-identical tool-call
+   * loop and the per-turn tool-call cap. Call this before the gated heuristic
+   * checks so neither can be bypassed by `skipLoopDetection`. Both honor an
    * explicit in-session disable; the cap is additionally tunable via the
    * `model.maxToolCallsPerTurn` setting.
    */
@@ -305,14 +314,6 @@ export class LoopDetectionService {
     // it honors an explicit in-session disable — the user's active "stop
     // detecting" choice.
     if (!this.disabledForSession && this.checkToolCallLoop(event.value)) {
-      this.loopDetected = true;
-      return true;
-    }
-
-    if (
-      !this.disabledForSession &&
-      this.checkShellCommandStagnation(event.value)
-    ) {
       this.loopDetected = true;
       return true;
     }
@@ -700,6 +701,12 @@ export class LoopDetectionService {
     }
     return LoopDetectionService.READ_LIKE_NAME_PREFIXES.some((prefix) =>
       toolName.startsWith(prefix),
+    );
+  }
+
+  private isMutationBoundaryTool(toolName: string): boolean {
+    return /(?:^|_)(?:write|edit|replace|patch|delete|remove|move|copy|create|execute|run_shell|todo|memory|deploy|install)(?:_|$)/i.test(
+      toolName,
     );
   }
 

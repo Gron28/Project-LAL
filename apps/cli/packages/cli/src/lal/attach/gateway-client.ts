@@ -388,7 +388,7 @@ export class GatewayClient {
     runId: string,
     writerToken: string,
     ackCommand?: { id: string; leaseId: string },
-  ): Promise<{ command?: ClientRunCommand }> {
+  ): Promise<{ cancelRequested?: boolean; command?: ClientRunCommand }> {
     return this.json(`/api/lal/runs/${encodeURIComponent(runId)}/heartbeat`, {
       method: 'POST',
       headers: {

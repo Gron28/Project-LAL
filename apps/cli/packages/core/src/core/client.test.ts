@@ -6962,13 +6962,24 @@ Other open files:
         ),
       );
 
-      // The consecutive-identical guard is always-on: it halts the repetition
-      // regardless of skipLoopDetection so the DashScope server never sees
-      // enough repeats to reject the conversation (issue #5019).
+      // The consecutive-identical guard remains always-on, but the first hit
+      // recovers in-place instead of throwing away the conversation. The
+      // replacement turn is explicitly marked as a continuation.
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: GeminiEventType.HookSystemMessage,
+          value: expect.stringContaining(
+            LoopType.CONSECUTIVE_IDENTICAL_TOOL_CALLS,
+          ),
+        }),
+      );
       expect(events.at(-1)).toEqual({
-        type: GeminiEventType.LoopDetected,
-        value: { loopType: LoopType.CONSECUTIVE_IDENTICAL_TOOL_CALLS },
+        type: GeminiEventType.Retry,
+        isContinuation: true,
       });
+      expect(events).not.toContainEqual(
+        expect.objectContaining({ type: GeminiEventType.LoopDetected }),
+      );
     });
 
     it('hard-stops identical tool calls when loop detection is enabled', async () => {
@@ -7003,11 +7014,19 @@ Other open files:
         ),
       );
 
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: GeminiEventType.HookSystemMessage,
+          value: expect.stringContaining('Preserve the existing conversation'),
+        }),
+      );
       expect(events.at(-1)).toEqual({
-        type: GeminiEventType.LoopDetected,
-        value: { loopType: LoopType.CONSECUTIVE_IDENTICAL_TOOL_CALLS },
+        type: GeminiEventType.Retry,
+        isContinuation: true,
       });
-      expect(events).toHaveLength(5);
+      // Four requests are visible; the fifth identical call is suppressed,
+      // then the typed recovery instruction and retry marker are emitted.
+      expect(events).toHaveLength(6);
     });
 
     describe('retry sendMessageType', () => {

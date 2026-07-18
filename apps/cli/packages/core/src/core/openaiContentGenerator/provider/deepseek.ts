@@ -66,6 +66,11 @@ export function isDeepSeekProvider(
 }
 
 export class DeepSeekOpenAICompatibleProvider extends DefaultOpenAICompatibleProvider {
+  // DeepSeek accepts reasoning_content on input; native replay, no inlining.
+  protected override shouldReplayReasoningInline(): boolean {
+    return false;
+  }
+
   constructor(
     contentGeneratorConfig: ContentGeneratorConfig,
     cliConfig: Config,

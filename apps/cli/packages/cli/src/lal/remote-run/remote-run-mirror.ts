@@ -31,6 +31,8 @@ export interface RemoteRunMirrorOptions extends ClientRunInit {
   onCommand?: (command: ClientRunCommand) => Promise<boolean> | boolean;
   /** Context size requested from the managed LAL host for this native run. */
   contextWindow?: number;
+  /** Abort the owning native session when the gateway requests cancellation. */
+  onCancel?: () => void;
 }
 
 export interface RemoteRunMirrorStatus {
@@ -65,8 +67,11 @@ export class RemoteRunMirror {
   private readonly emitter: AgentEventEmitter;
   private readonly init: ClientRunInit;
   private readonly heartbeatMs: number;
-  private readonly onCommand: ((command: ClientRunCommand) => Promise<boolean> | boolean) | undefined;
+  private readonly onCommand:
+    | ((command: ClientRunCommand) => Promise<boolean> | boolean)
+    | undefined;
   private readonly contextWindow: number;
+  private readonly onCancel: (() => void) | undefined;
   private readonly queued: ClientRunEvent[] = [];
   private runId: string | undefined;
   private conversationId: string | undefined;
@@ -79,6 +84,7 @@ export class RemoteRunMirror {
   private lastError: string | undefined;
   private streamedText = '';
   private streamedThought = '';
+  private readonly toolArguments = new Map<string, Record<string, unknown>>();
 
   private readonly onStreamText = (event: {
     text: string;
@@ -89,24 +95,31 @@ export class RemoteRunMirror {
     const next = event.thought
       ? this.streamDelta(event.text, 'thought')
       : this.streamDelta(event.text, 'text');
-    if (next) this.enqueue({
-      k: event.thought ? 'think' : 'text',
-      v: next,
-      ...(typeof event.p === 'number' ? { p: event.p } : {}),
-      ...(!event.thought && event.alts?.length ? { alts: event.alts } : {}),
-    });
+    if (next)
+      this.enqueue({
+        k: event.thought ? 'think' : 'text',
+        v: next,
+        ...(typeof event.p === 'number' ? { p: event.p } : {}),
+        ...(!event.thought && event.alts?.length ? { alts: event.alts } : {}),
+      });
   };
-  private readonly onRoundText = (event: { text: string; thoughtText: string }) => {
-    const thought = event.thoughtText && this.streamDelta(event.thoughtText, 'thought');
+  private readonly onRoundText = (event: {
+    text: string;
+    thoughtText: string;
+  }) => {
+    const thought =
+      event.thoughtText && this.streamDelta(event.thoughtText, 'thought');
     const output = event.text && this.streamDelta(event.text, 'text');
     if (thought) this.enqueue({ k: 'think', v: thought });
     if (output) this.enqueue({ k: 'text', v: output });
   };
-  private readonly onToolCall = (event: AgentToolCallEvent) =>
+  private readonly onToolCall = (event: AgentToolCallEvent) => {
+    this.toolArguments.set(event.callId, event.args);
     this.enqueue({
       k: 'tool_request',
       v: { id: event.callId, name: event.name, args: event.args },
     });
+  };
   private readonly onToolOutput = (event: AgentToolOutputUpdateEvent) =>
     this.enqueue({
       k: 'tool_progress',
@@ -117,7 +130,7 @@ export class RemoteRunMirror {
         preview: text(event.outputChunk, 500),
       },
     });
-  private readonly onToolResult = (event: AgentToolResultEvent) =>
+  private readonly onToolResult = (event: AgentToolResultEvent) => {
     this.enqueue({
       k: 'tool_result',
       v: {
@@ -127,6 +140,37 @@ export class RemoteRunMirror {
         output: toolOutput(event),
       },
     });
+    const args = this.toolArguments.get(event.callId) ?? {};
+    this.toolArguments.delete(event.callId);
+    if (
+      event.success &&
+      (event.name === 'edit' || event.name === 'write_file')
+    ) {
+      const file = args['file_path'] ?? args['path'];
+      if (typeof file === 'string' && file) {
+        this.enqueue({
+          k: 'artifact',
+          v: { path: text(file, 2_000), kind: 'file_change' },
+        });
+      }
+    }
+    if (event.name === 'run_shell_command') {
+      const command = args['command'];
+      if (
+        typeof command === 'string' &&
+        /(?:^|\s)(?:test|check|lint|build|pytest|vitest|jest)(?:\s|$)|cargo\s+test|go\s+test/i.test(
+          command,
+        )
+      ) {
+        this.enqueue({
+          k: 'phase',
+          v: {
+            name: `${event.success ? 'check passed' : 'check failed'}: ${text(command, 180)}`,
+          },
+        });
+      }
+    }
+  };
   private readonly onUsage = (event: AgentUsageEvent) => {
     const usage = event.usage;
     const promptTokens = usage.promptTokenCount ?? 0;
@@ -166,6 +210,7 @@ export class RemoteRunMirror {
     this.heartbeatMs = options.heartbeatMs ?? 15_000;
     this.onCommand = options.onCommand;
     this.contextWindow = options.contextWindow ?? 32_768;
+    this.onCancel = options.onCancel;
   }
 
   /** Add an accepted terminal/phone prompt to the durable shared transcript.
@@ -173,7 +218,10 @@ export class RemoteRunMirror {
   recordPrompt(prompt: string): void {
     const query = prompt.trim();
     if (!query) return;
-    this.enqueue({ k: 'query', v: { query: text(query, 16_000), model: this.init.model } });
+    this.enqueue({
+      k: 'query',
+      v: { query: text(query, 16_000), model: this.init.model },
+    });
   }
 
   async start(): Promise<RemoteRunMirrorStatus> {
@@ -200,7 +248,13 @@ export class RemoteRunMirror {
 
   status(): RemoteRunMirrorStatus {
     return {
-      state: this.lastError ? 'error' : this.stopped ? 'stopped' : this.runId ? 'active' : 'starting',
+      state: this.lastError
+        ? 'error'
+        : this.stopped
+          ? 'stopped'
+          : this.runId
+            ? 'active'
+            : 'starting',
       runId: this.runId,
       conversationId: this.conversationId,
       controlToken: this.controlToken,
@@ -221,7 +275,12 @@ export class RemoteRunMirror {
     await this.flush();
     if (this.runId && this.writerToken) {
       try {
-        await this.client.settleClientRun(this.runId, this.writerToken, status, error);
+        await this.client.settleClientRun(
+          this.runId,
+          this.writerToken,
+          status,
+          error,
+        );
       } catch (err) {
         this.lastError = err instanceof Error ? err.message : String(err);
       }
@@ -248,10 +307,17 @@ export class RemoteRunMirror {
   /** The native emitter normally sends deltas, but some providers replay the
    * accumulated buffer. Keep the remote transcript truthful in both cases. */
   private streamDelta(value: string, channel: 'text' | 'thought'): string {
-    const previous = channel === 'text' ? this.streamedText : this.streamedThought;
-    const delta = value.startsWith(previous) ? value.slice(previous.length) : value;
-    if (channel === 'text') this.streamedText = value.startsWith(previous) ? value : previous + value;
-    else this.streamedThought = value.startsWith(previous) ? value : previous + value;
+    const previous =
+      channel === 'text' ? this.streamedText : this.streamedThought;
+    const delta = value.startsWith(previous)
+      ? value.slice(previous.length)
+      : value;
+    if (channel === 'text')
+      this.streamedText = value.startsWith(previous) ? value : previous + value;
+    else
+      this.streamedThought = value.startsWith(previous)
+        ? value
+        : previous + value;
     return delta;
   }
 
@@ -261,7 +327,11 @@ export class RemoteRunMirror {
       while (this.queued.length && this.runId && this.writerToken) {
         const batch = this.queued.splice(0, MAX_BATCH_SIZE);
         try {
-          await this.client.appendClientRunEvents(this.runId, this.writerToken, batch);
+          await this.client.appendClientRunEvents(
+            this.runId,
+            this.writerToken,
+            batch,
+          );
         } catch (err) {
           this.queued.unshift(...batch);
           this.lastError = err instanceof Error ? err.message : String(err);
@@ -281,14 +351,18 @@ export class RemoteRunMirror {
         this.runId,
         this.writerToken,
       );
+      if (response.cancelRequested) {
+        this.onCancel?.();
+        await this.stop('stopped');
+        return;
+      }
       if (response.command && this.onCommand) {
         const accepted = await this.onCommand(response.command);
         if (accepted) {
-          await this.client.heartbeatClientRun(
-            this.runId,
-            this.writerToken,
-            { id: response.command.id, leaseId: response.command.leaseId },
-          );
+          await this.client.heartbeatClientRun(this.runId, this.writerToken, {
+            id: response.command.id,
+            leaseId: response.command.leaseId,
+          });
         }
       }
     } catch (err) {

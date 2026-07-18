@@ -22,6 +22,83 @@ function shouldMirrorReasoningContentForQwen3(model: string): boolean {
   return model.toLowerCase().includes('qwen3');
 }
 
+/**
+ * Cap on replayed reasoning. The tail is kept — conclusions and decisions
+ * live at the end of a think block, and small local context windows cannot
+ * afford the whole thing.
+ */
+const REPLAY_REASONING_DEFAULT_MAX_CHARS = 4000;
+
+function replayReasoningMaxChars(): number {
+  const raw = process.env['LAL_REPLAY_REASONING_CHARS'];
+  if (raw === undefined || raw === '') {
+    return REPLAY_REASONING_DEFAULT_MAX_CHARS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) return 0;
+  return parsed;
+}
+
+/**
+ * Inference servers ignore `reasoning_content` on INPUT (it is an output
+ * field), and chat templates that do understand it (Qwen3) deliberately strip
+ * reasoning from every assistant message before the latest user query. Either
+ * way the model never re-reads what it just reasoned, so on the next message
+ * it redoes the work. Inline the most recent assistant reasoning into that
+ * message's visible content, using tags a chat template will not strip
+ * (anything but `</think>` survives Qwen3's split). Only the LAST assistant
+ * message is replayed to bound the context cost.
+ */
+function replayLatestAssistantReasoning(
+  messages: OpenAI.Chat.ChatCompletionMessageParam[],
+): OpenAI.Chat.ChatCompletionMessageParam[] {
+  const maxChars = replayReasoningMaxChars();
+  if (maxChars <= 0) return messages;
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== 'assistant') continue;
+
+    const assistant = message as AssistantMessageWithReasoningFields;
+    const reasoning =
+      typeof assistant.reasoning_content === 'string' &&
+      assistant.reasoning_content.trim().length > 0
+        ? assistant.reasoning_content
+        : undefined;
+    // Only the latest assistant message is replayed; if it carried no
+    // reasoning there is nothing trustworthy to recall.
+    if (!reasoning) return messages;
+
+    const clipped =
+      reasoning.length > maxChars
+        ? `…${reasoning.slice(-maxChars)}`
+        : reasoning;
+    const recall = `<recalled_thinking>\n${clipped.trim()}\n</recalled_thinking>`;
+
+    const {
+      reasoning_content: _dropReasoningContent,
+      reasoning: _dropReasoning,
+      ...rest
+    } = assistant;
+    let replayed: AssistantMessageWithReasoningFields;
+    if (typeof assistant.content === 'string' && assistant.content.length > 0) {
+      replayed = { ...rest, content: `${recall}\n\n${assistant.content}` };
+    } else if (Array.isArray(assistant.content)) {
+      replayed = {
+        ...rest,
+        content: [{ type: 'text', text: recall }, ...assistant.content],
+      };
+    } else {
+      replayed = { ...rest, content: recall };
+    }
+
+    const next = [...messages];
+    next[i] = replayed as OpenAI.Chat.ChatCompletionMessageParam;
+    return next;
+  }
+  return messages;
+}
+
 function mirrorReasoningContentToReasoning(
   message: OpenAI.Chat.ChatCompletionMessageParam,
 ): OpenAI.Chat.ChatCompletionMessageParam {
@@ -114,9 +191,12 @@ export class DefaultOpenAICompatibleProvider
     // Apply output token limits to ensure max_tokens is set appropriately
     // This prevents occupying too much context window with output reservation
     const requestWithTokenLimits = this.applyOutputTokenLimit(request);
-    const messages = shouldMirrorReasoningContentForQwen3(request.model)
-      ? requestWithTokenLimits.messages.map(mirrorReasoningContentToReasoning)
+    const replayedMessages = this.shouldReplayReasoningInline()
+      ? replayLatestAssistantReasoning(requestWithTokenLimits.messages)
       : requestWithTokenLimits.messages;
+    const messages = shouldMirrorReasoningContentForQwen3(request.model)
+      ? replayedMessages.map(mirrorReasoningContentToReasoning)
+      : replayedMessages;
 
     return {
       ...requestWithTokenLimits,
@@ -127,6 +207,16 @@ export class DefaultOpenAICompatibleProvider
 
   getDefaultGenerationConfig(): GenerateContentConfig {
     return {};
+  }
+
+  /**
+   * Providers whose API accepts `reasoning_content` on INPUT (DeepSeek, MiMo)
+   * replay reasoning natively and must not also inline it. Generic servers
+   * ignore the field, so the default inlines the latest assistant reasoning
+   * into visible content (see replayLatestAssistantReasoning).
+   */
+  protected shouldReplayReasoningInline(): boolean {
+    return true;
   }
 
   /**
