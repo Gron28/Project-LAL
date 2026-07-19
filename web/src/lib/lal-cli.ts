@@ -63,8 +63,11 @@ function clean(value: string | null, limit = 160): string {
 }
 
 function requestIp(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0];
-  return clean(forwarded ?? request.headers.get("x-real-ip") ?? "unknown", 80);
+  // Route Handlers do not expose the accepted socket peer. Forwarded-address
+  // headers are client controlled on direct/LAN access, so recording them as
+  // device identity would make the audit trail forgeable.
+  void request;
+  return "unobserved";
 }
 
 function emptyRegistry(): DeviceRegistry {
@@ -122,7 +125,7 @@ export function recordCliAccess(request: Request, activity: string, authorized: 
 
   const explicitId = clean(request.headers.get("x-lal-device-id"), 128);
   const validId = /^[A-Za-z0-9._:-]{8,128}$/.test(explicitId) ? explicitId : "";
-  const matchingIds = Object.values(registry.devices)
+  const matchingIds = ip === "unobserved" ? [] : Object.values(registry.devices)
     .filter((device) => device.lastIp === ip)
     .map((device) => device.id);
   const id = validId || (matchingIds.length === 1
@@ -139,7 +142,9 @@ export function recordCliAccess(request: Request, activity: string, authorized: 
     lastActivity: clean(activity, 80),
     lastIp: ip,
     userAgent,
-    tailnetLogin: clean(request.headers.get("tailscale-user-login"), 160) || previous?.tailnetLogin || "",
+    // Tailscale headers require a verified loopback peer before they can be
+    // treated as identity. That peer signal is not available in this layer.
+    tailnetLogin: previous?.tailnetLogin || "",
     requests: (previous?.requests || 0) + 1,
   };
   writeDeviceRegistry(registry);

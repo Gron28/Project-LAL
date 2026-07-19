@@ -7,20 +7,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveSafe } from "@/lib/tools";
 import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
+import { DEFAULT_WORKSPACE, workspaceGrantRepository } from "@/lib/workspace-grants";
 
 export const dynamic = "force-dynamic";
 
-const DEFAULT_WORKSPACE = path.join(path.resolve(process.cwd(), ".."), "workspace");
 const READ_CAP = 1024 * 1024; // 1MB — editor is for source files, not datasets
 const LIST_CAP = 500;
 
-function projectRoot(raw: string | null): { root: string } | { error: string } {
-  if (!raw) { fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true }); return { root: DEFAULT_WORKSPACE }; }
-  const p = path.resolve(raw);
+function projectRoot(raw: string | null): { root: string } | { error: string; status: number } {
+  const p = raw ? path.resolve(raw) : DEFAULT_WORKSPACE;
+  if (!raw) fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true });
   try {
-    if (!fs.statSync(p).isDirectory()) return { error: "not a directory: " + p };
-  } catch { return { error: "directory not found: " + p }; }
-  return { root: p };
+    if (!fs.statSync(p).isDirectory()) return { error: "not a directory: " + p, status: 400 };
+  } catch { return { error: "directory not found: " + p, status: 400 }; }
+  const root = workspaceGrantRepository.resolveGrantedDirectory(p);
+  if (!root) return { error: "workspace grant required for: " + p, status: 403 };
+  return { root };
 }
 
 function looksBinary(buf: Buffer): boolean {
@@ -31,7 +33,7 @@ function looksBinary(buf: Buffer): boolean {
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const pr = projectRoot(sp.get("project"));
-  if ("error" in pr) return NextResponse.json({ error: pr.error }, { status: 400 });
+  if ("error" in pr) return NextResponse.json({ error: pr.error }, { status: pr.status });
   const op = sp.get("op") || "list";
   let target: string;
   try {
@@ -102,7 +104,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "expected {project?, path, content, baseMtimeMs?}" }, { status: 400 });
   }
   const pr = projectRoot(typeof b.project === "string" && b.project ? b.project : null);
-  if ("error" in pr) return NextResponse.json({ error: pr.error }, { status: 400 });
+  if ("error" in pr) return NextResponse.json({ error: pr.error }, { status: pr.status });
   if (b.content.length > READ_CAP) return NextResponse.json({ error: "file too large (1MB cap)" }, { status: 413 });
   if (b.content.includes("\0")) return NextResponse.json({ error: "text files only" }, { status: 400 });
   let target: string;
@@ -135,7 +137,7 @@ export async function DELETE(req: NextRequest) {
   }
   const sp = req.nextUrl.searchParams;
   const pr = projectRoot(sp.get("project"));
-  if ("error" in pr) return NextResponse.json({ error: pr.error }, { status: 400 });
+  if ("error" in pr) return NextResponse.json({ error: pr.error }, { status: pr.status });
   const rel = sp.get("path");
   if (!rel) return NextResponse.json({ error: "path required" }, { status: 400 });
   let target: string;

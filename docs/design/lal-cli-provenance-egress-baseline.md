@@ -16,6 +16,16 @@ RUM and inherited update checks disabled, and the two forbidden routes still
 match the outbound inventory. It is a bounded startup acceptance check, not a
 substitute for lifecycle-wide socket/DNS/process interception.
 
+Run `npm --prefix apps/cli run check:egress-runtime-interception` for a second,
+process-level startup check. It starts the supported `lal` entrypoint's safe
+version path under a test-only Node preload that blocks and records standard
+DNS, socket, HTTP(S), `fetch`, and child-process primitives before they reach
+the host. The check fails if that path attempts any audited primitive, and
+self-tests that the preload records each surface. It intentionally does not
+claim coverage for native addons, external processes, or full interactive/model
+turns; those lifecycle phases need dedicated interception seams before they can
+be described as contained.
+
 ## Scope and limits
 
 The records cover cohesive subtrees and the currently supported LAL startup,

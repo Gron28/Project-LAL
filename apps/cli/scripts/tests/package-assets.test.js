@@ -242,6 +242,29 @@ describe('package asset scripts', () => {
     ).toBe(true);
   });
 
+  it('includes the LAL license and derivation notice in the prepared package', () => {
+    const rootDir = createFixtureRoot();
+    createBundleArtifacts(rootDir);
+    stubConsole();
+
+    preparePackage({ rootDir, requireNativeAudioCapture: false });
+
+    const distDir = path.join(rootDir, 'dist');
+    const distPackageJson = JSON.parse(
+      readFileSync(path.join(distDir, 'package.json'), 'utf8'),
+    );
+
+    expect(distPackageJson.files).toEqual(
+      expect.arrayContaining(['LICENSE', 'NOTICE-LAL.md']),
+    );
+    expect(readFileSync(path.join(distDir, 'LICENSE'), 'utf8')).toBe(
+      'Apache-2.0\n',
+    );
+    expect(readFileSync(path.join(distDir, 'NOTICE-LAL.md'), 'utf8')).toContain(
+      'Qwen Code and Gemini CLI',
+    );
+  });
+
   it('omits browser MCP install hooks and deps from the prepared dist package', () => {
     const rootDir = createFixtureRoot();
     createBundleArtifacts(rootDir);
@@ -553,6 +576,11 @@ describe('package asset scripts', () => {
 
     writeFile(rootDir, 'README.md', '# Qwen Code\n');
     writeFile(rootDir, 'LICENSE', 'Apache-2.0\n');
+    writeFile(
+      rootDir,
+      'NOTICE-LAL.md',
+      'Apache-2.0-derived portions of Qwen Code and Gemini CLI\n',
+    );
     writeFile(
       rootDir,
       'package.json',

@@ -6,7 +6,7 @@
 
 /**
  * Prepares the bundled CLI package for npm publishing
- * This script adds publishing metadata (package.json, README, LICENSE) to dist/
+ * This script adds publishing metadata (package.json, README, LICENSE, NOTICE) to dist/
  * All runtime assets (cli.js, vendor/, *.sb) are already in dist/ from the bundle step
  */
 
@@ -107,6 +107,7 @@ function copyDocumentationFiles(rootDir, distDir) {
   const filesToCopy = [
     ['README-LAL.md', 'README.md'],
     ['LICENSE', 'LICENSE'],
+    ['NOTICE-LAL.md', 'NOTICE-LAL.md'],
   ];
   for (const [source, destination] of filesToCopy) {
     const sourcePath = path.join(rootDir, source);
@@ -307,6 +308,7 @@ function writeDistPackageJson(rootDir, distDir) {
       '*.sb',
       'README.md',
       'LICENSE',
+      'NOTICE-LAL.md',
       'locales',
       'examples',
       'bundled',

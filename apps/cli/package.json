@@ -81,6 +81,8 @@
     "telemetry": "node scripts/telemetry.js",
     "check:lockfile": "node scripts/check-lockfile.js",
     "check:egress-acceptance": "node scripts/check-egress-acceptance.mjs",
+    "check:egress-runtime-interception": "node scripts/check-egress-runtime-interception.mjs",
+    "check:release-attribution": "node scripts/check-release-attribution.mjs",
     "check:serve-fast-path-bundle": "node scripts/clean-package-build-artifacts.js && npm run build -- --cli-only && cross-env DEV=true npm run bundle && node scripts/check-serve-fast-path-bundle.js",
     "clean": "node scripts/clean.js",
     "pre-commit": "node scripts/pre-commit.js"
@@ -105,7 +107,8 @@
     "scripts/cli-entry.js",
     "scripts/lal-runtime-policy.mjs",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE-LAL.md"
   ],
   "devDependencies": {
     "@types/chrome": "^0.1.32",

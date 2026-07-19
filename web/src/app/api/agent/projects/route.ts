@@ -1,17 +1,18 @@
-// Project list for the Library "Projects" tab — same store /code's picker uses
-// (lib/lab.ts listProjects/forgetProject), so opening/forgetting a project here
-// stays in sync with the /code page's recents dropdown.
+// Project grants for the Library "Projects" tab. A recent picker entry is not
+// sufficient authority: this route is the durable grant/revocation boundary for
+// filesystem access through /api/agent/fs.
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { listProjects, rememberProject, forgetProject } from "@/lib/lab";
+import { rememberProject, forgetProject } from "@/lib/lab";
 import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
+import { workspaceGrantRepository } from "@/lib/workspace-grants";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const projects = listProjects().map((p) => ({ path: p, exists: fs.existsSync(p) }));
+  const projects = workspaceGrantRepository.list().map((grant) => ({ path: grant.path, exists: fs.existsSync(grant.path), grantedAt: grant.grantedAt }));
   return NextResponse.json({ projects });
 }
 
@@ -38,8 +39,11 @@ export async function POST(req: NextRequest) {
   } else if (!fs.existsSync(p) || !fs.statSync(p).isDirectory()) {
     return NextResponse.json({ error: "not a directory: " + p }, { status: 400 });
   }
-  rememberProject(p);
-  return NextResponse.json({ ok: true, path: p });
+  const grant = workspaceGrantRepository.grant(p);
+  if (!grant) return NextResponse.json({ error: "not a directory: " + p }, { status: 400 });
+  // Keep the existing picker UX in sync, but the grant is the authority record.
+  rememberProject(grant.path);
+  return NextResponse.json({ ok: true, path: grant.path, grantedAt: grant.grantedAt });
 }
 
 // DELETE ?path=<abs> — forgets the project (removes it from the recents list).
@@ -52,6 +56,7 @@ export async function DELETE(req: NextRequest) {
   }
   const p = req.nextUrl.searchParams.get("path");
   if (!p) return NextResponse.json({ error: "path required" }, { status: 400 });
+  const revoked = workspaceGrantRepository.revoke(p);
   forgetProject(p);
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, revoked });
 }
