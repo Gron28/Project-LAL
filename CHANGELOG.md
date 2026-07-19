@@ -5,6 +5,27 @@ purpose, including the runs that didn't work. Newest first.
 
 ## 2026-07-19 — Tool-call reliability and terminal visibility fixes
 
+Runtime `0.1.0-lal.23` follows up on J-space and fixes two more real bugs found by
+direct use. J-space now uses the actual LAL brand green/yellow instead of generic
+status colors, shows only the dot placeholder (no explanatory sentence) while
+there's no signal yet, gives every confidence tier its own visual sub-range so
+high-confidence tokens stay visibly varied instead of flatlining to one glyph, and
+moved from a row at the bottom of the footer to directly above the input box.
+`write_file`/`edit` diff highlighting switched from a bright, off-brand green
+background to a dark brand-green tint (and a matching red tint for removals) —
+the old colors measured a WCAG contrast ratio near 1:1 against the text drawn on
+top of them, i.e. close to unreadable; the new ones measure 9–15:1. A batch of
+several file edits/writes in one turn now gets a one-line aggregate ("3 files
+changed") above the individual diffs, which still all render — every mutation
+stays individually reviewable, only the missing count was added. And a real
+pipeline bug is fixed: tool-call-argument streaming chunks (e.g. `write_file`
+content growing token by token) were silently dropped by an empty-response
+filter because they carry no text/functionCall parts yet, which is why some
+coding tool calls looked frozen for a stretch and then rendered the whole block
+at once — the fix keeps chunks that carry live tool-call progress even when
+`parts` is empty. Separately, LAL's recommended default model moved from
+qwen3-4b-stock to qwen35-9b.
+
 Runtime `0.1.0-lal.22` redraws the J-space certainty wave: it now spans the full
 terminal width instead of a fixed ~47-sample strip, and each bar is colored by its
 own confidence tier (green/amber/red) rather than a single flat gray, using an

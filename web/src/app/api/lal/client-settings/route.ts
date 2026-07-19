@@ -92,7 +92,7 @@ export function GET(request: Request) {
         },
       };
     });
-  const preferred = models.find((model) => model.id === "qwen3-4b-stock")?.id ?? models[0]?.id ?? "";
+  const preferred = models.find((model) => model.id === "qwen35-9b")?.id ?? models[0]?.id ?? "";
   return Response.json(
     {
       $version: 4,

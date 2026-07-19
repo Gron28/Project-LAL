@@ -29,8 +29,19 @@ const lalDarkColors: ColorsTheme = {
   AccentRed: '#F26D78',
   AccentYellowDim: '#C9BB56',
   AccentRedDim: '#D97984',
-  DiffAdded: '#80FF9B',
-  DiffRemoved: '#F26D78',
+  // Full-line backgrounds for diff rendering — DiffRenderer.tsx fills the
+  // entire line with this color and then draws syntax-highlighted /
+  // status-colored text (including AccentGreen for the "+" prefix) on top.
+  // The bare accent hues above (#80FF9B green, same #F26D78 as AccentRed)
+  // measured a WCAG contrast ratio of ~1.0–1.16 against that foreground
+  // text — reportedly "hard to read" (2026-07-19). These are the LAL brand
+  // green / accent red blended at 18% into Background (#0B0F0C) instead of
+  // used at full saturation: a dark, on-brand tint that still reads as
+  // "green"/"red" while keeping every foreground color on top comfortably
+  // above WCAG AAA (>10:1, verified against Foreground/AccentGreen/
+  // AccentYellow/LightBlue).
+  DiffAdded: '#18351E',
+  DiffRemoved: '#35201F',
   Comment: '#AABAAA',
   Gray: '#8FA18F',
   GradientColors: ['#80FF9B', '#CFFF68', '#FFE78A'],

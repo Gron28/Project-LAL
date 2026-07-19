@@ -14,6 +14,7 @@ import { ToolConfirmationMessage } from './ToolConfirmationMessage.js';
 import {
   CompactToolGroupDisplay,
   isCollapsibleTool,
+  getToolCategory,
 } from './CompactToolGroupDisplay.js';
 import { InlineParallelAgentsDisplay } from './InlineParallelAgentsDisplay.js';
 import { useConfig } from '../../contexts/ConfigContext.js';
@@ -395,6 +396,21 @@ export const ToolGroupMessage: React.FC<ToolGroupMessageProps> = ({
           !isCollapsibleTool(t.name) || t.status === ToolCallStatus.Canceled,
       );
 
+  // edit/write/command stay non-collapsible on purpose (every mutation's
+  // diff must stay individually visible for review — see isCollapsibleTool's
+  // doc comment), but a batch of several file mutations in one turn used to
+  // show no aggregate at all: each edit/write call correctly reported its
+  // own single file, and three separate "1 file" lines in a row read as a
+  // repeated/wrong count instead of "3 files changed" (reported 2026-07-19).
+  // Add a one-line aggregate ABOVE the individual diffs — scoped to
+  // edit/write only ("command" isn't reliably a file-count) and only shown
+  // for 2+ so a single edit isn't preceded by a redundant "Edited 1 file"
+  // caption duplicating the diff right below it.
+  const fileMutationTools = nonCollapsibleTools.filter(
+    (t) => getToolCategory(t.name) === 'edit' || getToolCategory(t.name) === 'write',
+  );
+  const showFileMutationSummary = fileMutationTools.length > 1;
+
   // Memory badge — shared between all-collapsible and mixed paths.
   // In the all-collapsible path only read counts are reachable (write ops
   // use non-collapsible tools like WriteFile/Edit).
@@ -470,6 +486,14 @@ export const ToolGroupMessage: React.FC<ToolGroupMessageProps> = ({
         />
       )}
       {memoryBadge}
+      {/* Aggregate "N files changed" line above the individual diffs — see
+          fileMutationTools above for why this only appears for 2+ files. */}
+      {showFileMutationSummary && (
+        <CompactToolGroupDisplay
+          toolCalls={fileMutationTools}
+          contentWidth={contentWidth}
+        />
+      )}
       {nonCollapsibleTools.map((tool) => {
         const isConfirming = toolAwaitingApproval?.callId === tool.callId;
         const isSubagentFocused =

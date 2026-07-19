@@ -62,7 +62,7 @@ function getShellTimeoutMs(
   return undefined;
 }
 
-type ToolCategory =
+export type ToolCategory =
   | 'read'
   | 'edit'
   | 'write'
@@ -201,7 +201,7 @@ const COLLAPSIBLE_CATEGORIES: ReadonlySet<ToolCategory> = new Set([
   'list',
 ]);
 
-function getToolCategory(toolName: string): ToolCategory {
+export function getToolCategory(toolName: string): ToolCategory {
   return TOOL_NAME_TO_CATEGORY[toolName] ?? 'other';
 }
 

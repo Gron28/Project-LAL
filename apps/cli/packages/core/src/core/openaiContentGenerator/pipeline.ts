@@ -16,7 +16,11 @@ import { isDeepSeekHostname } from './provider/deepseek.js';
 import { openaiRequestCaptureContext } from './requestCaptureContext.js';
 import { StreamingToolCallParser } from './streamingToolCallParser.js';
 import { TaggedThinkingParser } from './taggedThinkingParser.js';
-import type { PipelineConfig, RequestContext } from './types.js';
+import type {
+  PipelineConfig,
+  RequestContext,
+  ToolCallProgressUpdate,
+} from './types.js';
 import { redactProxyError } from '../../utils/runtimeFetchOptions.js';
 import { runtimeDiagnostics } from '../../utils/runtimeDiagnostics.js';
 import { createChildAbortController } from '../../utils/abortController.js';
@@ -498,11 +502,28 @@ export class ContentGenerationPipeline {
           context,
         );
 
-        // Stage 2b: Filter empty responses to avoid downstream issues
+        // Stage 2b: Filter empty responses to avoid downstream issues.
+        // A pure tool-call-argument delta (e.g. mid-stream write_file
+        // content chunks) has an empty `parts` array — functionCall parts
+        // only land at finish_reason, and there's no plain text while the
+        // model is solely emitting JSON arguments — so this filter silently
+        // dropped the live-code-streaming side channel exactly when a tool
+        // call was actively streaming: the whole buffer only reappeared at
+        // the terminal chunk, reading as "thinking" with frozen tokens for
+        // seconds/minutes, then the full block appearing instantly (found
+        // 2026-07-19). toolCallProgress is a side-channel property (see
+        // converter.ts), never part of `parts`, so it must be checked here
+        // explicitly rather than folded into the parts-length condition.
+        const toolCallProgress = (
+          response as GenerateContentResponse & {
+            toolCallProgress?: ToolCallProgressUpdate[];
+          }
+        ).toolCallProgress;
         if (
           response.candidates?.[0]?.content?.parts?.length === 0 &&
           !response.candidates?.[0]?.finishReason &&
-          !response.usageMetadata
+          !response.usageMetadata &&
+          !toolCallProgress?.length
         ) {
           continue;
         }

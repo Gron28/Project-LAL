@@ -15,11 +15,12 @@ import { useTerminalSize } from '../hooks/useTerminalSize.js';
 import { getRenderableGradientColors } from '../utils/gradientUtils.js';
 import { pickAsciiArtTier } from '../utils/customBanner.js';
 import { t } from '../../i18n/index.js';
-
-const LAL_BRAND_CYAN = '#22D3C5';
-const LAL_BRAND_GREEN = '#55E06F';
-const LAL_BRAND_YELLOW = '#E6D85C';
-const LAL_BRAND_GRADIENT = [LAL_BRAND_CYAN, LAL_BRAND_GREEN, LAL_BRAND_YELLOW];
+import {
+  LAL_BRAND_CYAN,
+  LAL_BRAND_GREEN,
+  LAL_BRAND_YELLOW,
+  LAL_BRAND_GRADIENT,
+} from '../brand-colors.js';
 
 /**
  * Auth display type for the Header component.

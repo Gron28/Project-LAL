@@ -26,8 +26,13 @@ const lalLightColors: ColorsTheme = {
   AccentRed: '#D14856',
   AccentYellowDim: '#C6BA6E',
   AccentRedDim: '#E2A2A9',
-  DiffAdded: '#1E9E4A',
-  DiffRemoved: '#D14856',
+  // Full-line diff backgrounds — same contrast fix as lal-dark.ts. The bare
+  // accent hues here measured 3.71/2.93 WCAG contrast against Foreground,
+  // both below the 4.5:1 AA minimum ("hard to read", 2026-07-19). These are
+  // AccentGreen / AccentRed blended at 15% into Background (#F7FAF5)
+  // instead: a pale, on-brand tint at >10:1 contrast with Foreground.
+  DiffAdded: '#DFF6E1',
+  DiffRemoved: '#F1DFDD',
   Comment: '#7A857B',
   Gray: '#9AA69B',
   GradientColors: ['#1E9E4A', '#5C8F1E', '#9A8A16'],

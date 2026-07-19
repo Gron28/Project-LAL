@@ -1652,6 +1652,88 @@ describe('ContentGenerationPipeline', () => {
       expect(results[0]).toBe(mockValidResponse);
     });
 
+    it('should NOT filter an empty-parts response that carries toolCallProgress', async () => {
+      // Regression: a pure tool-call-argument delta (e.g. mid-stream
+      // write_file content chunks) has an empty `parts` array —
+      // functionCall parts only land at finish_reason — so this filter
+      // silently dropped the live-code-streaming side channel exactly
+      // when a tool call was actively streaming. The whole buffer only
+      // reappeared at the terminal chunk: "thinking" with frozen tokens
+      // for seconds/minutes, then the full code block appearing in one
+      // second (found 2026-07-19).
+      const request: GenerateContentParameters = {
+        model: 'test-model',
+        contents: [{ parts: [{ text: 'Hello' }], role: 'user' }],
+      };
+      const userPromptId = 'test-prompt-id';
+
+      const mockChunk1 = {
+        id: 'chunk-1',
+        choices: [
+          { delta: { tool_calls: [{ index: 0 }] }, finish_reason: null },
+        ],
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
+      const mockChunk2 = {
+        id: 'chunk-2',
+        choices: [{ delta: {}, finish_reason: 'tool_calls' }],
+      } as OpenAI.Chat.ChatCompletionChunk;
+
+      const mockStream = {
+        async *[Symbol.asyncIterator]() {
+          yield mockChunk1;
+          yield mockChunk2;
+        },
+      };
+
+      const mockProgressResponse = new GenerateContentResponse();
+      mockProgressResponse.candidates = [
+        { content: { parts: [], role: 'model' } },
+      ];
+      (
+        mockProgressResponse as GenerateContentResponse & {
+          toolCallProgress?: unknown;
+        }
+      ).toolCallProgress = [
+        { callId: 'call-1', name: 'write_file', argsSoFar: '{"content":"...' },
+      ];
+
+      const mockFinishResponse = new GenerateContentResponse();
+      mockFinishResponse.candidates = [
+        {
+          content: { parts: [], role: 'model' },
+          finishReason: 'STOP' as never,
+        },
+      ];
+
+      (mockConverter.convertGeminiRequestToOpenAI as Mock).mockReturnValue([]);
+      (mockConverter.convertOpenAIChunkToGemini as Mock)
+        .mockReturnValueOnce(mockProgressResponse)
+        .mockReturnValueOnce(mockFinishResponse);
+      (mockClient.chat.completions.create as Mock).mockResolvedValue(
+        mockStream,
+      );
+
+      const resultGenerator = await pipeline.executeStream(
+        request,
+        userPromptId,
+      );
+      const results = [];
+      for await (const result of resultGenerator) {
+        results.push(result);
+      }
+
+      // The progress-only chunk must survive — it must not be dropped by
+      // the empty-parts filter just because it carries no text/functionCall
+      // parts yet.
+      expect(
+        results.some(
+          (r) =>
+            (r as GenerateContentResponse & { toolCallProgress?: unknown[] })
+              .toolCallProgress?.length,
+        ),
+      ).toBe(true);
+    });
+
     it('should handle streaming errors and reset tool calls', async () => {
       // Arrange
       const request: GenerateContentParameters = {

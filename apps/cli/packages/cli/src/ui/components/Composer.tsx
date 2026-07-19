@@ -8,6 +8,7 @@ import { Box, Text, useIsScreenReaderEnabled } from 'ink';
 import { useCallback, useRef, useState } from 'react';
 import { LoadingIndicator } from './LoadingIndicator.js';
 import { LiveToolArgsPanel } from './LiveToolArgsPanel.js';
+import { CertaintyWave } from './CertaintyWave.js';
 import { InputPrompt } from './InputPrompt.js';
 import { Footer } from './Footer.js';
 import { QueuedMessageDisplay } from './QueuedMessageDisplay.js';
@@ -121,6 +122,11 @@ export const Composer = () => {
       <QueuedMessageDisplay messageQueue={uiState.messageQueue} />
 
       {uiState.isFeedbackDialogOpen && <FeedbackDialog />}
+
+      {/* J-space certainty wave sits directly above the input box rather
+          than as another row at the bottom of the already-tall Footer
+          stack. */}
+      {uiState.isInputActive && <CertaintyWave />}
 
       {uiState.isInputActive && (
         <InputPrompt

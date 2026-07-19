@@ -27,27 +27,6 @@ import { CronPill, useFooterCronTaskCount } from './CronPill.js';
 import { useGatewayStats } from '../hooks/useGatewayStats.js';
 import { t } from '../../i18n/index.js';
 
-// Eight-level bar so the wave reads as a smooth line at full terminal width
-// instead of the old three-height strip. Inverted on purpose: a confident
-// token is a calm, low bar; a hesitant one spikes — the shape a reader scans
-// for is "where did it spike", not "where was it tall".
-const CERTAINTY_GLYPHS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const;
-
-function certaintyGlyph(value: number): string {
-  const clamped = Math.max(0, Math.min(1, value));
-  const level = Math.min(
-    CERTAINTY_GLYPHS.length - 1,
-    Math.floor((1 - clamped) * CERTAINTY_GLYPHS.length),
-  );
-  return CERTAINTY_GLYPHS[level];
-}
-
-function certaintyColor(value: number): string {
-  if (value >= 0.8) return theme.status.success;
-  if (value >= 0.55) return theme.status.warning;
-  return theme.status.error;
-}
-
 export const Footer: React.FC = () => {
   const uiState = useUIState();
   const config = useConfig();
@@ -68,27 +47,6 @@ export const Footer: React.FC = () => {
 
   const { columns: terminalWidth } = useTerminalSize();
   const isNarrow = isNarrowWidth(terminalWidth);
-  const certainty = uiState.certaintyWave;
-  const certaintyAverage = certainty.length
-    ? certainty.reduce((sum, value) => sum + value, 0) / certainty.length
-    : null;
-  const showCertaintyWave =
-    certainty.length > 0 || uiState.streamingState !== 'idle';
-  const certaintyPrefix = 'J-space ';
-  const certaintySuffix =
-    certaintyAverage == null
-      ? ' n/a (backend sent no token probabilities)'
-      : ` ${Math.round(certaintyAverage * 100)}%`;
-  // Bar spans the full row: terminal width minus the Box's paddingX={2} (2
-  // columns each side) and the label/percentage text either side of it.
-  const certaintyBarWidth = Math.max(
-    1,
-    terminalWidth - 4 - certaintyPrefix.length - certaintySuffix.length,
-  );
-  const certaintyValues = certainty.slice(-certaintyBarWidth);
-  // Left-pad with a dim placeholder so the wave visibly sweeps in from the
-  // right at the start of a turn instead of jumping straight to full width.
-  const certaintyPadCount = certaintyBarWidth - certaintyValues.length;
 
   // Determine sandbox info from environment
   const sandboxEnv = process.env['SANDBOX'];
@@ -303,11 +261,7 @@ export const Footer: React.FC = () => {
 
   // Layout matches upstream: left column has status line (top) + hints/mode
   // (bottom), right section has indicators. Status line and hints coexist.
-  // J-space renders as its own full-width row below both columns — it used
-  // to live inside the constrained left column and shared space with the
-  // right-column indicators, capping it at a fraction of the terminal.
   return (
-    <>
     <Box
       flexDirection={isNarrow ? 'column' : 'row'}
       justifyContent={isNarrow ? 'flex-start' : 'space-between'}
@@ -401,29 +355,5 @@ export const Footer: React.FC = () => {
         ))}
       </Box>
     </Box>
-    {showCertaintyWave && (
-      <Box width="100%" paddingX={2}>
-        <Text wrap="truncate">
-          <Text color={theme.text.secondary}>{certaintyPrefix}</Text>
-          {/* Honest gap label: the LAL gateway requests token probabilities
-              from llama.cpp for every streamed turn (native n_probs bypasses
-              the OAI logprobs+tools+stream 400), but Ollama-served models
-              and remote providers may send none — say so instead of
-              "waiting" forever. */}
-          {certaintyPadCount > 0 && (
-            <Text color={theme.text.secondary} dimColor>
-              {'·'.repeat(certaintyPadCount)}
-            </Text>
-          )}
-          {certaintyValues.map((value, index) => (
-            <Text key={index} color={certaintyColor(value)}>
-              {certaintyGlyph(value)}
-            </Text>
-          ))}
-          <Text color={theme.text.secondary}>{certaintySuffix}</Text>
-        </Text>
-      </Box>
-    )}
-    </>
   );
 };

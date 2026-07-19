@@ -469,6 +469,108 @@ describe('<ToolGroupMessage />', () => {
     });
   });
 
+  describe('File mutation aggregate summary', () => {
+    // Regression (2026-07-19): edit/write/command stay individually visible
+    // on purpose (every diff must stay reviewable), but a batch of several
+    // file mutations in one turn showed no aggregate at all — three separate
+    // "1 file" captions in a row read as a wrong/repeated count instead of
+    // "3 files changed". Each individual diff must still render; only a
+    // one-line aggregate is added above them.
+    it('shows an aggregate summary above 3 individual write_file diffs', () => {
+      const toolCalls = [
+        createToolCall({
+          callId: 'tool-1',
+          name: 'WriteFile',
+          description: 'Write a.ts',
+        }),
+        createToolCall({
+          callId: 'tool-2',
+          name: 'WriteFile',
+          description: 'Write b.ts',
+        }),
+        createToolCall({
+          callId: 'tool-3',
+          name: 'WriteFile',
+          description: 'Write c.ts',
+        }),
+      ];
+      const { lastFrame } = renderWithProviders(
+        <ToolGroupMessage {...baseProps} toolCalls={toolCalls} />,
+      );
+      const output = lastFrame() ?? '';
+      expect(output).toContain('3 files');
+      // Every individual diff must still render — the aggregate is
+      // additive, not a replacement for per-file review.
+      expect(output).toContain('tool-1');
+      expect(output).toContain('tool-2');
+      expect(output).toContain('tool-3');
+    });
+
+    it('shows one aggregate line for a mix of edit and write_file calls', () => {
+      const toolCalls = [
+        createToolCall({
+          callId: 'tool-1',
+          name: 'Edit',
+          description: 'Edit a.ts',
+        }),
+        createToolCall({
+          callId: 'tool-2',
+          name: 'WriteFile',
+          description: 'Write b.ts',
+        }),
+      ];
+      const { lastFrame } = renderWithProviders(
+        <ToolGroupMessage {...baseProps} toolCalls={toolCalls} />,
+      );
+      const output = lastFrame() ?? '';
+      expect(output).toContain('tool-1');
+      expect(output).toContain('tool-2');
+      // Two distinct file-mutation categories (edit + write) at 1 each —
+      // still an aggregate, not a repeated "1 file" line per tool.
+      expect(output).not.toMatch(/1 file.*1 file/s);
+    });
+
+    it('does not show an aggregate summary for a single write_file call', () => {
+      const toolCalls = [
+        createToolCall({
+          callId: 'tool-1',
+          name: 'WriteFile',
+          description: 'Write a.ts',
+        }),
+      ];
+      const { lastFrame } = renderWithProviders(
+        <ToolGroupMessage {...baseProps} toolCalls={toolCalls} />,
+      );
+      const output = lastFrame() ?? '';
+      // No redundant "Wrote 1 file" caption duplicating the single diff
+      // right below it.
+      expect(output).not.toContain('Wrote 1 file');
+    });
+
+    it('does not fold run_shell_command into the file mutation aggregate', () => {
+      const toolCalls = [
+        createToolCall({
+          callId: 'tool-1',
+          name: 'WriteFile',
+          description: 'Write a.ts',
+        }),
+        createToolCall({
+          callId: 'tool-2',
+          name: 'Shell',
+          description: 'mv a.ts b.ts',
+        }),
+      ];
+      const { lastFrame } = renderWithProviders(
+        <ToolGroupMessage {...baseProps} toolCalls={toolCalls} />,
+      );
+      const output = lastFrame() ?? '';
+      // Only one write_file call: no aggregate (needs 2+ file mutations),
+      // and the shell command must never be counted as a "file changed".
+      expect(output).not.toContain('Wrote 1 file');
+      expect(output).not.toContain('files changed');
+    });
+  });
+
   describe('Memory-only group', () => {
     it('renders read/write counts for completed memory-only groups', () => {
       const toolCalls = [

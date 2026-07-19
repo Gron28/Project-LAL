@@ -87,6 +87,10 @@ vi.mock('./Footer.js', () => ({
   Footer: () => <Text>Footer</Text>,
 }));
 
+vi.mock('./CertaintyWave.js', () => ({
+  CertaintyWave: () => <Text>CertaintyWave</Text>,
+}));
+
 vi.mock('./QueuedMessageDisplay.js', () => ({
   QueuedMessageDisplay: ({ messageQueue }: { messageQueue: string[] }) => {
     if (messageQueue.length === 0) {
@@ -420,6 +424,32 @@ describe('Composer', () => {
       const { lastFrame } = renderComposer(uiState);
 
       expect(lastFrame()).toContain('InputPrompt');
+    });
+
+    it('renders CertaintyWave (J-space) directly above InputPrompt, not inside Footer', () => {
+      const uiState = createMockUIState({
+        isInputActive: true,
+      });
+
+      const { lastFrame } = renderComposer(uiState);
+      const output = lastFrame() ?? '';
+
+      expect(output).toContain('CertaintyWave');
+      // "top of the text box": it must appear before InputPrompt in the
+      // rendered output, not stacked below the Footer at the bottom.
+      expect(output.indexOf('CertaintyWave')).toBeLessThan(
+        output.indexOf('InputPrompt'),
+      );
+    });
+
+    it('does not render CertaintyWave when input is inactive', () => {
+      const uiState = createMockUIState({
+        isInputActive: false,
+      });
+
+      const { lastFrame } = renderComposer(uiState);
+
+      expect(lastFrame()).not.toContain('CertaintyWave');
     });
 
     it('does not render InputPrompt when input is inactive', () => {
