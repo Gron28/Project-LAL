@@ -5,6 +5,12 @@ purpose, including the runs that didn't work. Newest first.
 
 ## 2026-07-19 — Tool-call reliability and terminal visibility fixes
 
+Runtime `0.1.0-lal.24` flips the J-space bar direction. It read as backwards:
+height tracked hesitation (a confident token drew a short, calm bar; an uncertain
+one spiked tall), which was meant to read as "scan for the spike" but felt
+inverted on sight. Height now tracks confidence directly — higher percentage,
+taller bar — the plain bar-chart reading.
+
 Runtime `0.1.0-lal.23` follows up on J-space and fixes two more real bugs found by
 direct use. J-space now uses the actual LAL brand green/yellow instead of generic
 status colors, shows only the dot placeholder (no explanatory sentence) while

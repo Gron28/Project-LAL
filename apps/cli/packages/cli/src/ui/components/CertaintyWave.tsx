@@ -12,15 +12,18 @@ import { theme } from '../semantic-colors.js';
 import { LAL_BRAND_GREEN, LAL_BRAND_YELLOW } from '../brand-colors.js';
 
 // Eight-level bar so the wave reads as a smooth line at full terminal width
-// instead of a coarse three-height strip. Inverted on purpose: a confident
-// token is a calm, low bar; a hesitant one spikes — the shape a reader scans
-// for is "where did it spike", not "where was it tall".
+// instead of a coarse three-height strip. Height tracks confidence directly
+// (higher % → taller bar) — the ordinary bar-chart reading. An earlier
+// version inverted this (confident = short, hesitant = spikes, meant to
+// read as "where did it spike"), but that read as backwards/broken in
+// practice (reported 2026-07-19) — a taller bar for a higher percentage is
+// the less surprising convention and what people expect on first look.
 const CERTAINTY_GLYPHS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const;
 
 /**
  * A single linear 0..1 → 0..7 mapping crushed the entire green tier
  * (p >= 0.8, where most tokens land during healthy generation) into level
- * 0-1 — reading as a flat line — while the rarer amber/red tokens spread
+ * 6-7 — reading as a flat line — while the rarer amber/red tokens spread
  * across the rest of the range. Each tier gets its own local sub-range
  * instead, so all three stay visually alive regardless of how confidence
  * actually clusters.
@@ -28,15 +31,15 @@ const CERTAINTY_GLYPHS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'
 export function certaintyLevel(value: number): number {
   const v = Math.max(0, Math.min(1, value));
   if (v >= 0.8) {
-    const t = (1 - v) / 0.2; // 0 at v=1 (most confident) .. 1 at v=0.8
-    return Math.min(2, Math.floor(t * 3)); // levels 0..2
+    const t = (v - 0.8) / 0.2; // 0 at v=0.8 .. 1 at v=1 (most confident)
+    return 5 + Math.min(2, Math.floor(t * 3)); // levels 5..7
   }
   if (v >= 0.55) {
-    const t = (0.8 - v) / 0.25; // 0 at v=0.8 .. 1 at v=0.55
+    const t = (v - 0.55) / 0.25; // 0 at v=0.55 .. 1 at v=0.8
     return 3 + Math.min(1, Math.floor(t * 2)); // levels 3..4
   }
-  const t = (0.55 - v) / 0.55; // 0 at v=0.55 .. 1 at v=0
-  return 5 + Math.min(2, Math.floor(t * 3)); // levels 5..7
+  const t = v / 0.55; // 0 at v=0 .. 1 at v=0.55
+  return Math.min(2, Math.floor(t * 3)); // levels 0..2
 }
 
 export function certaintyGlyph(value: number): string {

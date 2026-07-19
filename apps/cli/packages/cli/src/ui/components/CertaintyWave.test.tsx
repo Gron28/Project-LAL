@@ -77,9 +77,12 @@ describe('certaintyLevel', () => {
     expect(levels.size).toBeGreaterThan(1);
   });
 
-  it('keeps tiers ordered: more confident never produces a taller level than less confident', () => {
-    expect(certaintyLevel(1.0)).toBeLessThan(certaintyLevel(0.79));
-    expect(certaintyLevel(0.8)).toBeLessThan(certaintyLevel(0.54));
+  it('keeps tiers ordered: more confident never produces a shorter level than less confident', () => {
+    // Height tracks confidence directly (higher % -> taller bar) — the
+    // ordinary bar-chart reading (2026-07-19; an earlier inverted version
+    // read as backwards in practice).
+    expect(certaintyLevel(1.0)).toBeGreaterThan(certaintyLevel(0.79));
+    expect(certaintyLevel(0.8)).toBeGreaterThan(certaintyLevel(0.54));
   });
 });
 
