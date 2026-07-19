@@ -5,6 +5,9 @@
 import type { Executor } from "./tools";
 import { TOOL_DEFS, normalizeToolArgs, toolCallExample, validateToolArguments, type ToolDef } from "./tools";
 import { managedPrompt } from "./lal-prompts";
+import type { ToolLoopEvent } from "@project-lal/protocol";
+
+export type { ToolLoopEvent } from "@project-lal/protocol";
 
 export type ToolLoopMsg = {
   role: "system" | "user" | "assistant" | "tool";
@@ -14,43 +17,6 @@ export type ToolLoopMsg = {
   name?: string;
 };
 
-export type ToolLoopEvent =
-  // p = the model's probability for the token(s) in this delta (0-1). alts = the
-  // top competing tokens, attached when the choice has meaningful ambiguity (p < 0.8) —
-  // this is tier 1 of "see inside the model's head": every run's ledger records
-  // not just what the model said but how sure it was and what it almost said.
-  | { k: "text"; v: string; p?: number; alts?: [string, number][] }
-  | { k: "think"; v: string; p?: number }
-  | { k: "tool_request"; v: { id: string; name: string; args: Record<string, unknown> } }
-  // Live progress WHILE a tool call's arguments are still decoding. A code agent
-  // spends most of its wall-clock inside write_file calls, and tool_request only
-  // fires once the whole call has finished streaming — observed live 2026-07-09:
-  // 80 seconds of dead air (GPU pinned, zero events) while gemma4:12b decoded one
-  // write_file. Throttled to ~1/s; carries a tail preview, not cumulative content.
-  | { k: "tool_progress"; v: { id: string; name: string; chars: number; preview: string } }
-  | { k: "tool_result"; v: { id: string; name: string; ok: boolean; output: string } }
-  | { k: "round" }
-  | { k: "max_rounds"; v: number }
-  | { k: "act_nudge" }
-  | { k: "model_swap"; v: { from: string | null; to: string } }
-  | { k: "think_recovered"; v: { count: number } }
-  | { k: "forced_verify" }
-  | { k: "mutation_required_nudge"; v: { count: number } }
-  | { k: "stall_nudge" }
-  | { k: "research_depth_nudge"; v: { count: number; min: number } }
-  // Live meter: emitted after each round from llama-server's usage/timings so the
-  // UI can show context fill (promptTokens+completionTokens vs ctx) and decode speed.
-  | { k: "usage"; v: { promptTokens: number; completionTokens: number; totalTokens: number; tokPerSec: number | null; ctx: number; conf?: { avg: number; min: number; low: number } | null } }
-  // The model's final answer was cut off by the per-round token cap (finish_reason
-  // "length") rather than finishing — the "Continue" affordance keys off this.
-  | { k: "truncated"; v: { round: number } }
-  // Refuse a request before it reaches the inference backend when its estimated
-  // input plus reserved output/tool-result space would overflow the context.
-  | { k: "context_limit"; v: { estimatedTokens: number; reserveTokens: number; ctx: number } }
-  // Older tool outputs were trimmed in place to fit the context window instead of
-  // failing the run (deep-research died at round 12/64 from accumulated search
-  // results, 2026-07-09). The most recent rounds are always kept intact.
-  | { k: "context_compacted"; v: { trimmed: number } };
 
 // Trim the bodies of old tool results, oldest first, keeping the newest
 // `keepTail` messages untouched — the model keeps its recent working set and a

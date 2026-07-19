@@ -17,27 +17,16 @@
 // persona-driven rather than architecture-driven diversity between roles.
 import fs from "node:fs";
 import path from "node:path";
-import { runToolLoop, type ToolLoopEvent, type ToolLoopMsg } from "./toolloop";
+import { runToolLoop, type ToolLoopMsg } from "./toolloop";
 import type { Executor, ToolDef } from "./tools";
 import { ensureServing } from "./lab";
 import type { ApproveFn } from "./toolloop";
 import { runRetention } from "./retention";
+import type { DeliberateEvent, Role } from "@project-lal/protocol";
+
+export type { DeliberateEvent, Role } from "@project-lal/protocol";
 
 export type Sampling = { temperature?: number; topP?: number; topK?: number; repeatPenalty?: number };
-
-export type Role = { name: string; lens: string; bias?: string };
-
-export type DeliberateEvent =
-  | { k: "phase"; v: { name: string } }
-  | { k: "roles"; v: { roles: Role[] } }
-  | { k: "role_progress"; v: { role: string; stage: string } }
-  | { k: "debate_turn"; v: { round: number; role: string; text: string } }
-  | { k: "convergence"; v: { round: number; verdict: "converged" | "continue" | "unresolved" } }
-  | { k: "artifact"; v: { path: string } }
-  | { k: "text"; v: string }
-  | { k: "inner"; v: { phase: string; role?: string; event: ToolLoopEvent } }
-  | { k: "error"; v: string }
-  | { k: "done"; v: { dir: string } };
 
 const MAX_ROLES = 3;
 const DEBATE_ROUND_HARD_CAP = 6;

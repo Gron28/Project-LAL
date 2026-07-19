@@ -1,9 +1,8 @@
-// Conformance check for the run-stream event protocol (see ./index.ts for the
+// Conformance check for the run-stream event protocol (see packages/protocol for the
 // compatibility rule this enforces). Two real, unedited run ledgers — one code-kind, one
 // hive-kind — are replayed line by line and every event's `k` must be a kind this module
 // knows about. If this test fails after a legitimate new event kind was added, the fix is
-// to add that kind to web/src/lib/protocol/index.ts (and regenerate the CLI mirror via
-// `node scripts/check_protocol_drift.mjs --write`), not to loosen this test.
+// to add that kind to packages/protocol/src/index.ts, not to loosen this test.
 //
 // Run directly with Node's native TypeScript support + built-in test runner:
 //   node --test web/src/lib/protocol/protocol.conformance.test.ts
@@ -12,7 +11,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { KNOWN_EVENT_KINDS } from "./index.ts";
+import { KNOWN_EVENT_KINDS } from "@project-lal/protocol";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, "fixtures");
@@ -50,8 +49,7 @@ function assertAllKindsKnown(file: string) {
   for (const { lineNo, k } of lines) {
     const known = KNOWN_EVENT_KINDS.has(k) || LEGACY_KINDS.has(k);
     assert.ok(known, `${path.basename(file)}:${lineNo} has unknown event kind "${k}" — ` +
-      `add it to web/src/lib/protocol/index.ts (KNOWN_EVENT_KINDS + the relevant union) ` +
-      `and regenerate the CLI mirror, or list it in LEGACY_KINDS if it's a retired kind.`);
+      `add it to packages/protocol/src/index.ts, or list it in LEGACY_KINDS if it's a retired kind.`);
   }
 }
 

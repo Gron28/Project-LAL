@@ -14,13 +14,14 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { newId, saveConvo, setIdleHold, touchServing } from "./lab";
-import { isKnownEventKind } from "./protocol";
 import { runLedgerEvictionPlan } from "./retention";
+import { isKnownEventKind, type RunStatus } from "@project-lal/protocol";
+
+export type { RunStatus } from "@project-lal/protocol";
 
 const RUNS_DIR = path.join(process.cwd(), ".data", "runs");
 fs.mkdirSync(RUNS_DIR, { recursive: true });
 
-export type RunStatus = "running" | "done" | "error" | "stopped" | "interrupted";
 export type RunKind = "code" | "chat" | "deliberate" | "hive";
 export type RunMeta = {
   id: string;

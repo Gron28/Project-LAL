@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getRun, isRunLive, openRunStream } from "@/lib/runs";
-import { PROTOCOL_VERSION } from "@/lib/protocol";
+import { PROTOCOL_VERSION } from "@project-lal/protocol";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
