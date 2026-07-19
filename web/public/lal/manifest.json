@@ -1,8 +1,8 @@
 {
   "clientVersion": "0.3.7",
-  "lalRuntimeVersion": "0.1.0-lal.20",
-  "windowsArchive": "/lal/releases/0.1.0-lal.20/lal-cli-win-x64.zip",
-  "windowsSha256": "cdb5d302c21daac8ee0d3808d083d31ea5db87b28eb8eb02adf13945c446d42f",
+  "lalRuntimeVersion": "0.1.0-lal.21",
+  "windowsArchive": "/lal/releases/0.1.0-lal.21/lal-cli-win-x64.zip",
+  "windowsSha256": "8457e698f756b2b53d9fab477aad55fbe49ff4f6b0e06bcd685cfae24165b14a",
   "runtimeVersion": "0.19.9",
   "defaultHost": "https://main-pc.tail3ba909.ts.net:8443",
   "runtimeInstaller": "https://main-pc.tail3ba909.ts.net:8443/lal/install.ps1"

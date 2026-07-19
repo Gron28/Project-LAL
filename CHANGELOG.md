@@ -3,6 +3,24 @@
 A running log of what got built, what broke, and what was learned — kept honest on
 purpose, including the runs that didn't work. Newest first.
 
+## 2026-07-19 — Tool-call reliability and terminal visibility fixes
+
+Runtime `0.1.0-lal.21` fixes five defects found by blind-testing the terminal agent
+end to end. Replaying reasoning as inline `<recalled_thinking>` text broke Qwen3.5's
+native tool-call format — the model stopped closing `</think>` and its tool call
+never executed; Qwen3.5 models now get the untouched `reasoning_content` field
+instead, which their template already renders correctly. A loop-recovery nudge that
+recursed into the same in-flight stream deadlocked the whole turn forever with no
+error; recovery now waits for the stream to close first. Ministral's chat template
+enforces strict user/assistant alternation, which routine agent nudges placed right
+after tool results legitimately violate, 500ing the request; message history is now
+repaired to satisfy that invariant before it's sent. Headless (`-p`) runs were
+silent for the entire length of a long think, indistinguishable from a hang; thinking
+and response text now stream live to the terminal as they're generated. And the
+J-space certainty footer never rendered on any tool-carrying turn because the
+inference server rejects `logprobs` alongside streamed tool definitions; the gateway
+now requests the equivalent signal through a parameter the server does accept.
+
 ## 2026-07-14 — LAL becomes its own native Windows CLI
 
 Forked the selected Apache-2.0 terminal foundation into `@local-ai-lab/lal-cli`.

@@ -1,6 +1,6 @@
 {
   "name": "@local-ai-lab/lal-cli",
-  "version": "0.1.0-lal.20",
+  "version": "0.1.0-lal.21",
   "engines": {
     "node": ">=22.0.0"
   },
