@@ -2042,6 +2042,20 @@ export const useGeminiStream = (
         for await (const event of stream) {
           dualOutput?.processEvent(event);
           switch (event.type) {
+            case ServerGeminiEventType.TokenSignal:
+              // J-space certainty signal: forward the token probability to
+              // the main agent event emitter, where the footer's certainty
+              // wave listens. Empty text keeps this out of chat rendering.
+              mainAgentEventEmitter?.emit(AgentEventType.STREAM_TEXT, {
+                subagentId: 'main',
+                round: 0,
+                text: '',
+                thought: false,
+                p: event.value.p,
+                ...(event.value.alts ? { alts: event.value.alts } : {}),
+                timestamp: Date.now(),
+              });
+              break;
             case ServerGeminiEventType.Thought:
               // Subject-only chunks are discrete status updates for the
               // loading indicator and render immediately. Anything carrying

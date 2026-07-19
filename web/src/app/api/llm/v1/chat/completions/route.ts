@@ -190,7 +190,15 @@ export async function POST(request: Request) {
           ...(hasTools ? { tools: compactTools(payload.tools) } : {}),
           // Ollama's OpenAI compatibility layer does not reliably accept or
           // return logprobs; only ask llama.cpp for the J-space signal.
-          ...(!hasTools && !isOllama ? { logprobs: true, top_logprobs: 3 } : {}),
+          // llama.cpp's OAI layer 400s on `logprobs` + tools + stream, but its
+          // native `n_probs` param bypasses that validation and still returns
+          // OAI-shaped logprobs on streamed deltas (verified against b9835,
+          // 2026-07-19) — so tool-carrying turns get the J-space signal too.
+          ...(!isOllama
+            ? hasTools
+              ? { n_probs: 3 }
+              : { logprobs: true, top_logprobs: 3 }
+            : {}),
           stream_options: {
             ...(typeof payload.stream_options === "object" && payload.stream_options ? payload.stream_options as Record<string, unknown> : {}),
             include_usage: true,

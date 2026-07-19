@@ -247,6 +247,79 @@ describe('Turn', () => {
       ]);
     });
 
+    it('should emit a TokenSignal event when a part carries a J-space probability', async () => {
+      // Regression: the J-space certainty wave never rendered because
+      // nothing forwarded the converter's per-part `p`/`alts` signal into a
+      // stream event (2026-07-19).
+      const mockResponseStream = (async function* () {
+        yield {
+          type: StreamEventType.CHUNK,
+          value: {
+            candidates: [
+              {
+                content: {
+                  role: 'model',
+                  parts: [
+                    {
+                      text: 'Hello',
+                      p: 0.97,
+                      alts: [['Hi', 0.02]],
+                    },
+                  ],
+                },
+              },
+            ],
+          } as unknown as GenerateContentResponse,
+        };
+      })();
+      mockSendMessageStream.mockResolvedValue(mockResponseStream);
+
+      const events = [];
+      const reqParts: Part[] = [{ text: 'Hi' }];
+      for await (const event of turn.run(
+        'test-model',
+        reqParts,
+        new AbortController().signal,
+      )) {
+        events.push(event);
+      }
+
+      expect(events).toEqual([
+        { type: GeminiEventType.Content, value: 'Hello' },
+        {
+          type: GeminiEventType.TokenSignal,
+          value: { p: 0.97, alts: [['Hi', 0.02]] },
+        },
+      ]);
+    });
+
+    it('should not emit a TokenSignal event when no part carries a probability', async () => {
+      const mockResponseStream = (async function* () {
+        yield {
+          type: StreamEventType.CHUNK,
+          value: {
+            candidates: [
+              { content: { role: 'model', parts: [{ text: 'Hello' }] } },
+            ],
+          } as GenerateContentResponse,
+        };
+      })();
+      mockSendMessageStream.mockResolvedValue(mockResponseStream);
+
+      const events = [];
+      for await (const event of turn.run(
+        'test-model',
+        [{ text: 'Hi' }],
+        new AbortController().signal,
+      )) {
+        events.push(event);
+      }
+
+      expect(events).toEqual([
+        { type: GeminiEventType.Content, value: 'Hello' },
+      ]);
+    });
+
     it('should keep OpenAI reasoning markdown as a streaming thought description', async () => {
       const mockResponseStream = (async function* () {
         yield {

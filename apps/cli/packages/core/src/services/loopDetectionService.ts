@@ -33,6 +33,14 @@ const MAX_HISTORY_LENGTH = 1000;
 // Thought tracking
 const THOUGHT_REPEAT_THRESHOLD = 3;
 const MAX_THOUGHT_HISTORY = 50;
+// Streamed thought deltas from OpenAI-compatible backends are per-chunk —
+// frequently a single token. Three identical short chunks are ordinary prose
+// ("...", "000" inside a path, whitespace runs in code), not chanting: a
+// healthy hello-world run was halted mid-think by exactly this (2026-07-19).
+// Short signatures must therefore repeat far longer before they count as a
+// loop; long identical signatures keep the original sensitive threshold.
+const SHORT_THOUGHT_SIGNATURE_LENGTH = 16;
+const SHORT_THOUGHT_REPEAT_THRESHOLD = 24;
 
 // File read tracking.
 //
@@ -659,11 +667,20 @@ export class LoopDetectionService {
    * earlier phrase after making progress on an unrelated step.
    */
   private checkRepetitiveThoughts(): boolean {
-    if (this.thoughtHistory.length < THOUGHT_REPEAT_THRESHOLD) {
+    const latest = this.thoughtHistory[this.thoughtHistory.length - 1];
+    if (latest === undefined) {
+      return false;
+    }
+    // `signature` is "subject|description"; the separator contributes 1 char.
+    const threshold =
+      latest.length - 1 >= SHORT_THOUGHT_SIGNATURE_LENGTH
+        ? THOUGHT_REPEAT_THRESHOLD
+        : SHORT_THOUGHT_REPEAT_THRESHOLD;
+    if (this.thoughtHistory.length < threshold) {
       return false;
     }
 
-    const recentThoughts = this.thoughtHistory.slice(-THOUGHT_REPEAT_THRESHOLD);
+    const recentThoughts = this.thoughtHistory.slice(-threshold);
     const firstThought = recentThoughts[0];
     if (recentThoughts.every((thought) => thought === firstThought)) {
       this.lastLoopType = LoopType.REPETITIVE_THOUGHTS;

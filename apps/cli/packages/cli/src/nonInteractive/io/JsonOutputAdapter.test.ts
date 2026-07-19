@@ -45,6 +45,50 @@ describe('JsonOutputAdapter', () => {
     stderrWriteSpy.mockRestore();
   });
 
+  it('mirrors thinking and response deltas to stderr live in text mode', () => {
+    vi.mocked(mockConfig.getOutputFormat).mockReturnValue(OutputFormat.TEXT);
+    adapter.startAssistantMessage();
+    adapter.processEvent({
+      type: GeminiEventType.Thought,
+      value: { subject: 'Plan', description: 'I will read the file first. ' },
+    });
+    adapter.processEvent({
+      type: GeminiEventType.Thought,
+      value: { subject: '', description: 'Then write hello.' },
+    });
+    adapter.processEvent({
+      type: GeminiEventType.Content,
+      value: 'Done: hello.txt created.',
+    });
+    adapter.finalizeAssistantMessage();
+
+    const stderrText = stderrWriteSpy.mock.calls
+      .map((call: unknown[]) => String(call[0]))
+      .join('');
+    expect(stderrText).toContain('[thinking]');
+    expect(stderrText).toContain('I will read the file first. Then write hello.');
+    expect(stderrText).toContain('[response]');
+    expect(stderrText).toContain('Done: hello.txt created.');
+    // stdout must stay reserved for the final answer.
+    expect(stdoutWriteSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not mirror stream deltas when LAL_HEADLESS_LIVE=0', () => {
+    vi.stubEnv('LAL_HEADLESS_LIVE', '0');
+    vi.mocked(mockConfig.getOutputFormat).mockReturnValue(OutputFormat.TEXT);
+    adapter.startAssistantMessage();
+    adapter.processEvent({
+      type: GeminiEventType.Thought,
+      value: { subject: 'Plan', description: 'quiet' },
+    });
+    adapter.finalizeAssistantMessage();
+    const stderrText = stderrWriteSpy.mock.calls
+      .map((call: unknown[]) => String(call[0]))
+      .join('');
+    expect(stderrText).not.toContain('[thinking]');
+    vi.unstubAllEnvs();
+  });
+
   it('shows tool arguments and full results live in text mode', () => {
     vi.mocked(mockConfig.getOutputFormat).mockReturnValue(OutputFormat.TEXT);
     adapter.startAssistantMessage();

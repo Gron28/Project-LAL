@@ -78,6 +78,9 @@ export enum GeminiEventType {
   /** The system switched to a fallback model after the primary (or prior
    *  fallback) exhausted retries on a capacity/availability error. */
   ModelFallback = 'model_fallback',
+  /** Per-chunk token probability from the provider (J-space certainty
+   *  signal). Emitted alongside Content/Thought when logprobs are present. */
+  TokenSignal = 'token_signal',
 }
 
 export type ServerGeminiRetryEvent = {
@@ -335,6 +338,16 @@ export type ServerGeminiContentEvent = {
   value: string;
 };
 
+export type ServerGeminiTokenSignalEvent = {
+  type: GeminiEventType.TokenSignal;
+  value: {
+    /** Probability of the sampled token, 0..1. */
+    p: number;
+    /** Top alternative tokens with their probabilities, when provided. */
+    alts?: Array<[string, number]>;
+  };
+};
+
 export type ServerGeminiThoughtEvent = {
   type: GeminiEventType.Thought;
   value: ThoughtSummary;
@@ -498,7 +511,8 @@ export type ServerGeminiStreamEvent =
   | ServerGeminiToolCallResponseEvent
   | ServerGeminiUserCancelledEvent
   | ServerGeminiSessionTokenLimitExceededEvent
-  | ServerGeminiRetryEvent;
+  | ServerGeminiRetryEvent
+  | ServerGeminiTokenSignalEvent;
 
 // A turn manages the agentic loop turn within the server context.
 export class Turn {
@@ -603,6 +617,27 @@ export class Turn {
         const text = getResponseText(resp);
         if (text) {
           yield { type: GeminiEventType.Content, value: text };
+        }
+
+        // Surface the J-space certainty signal the OpenAI-compat converter
+        // attaches to text/thought parts (from streamed logprobs). One event
+        // per chunk is enough — the TUI renders a rolling wave, not per-token
+        // attribution.
+        for (const part of resp.candidates?.[0]?.content?.parts ?? []) {
+          const signal = part as Part & {
+            p?: number;
+            alts?: Array<[string, number]>;
+          };
+          if (typeof signal.p === 'number') {
+            yield {
+              type: GeminiEventType.TokenSignal,
+              value: {
+                p: signal.p,
+                ...(signal.alts?.length ? { alts: signal.alts } : {}),
+              },
+            };
+            break;
+          }
         }
 
         // Surface live argument-streaming progress for tool calls still

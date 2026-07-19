@@ -1026,6 +1026,35 @@ describe('LoopDetectionService', () => {
       );
     });
 
+    it('does not fire on three identical single-token thought deltas', () => {
+      service.reset('');
+
+      // Streamed thought deltas are per-chunk, often one token. Repeated
+      // short tokens ("...", "000" in a path, whitespace runs) are ordinary
+      // prose — a healthy hello-world run was halted by exactly this
+      // (2026-07-19). Short signatures need a much longer identical run.
+      for (let i = 0; i < 10; i++) {
+        expect(service.addAndCheck(createThoughtEvent('', '.'))).toBe(false);
+      }
+      expect(loggers.logLoopDetected).not.toHaveBeenCalled();
+    });
+
+    it('still fires when a short thought delta repeats pathologically long', () => {
+      service.reset('');
+
+      let detected = false;
+      for (let i = 0; i < 30 && !detected; i++) {
+        detected = service.addAndCheck(createThoughtEvent('', '0'));
+      }
+      expect(detected).toBe(true);
+      expect(loggers.logLoopDetected).toHaveBeenCalledWith(
+        mockConfig,
+        expect.objectContaining({
+          loop_type: 'repetitive_thoughts',
+        }),
+      );
+    });
+
     it('should not detect loop with varied thoughts', () => {
       service.reset('');
 

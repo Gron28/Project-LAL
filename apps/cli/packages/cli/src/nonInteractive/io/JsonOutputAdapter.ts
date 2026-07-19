@@ -5,12 +5,19 @@
  */
 
 import type { Config } from '@qwen-code/qwen-code-core';
+import {
+  GeminiEventType,
+  type ServerGeminiStreamEvent,
+} from '@qwen-code/qwen-code-core';
 import type { CLIAssistantMessage, CLIMessage } from '../types.js';
 import {
   BaseJsonOutputAdapter,
   type JsonOutputAdapterInterface,
   type ResultOptions,
 } from './BaseJsonOutputAdapter.js';
+
+/** Seconds of total event silence between heartbeat lines. */
+const LIVE_HEARTBEAT_INTERVAL_MS = 15_000;
 
 /**
  * JSON output adapter that collects all messages and emits them
@@ -23,9 +30,94 @@ export class JsonOutputAdapter
 {
   private readonly messages: CLIMessage[] = [];
   private readonly terminalToolNames = new Map<string, string>();
+  // Live text-mode streaming state: which channel is currently mirrored to
+  // stderr, whether the last write ended a line, and the silence heartbeat.
+  private liveChannel: 'none' | 'thinking' | 'response' = 'none';
+  private liveAtLineStart = true;
+  private liveHeartbeat: NodeJS.Timeout | undefined;
+  private liveSawEvent = false;
+  private liveSilentSeconds = 0;
 
   constructor(config: Config) {
     super(config);
+  }
+
+  /**
+   * Text-mode headless runs used to be silent from prompt submission until
+   * the final answer — a 2-3 minute reasoning stretch was indistinguishable
+   * from a hang (observed 2026-07-18: a 5k-token think ran ~2.7 minutes with
+   * zero output and users killed the CLI). Mirror thinking and response
+   * deltas to stderr as they stream, plus a heartbeat while the model is
+   * completely silent (prefill). stdout still carries only the final answer.
+   * Set LAL_HEADLESS_LIVE=0 to restore the quiet behavior.
+   */
+  private liveTextEnabled(): boolean {
+    return (
+      this.config.getOutputFormat() === 'text' &&
+      process.env['LAL_HEADLESS_LIVE'] !== '0'
+    );
+  }
+
+  private liveWrite(text: string): void {
+    if (text.length === 0) return;
+    process.stderr.write(text);
+    this.liveAtLineStart = text.endsWith('\n');
+  }
+
+  private liveSwitchChannel(channel: 'thinking' | 'response'): void {
+    if (this.liveChannel === channel) return;
+    this.liveChannel = channel;
+    if (!this.liveAtLineStart) this.liveWrite('\n');
+    this.liveWrite(channel === 'thinking' ? '[thinking]\n' : '[response]\n');
+  }
+
+  private liveEndTurn(): void {
+    if (this.liveHeartbeat) {
+      clearInterval(this.liveHeartbeat);
+      this.liveHeartbeat = undefined;
+    }
+    if (!this.liveAtLineStart) this.liveWrite('\n');
+    this.liveChannel = 'none';
+  }
+
+  override startAssistantMessage(): void {
+    super.startAssistantMessage();
+    if (!this.liveTextEnabled()) return;
+    this.liveChannel = 'none';
+    this.liveSawEvent = false;
+    this.liveSilentSeconds = 0;
+    if (this.liveHeartbeat) clearInterval(this.liveHeartbeat);
+    this.liveHeartbeat = setInterval(() => {
+      if (this.liveSawEvent) {
+        this.liveSawEvent = false;
+        this.liveSilentSeconds = 0;
+        return;
+      }
+      this.liveSilentSeconds += LIVE_HEARTBEAT_INTERVAL_MS / 1000;
+      if (!this.liveAtLineStart) this.liveWrite('\n');
+      this.liveWrite(`[waiting for model… ${this.liveSilentSeconds}s silent]\n`);
+    }, LIVE_HEARTBEAT_INTERVAL_MS);
+    // Never keep the process alive just for the heartbeat.
+    this.liveHeartbeat.unref?.();
+  }
+
+  override processEvent(event: ServerGeminiStreamEvent): void {
+    if (this.liveTextEnabled()) {
+      this.liveSawEvent = true;
+      if (event.type === GeminiEventType.Thought) {
+        this.liveSwitchChannel('thinking');
+        this.liveWrite(
+          liveSanitize(event.value.description || event.value.subject || ''),
+        );
+      } else if (
+        event.type === GeminiEventType.Content &&
+        typeof event.value === 'string'
+      ) {
+        this.liveSwitchChannel('response');
+        this.liveWrite(liveSanitize(event.value));
+      }
+    }
+    super.processEvent(event);
   }
 
   /**
@@ -81,6 +173,7 @@ export class JsonOutputAdapter
   }
 
   finalizeAssistantMessage(): CLIAssistantMessage {
+    if (this.liveTextEnabled()) this.liveEndTurn();
     return this.finalizeAssistantMessageInternal(
       this.mainAgentMessageState,
       null,
@@ -113,6 +206,19 @@ export class JsonOutputAdapter
     // but can also be called directly for user/tool/system messages
     this.messages.push(message);
   }
+}
+
+/**
+ * Same control-sequence defense as terminalValue, but keeps the text inline
+ * (no truncation, no JSON rendering) since it mirrors live prose deltas.
+ */
+function liveSanitize(text: string): string {
+  return text
+    .replace(/\u001b/g, '\\u001b')
+    .replace(
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001a\u001c-\u001f\u007f]/g,
+      (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    );
 }
 
 function terminalValue(value: unknown): string {

@@ -309,10 +309,12 @@ export const Footer: React.FC = () => {
           )}
         {(certainty.length > 0 || uiState.streamingState !== 'idle') && (
           <Text color={theme.text.secondary} wrap="truncate">
-            {/* Honest gap label: llama-server rejects logprobs together with
-                streamed tool definitions, so tool-carrying turns have no
-                confidence signal — say so instead of "waiting" forever. */}
-            {`J-space ${certaintyGraph || '···'}${certaintyAverage == null ? ' n/a (logprobs unavailable with tools)' : ` ${Math.round(certaintyAverage * 100)}%`}`}
+            {/* Honest gap label: the LAL gateway requests token probabilities
+                from llama.cpp for every streamed turn (native n_probs bypasses
+                the OAI logprobs+tools+stream 400), but Ollama-served models
+                and remote providers may send none — say so instead of
+                "waiting" forever. */}
+            {`J-space ${certaintyGraph || '···'}${certaintyAverage == null ? ' n/a (backend sent no token probabilities)' : ` ${Math.round(certaintyAverage * 100)}%`}`}
           </Text>
         )}
         {/* Built-in worktree indicator. Shown by default whenever a
