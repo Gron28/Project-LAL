@@ -148,7 +148,7 @@ export function startPostRenderPrefetches(
 
   if (
     process.env['LAL_MANAGED'] !== '1' &&
-    settings.merged.general?.enableAutoUpdate !== false
+    settings.merged.general?.enableAutoUpdate === true
   ) {
     runDeferredTask('update_check', async () => {
       const [

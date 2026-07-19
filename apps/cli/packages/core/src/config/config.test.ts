@@ -4640,13 +4640,13 @@ describe('Server Config (config.ts)', () => {
   });
 
   describe('Usage Statistics', () => {
-    it('defaults usage statistics to enabled if not specified', () => {
+    it('defaults usage statistics to disabled if not specified', () => {
       const config = new Config({
         ...baseParams,
         usageStatisticsEnabled: undefined,
       });
 
-      expect(config.getUsageStatisticsEnabled()).toBe(true);
+      expect(config.getUsageStatisticsEnabled()).toBe(false);
     });
 
     it.each([{ enabled: true }, { enabled: false }])(

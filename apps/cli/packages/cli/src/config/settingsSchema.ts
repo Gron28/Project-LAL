@@ -462,9 +462,9 @@ const SETTINGS_SCHEMA = {
         label: 'Enable Auto Update',
         category: 'General',
         requiresRestart: false,
-        default: true,
+        default: false,
         description:
-          'Enable automatic update checks and installations on startup.',
+          'Allow automatic update checks and installations on startup.',
         showInDialog: true,
       },
       showSessionRecap: {
@@ -1179,8 +1179,8 @@ const SETTINGS_SCHEMA = {
         label: 'Enable Usage Statistics',
         category: 'Privacy',
         requiresRestart: true,
-        default: true,
-        description: 'Enable collection of usage statistics',
+        default: false,
+        description: 'Allow collection of usage statistics',
         showInDialog: true,
       },
     },

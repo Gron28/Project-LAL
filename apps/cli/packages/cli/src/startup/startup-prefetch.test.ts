@@ -178,12 +178,24 @@ describe('startupPrefetch', () => {
     expect(mockDebug).toHaveBeenCalled();
   });
 
-  it('records completed profiler lifecycle events for successful deferred tasks', async () => {
+  it('does not check for updates unless explicitly enabled', async () => {
     const config = makeConfig({
       isInteractive: () => false,
     } as Partial<Config>);
 
     startPostRenderPrefetches(config, makeSettings());
+
+    await vi.dynamicImportSettled();
+
+    expect(mockCheckForUpdatesDetailed).not.toHaveBeenCalled();
+  });
+
+  it('checks for updates when explicitly enabled', async () => {
+    const config = makeConfig({
+      isInteractive: () => false,
+    } as Partial<Config>);
+
+    startPostRenderPrefetches(config, makeSettings(true));
 
     await vi.dynamicImportSettled();
 
@@ -204,7 +216,7 @@ describe('startupPrefetch', () => {
     const updatePromise = new Promise<null>(() => {});
     mockCheckForUpdatesDetailed.mockReturnValue(updatePromise);
 
-    startPostRenderPrefetches(config, makeSettings(), { connectIde: true });
+    startPostRenderPrefetches(config, makeSettings(true), { connectIde: true });
 
     await vi.dynamicImportSettled();
 
@@ -236,7 +248,7 @@ describe('startupPrefetch', () => {
       error: new Error('registry unavailable'),
     });
 
-    startPostRenderPrefetches(config, makeSettings());
+    startPostRenderPrefetches(config, makeSettings(true));
 
     await vi.dynamicImportSettled();
 
@@ -464,7 +476,7 @@ describe('startupPrefetch', () => {
     mockCheckForUpdatesDetailed.mockRejectedValue(error);
 
     expect(() =>
-      startPostRenderPrefetches(config, makeSettings()),
+      startPostRenderPrefetches(config, makeSettings(true)),
     ).not.toThrow();
 
     await vi.dynamicImportSettled();
@@ -491,8 +503,8 @@ describe('startupPrefetch', () => {
   it('starts post-render prefetch only once per config', async () => {
     const config = makeConfig();
 
-    startPostRenderPrefetches(config, makeSettings());
-    startPostRenderPrefetches(config, makeSettings());
+    startPostRenderPrefetches(config, makeSettings(true));
+    startPostRenderPrefetches(config, makeSettings(true));
 
     await vi.dynamicImportSettled();
 

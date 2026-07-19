@@ -1,0 +1,143 @@
+{
+  "$schema": "https://project-lal.local/schemas/cli-outbound-inventory-v1.json",
+  "schema_version": 1,
+  "scope": "Source-backed baseline for supported LAL CLI entrypoints. It records configured and static destinations, not an observation of live network traffic.",
+  "supported_entrypoints": [
+    "apps/cli package bin `lal`",
+    "web/public/lal/lal.sh",
+    "web/public/lal/lal.cmd"
+  ],
+  "entries": [
+    {
+      "id": "lal-runtime-gateway",
+      "entrypoints": ["lal attach", "/rc native-run mirror"],
+      "destination": "LAL_GATEWAY_URL, ~/.lal/client-host, or http://localhost:8770",
+      "classification": "required_lal_host_gateway",
+      "reachability": "GatewayClient resolves one origin and sends its LAL route requests to it.",
+      "authorization": "Bearer device token is sent when configured; LAL route handlers are documented in the client source.",
+      "source_evidence": [
+        {
+          "path": "apps/cli/packages/cli/src/lal/attach/gateway-client.ts",
+          "needle": "export const DEFAULT_GATEWAY_ORIGIN = 'http://localhost:8770';"
+        },
+        {
+          "path": "apps/cli/packages/cli/src/lal/attach/gateway-client.ts",
+          "needle": "}>('/api/lal/runs', {"
+        }
+      ],
+      "acceptance_status": "requires network harness"
+    },
+    {
+      "id": "lal-wrapper-heartbeat",
+      "entrypoints": ["web/public/lal/lal.sh", "web/public/lal/lal.cmd"],
+      "destination": "configured LAL host from LAL_HOST or ~/.lal/client-host",
+      "classification": "required_lal_host_gateway",
+      "reachability": "The distribution wrappers post a best-effort heartbeat before invoking the installed runtime.",
+      "authorization": "Authorization bearer token and device headers are constructed from local LAL state.",
+      "source_evidence": [
+        {
+          "path": "web/public/lal/lal.sh",
+          "needle": "\"$host/api/lal/heartbeat\""
+        },
+        {
+          "path": "web/public/lal/lal.cmd",
+          "needle": "'/api/lal/heartbeat'"
+        }
+      ],
+      "acceptance_status": "requires network harness"
+    },
+    {
+      "id": "lal-wrapper-update-install",
+      "entrypoints": [
+        "lal update via web/public/lal/lal.sh",
+        "lal update via web/public/lal/lal.cmd"
+      ],
+      "destination": "configured LAL host from LAL_HOST or ~/.lal/client-host",
+      "classification": "required_lal_host_gateway",
+      "reachability": "Only the explicit update command fetches the LAL-hosted installer.",
+      "authorization": "The shell wrapper passes LAL_TOKEN; the command wrapper reads the local pairing token before invoking the LAL-hosted installer.",
+      "source_evidence": [
+        {
+          "path": "web/public/lal/lal.sh",
+          "needle": "curl -fsSL \"$host/lal/install.sh\" -o \"$installer\""
+        },
+        {
+          "path": "web/public/lal/lal.cmd",
+          "needle": "Invoke-RestMethod ($h + '/lal/install.ps1')"
+        }
+      ],
+      "acceptance_status": "requires network harness"
+    },
+    {
+      "id": "inherited-alibaba-rum",
+      "entrypoints": [
+        "native interactive terminal when usage statistics are enabled"
+      ],
+      "destination": "gb4w8c3ygj-default-sea.rum.aliyuncs.com",
+      "classification": "forbidden_upstream_phone_home",
+      "reachability": "QwenLogger only exists when Config usage statistics are enabled. The CLI settings-to-config default is false, but a settings value can enable it.",
+      "authorization": "none; this is not an approved LAL destination",
+      "source_evidence": [
+        {
+          "path": "apps/cli/packages/core/src/telemetry/qwen-logger/qwen-logger.ts",
+          "needle": "const USAGE_STATS_HOSTNAME = 'gb4w8c3ygj-default-sea.rum.aliyuncs.com';"
+        },
+        {
+          "path": "apps/cli/packages/core/src/telemetry/qwen-logger/qwen-logger.ts",
+          "needle": "if (config === undefined || !config?.getUsageStatisticsEnabled())"
+        },
+        {
+          "path": "apps/cli/packages/cli/src/config/config.ts",
+          "needle": "usageStatisticsEnabled: settings.privacy?.usageStatisticsEnabled ?? false,"
+        }
+      ],
+      "acceptance_status": "must be blocked by the future harness and removed or made unenableable"
+    },
+    {
+      "id": "inherited-npm-update-check",
+      "entrypoints": [
+        "native interactive terminal outside the LAL managed wrapper"
+      ],
+      "destination": "npm registry selected by update-notifier; no fixed host is declared in this source",
+      "classification": "forbidden_upstream_phone_home",
+      "reachability": "The post-render update task requires LAL_MANAGED not equal to 1 and settings.general.enableAutoUpdate true. The package bin sets LAL_MANAGED to 1 before loading the CLI.",
+      "authorization": "none; this is not an approved LAL destination",
+      "source_evidence": [
+        {
+          "path": "apps/cli/scripts/cli-entry.js",
+          "needle": "process.env.LAL_MANAGED ??= '1';"
+        },
+        {
+          "path": "apps/cli/packages/cli/src/startup/startup-prefetch.ts",
+          "needle": "settings.merged.general?.enableAutoUpdate === true"
+        },
+        {
+          "path": "apps/cli/packages/cli/src/ui/utils/updateCheck.ts",
+          "needle": "updateNotifier({"
+        }
+      ],
+      "acceptance_status": "must be blocked by the future harness and removed or made unreachable"
+    },
+    {
+      "id": "operator-configured-otlp",
+      "entrypoints": [
+        "native terminal with telemetry enabled and an OTLP endpoint configured"
+      ],
+      "destination": "operator-provided telemetry.otlpEndpoint or OTEL/QWEN_TELEMETRY endpoint environment variable",
+      "classification": "explicit_user_configured_destination",
+      "reachability": "Telemetry is disabled unless enabled by argv, environment, or settings; endpoint resolution accepts explicit operator configuration.",
+      "authorization": "operator configuration",
+      "source_evidence": [
+        {
+          "path": "apps/cli/packages/core/src/telemetry/config.ts",
+          "needle": "parseBooleanEnvFlag(env['QWEN_TELEMETRY_ENABLED'])"
+        },
+        {
+          "path": "apps/cli/packages/core/src/telemetry/config.ts",
+          "needle": "env['OTEL_EXPORTER_OTLP_ENDPOINT']"
+        }
+      ],
+      "acceptance_status": "requires exporter and sensitive-field review before retention"
+    }
+  ]
+}

@@ -318,6 +318,15 @@ describe('SettingsSchema', () => {
       checkBooleanDefaults(getSettingsSchema() as SettingsSchema);
     });
 
+    it('defaults external usage statistics and automatic updates to disabled', () => {
+      const schema = getSettingsSchema();
+
+      expect(schema.general.properties.enableAutoUpdate.default).toBe(false);
+      expect(
+        schema.privacy.properties.usageStatisticsEnabled.default,
+      ).toBe(false);
+    });
+
     it('should have showInDialog property configured', () => {
       // Check that user-facing settings are marked for dialog display
       expect(getSettingsSchema().general.properties.vimMode.showInDialog).toBe(

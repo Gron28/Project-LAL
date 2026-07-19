@@ -1711,6 +1711,20 @@ describe('loadCliConfig telemetry', () => {
     expect(config.getTelemetryEnabled()).toBe(false);
   });
 
+  it('defaults usage statistics to disabled and preserves an explicit opt-in', async () => {
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+
+    const defaultConfig = await loadCliConfig({}, argv);
+    expect(defaultConfig.getUsageStatisticsEnabled()).toBe(false);
+
+    const optedInConfig = await loadCliConfig(
+      { privacy: { usageStatisticsEnabled: true } },
+      argv,
+    );
+    expect(optedInConfig.getUsageStatisticsEnabled()).toBe(true);
+  });
+
   it('should set telemetry to true when --telemetry flag is present', async () => {
     process.argv = ['node', 'script.js', '--telemetry'];
     const argv = await parseArguments();

@@ -1,0 +1,134 @@
+{
+  "$schema": "https://project-lal.local/schemas/cli-provenance-ledger-v1.json",
+  "schema_version": 1,
+  "scope": "Initial cohesive-subtree ledger for the supported LAL CLI. This is not yet the complete per-file Gate B ledger.",
+  "repository_import": {
+    "commit": "871cf32fe637a591ae204b386b15c33fb9bd027c",
+    "meaning": "First local commit that introduces apps/cli/ into the available repository history.",
+    "upstream_base_commit": null,
+    "gemini_base_commit": null,
+    "status": "unresolved: no exact Qwen or Gemini base commit is recorded in the available local history"
+  },
+  "entries": [
+    {
+      "id": "cli-distribution-wrapper",
+      "path": "apps/cli/scripts/cli-entry.js",
+      "classification": "modified_derivative",
+      "origin_repository": "https://github.com/QwenLM/qwen-code",
+      "upstream_commit": null,
+      "upstream_blob_sha256": null,
+      "license": "Apache-2.0",
+      "copyright": "Copyright 2025 Qwen Code",
+      "reachability": "package bin `lal`",
+      "owning_capability": "terminal startup and managed update isolation",
+      "disposition": "adapt",
+      "protection": "apps/cli/packages/cli/src/startup/startup-prefetch.ts and the source-anchor checker",
+      "source_evidence": [
+        {
+          "path": "apps/cli/package.json",
+          "needle": "\"lal\": \"scripts/cli-entry.js\""
+        },
+        {
+          "path": "apps/cli/scripts/cli-entry.js",
+          "needle": "process.env.LAL_MANAGED ??= '1';"
+        }
+      ]
+    },
+    {
+      "id": "terminal-core-and-ui",
+      "path": "apps/cli/packages/{core,cli}/src",
+      "classification": "modified_derivative",
+      "origin_repository": "https://github.com/QwenLM/qwen-code",
+      "upstream_commit": null,
+      "upstream_blob_sha256": null,
+      "license": "Apache-2.0",
+      "copyright": "Mixed retained Google/Qwen notices and Local AI Lab modifications; resolve per file before release",
+      "reachability": "normal native terminal turn, headless mode, and terminal rendering",
+      "owning_capability": "terminal agent execution",
+      "disposition": "keep_and_harden",
+      "protection": "package CLI/core tests and typecheck",
+      "source_evidence": [
+        {
+          "path": "apps/cli/NOTICE-LAL.md",
+          "needle": "Apache-2.0-licensed Qwen Code"
+        },
+        {
+          "path": "apps/cli/packages/cli/src/gemini.tsx",
+          "needle": "startInteractiveUI"
+        }
+      ]
+    },
+    {
+      "id": "lal-gateway-attach-and-native-mirror",
+      "path": "apps/cli/packages/cli/src/lal/{attach,remote-run}",
+      "classification": "lal_authored",
+      "origin_repository": "Project-LAL repository",
+      "upstream_commit": null,
+      "upstream_blob_sha256": null,
+      "license": "Apache-2.0",
+      "copyright": "Copyright 2025 Local AI Lab",
+      "reachability": "attach flow and /rc native-run mirroring",
+      "owning_capability": "authenticated LAL host gateway and durable run relay",
+      "disposition": "keep",
+      "protection": "gateway-client, SSE client, reattach, renderer, and remote-run mirror tests",
+      "source_evidence": [
+        {
+          "path": "apps/cli/packages/cli/src/lal/attach/gateway-client.ts",
+          "needle": "Copyright 2025 Local AI Lab"
+        },
+        {
+          "path": "apps/cli/packages/cli/src/lal/remote-run/remote-run-mirror.ts",
+          "needle": "Mirrors observable native-agent events into a client-owned gateway run."
+        }
+      ]
+    },
+    {
+      "id": "inherited-rum-telemetry",
+      "path": "apps/cli/packages/core/src/telemetry/qwen-logger",
+      "classification": "retained_upstream",
+      "origin_repository": "https://github.com/QwenLM/qwen-code",
+      "upstream_commit": null,
+      "upstream_blob_sha256": null,
+      "license": "Apache-2.0",
+      "copyright": "Copyright 2025 Google LLC",
+      "reachability": "loaded by core; network use requires usage statistics to be enabled",
+      "owning_capability": "none in supported LAL operation",
+      "disposition": "quarantine_then_remove",
+      "protection": "outbound-inventory source anchors; future deny-by-default network harness",
+      "source_evidence": [
+        {
+          "path": "apps/cli/packages/core/src/telemetry/qwen-logger/qwen-logger.ts",
+          "needle": "const USAGE_STATS_HOSTNAME = 'gb4w8c3ygj-default-sea.rum.aliyuncs.com';"
+        },
+        {
+          "path": "apps/cli/packages/cli/src/config/config.ts",
+          "needle": "usageStatisticsEnabled: settings.privacy?.usageStatisticsEnabled ?? false,"
+        }
+      ]
+    },
+    {
+      "id": "inherited-npm-update-check",
+      "path": "apps/cli/packages/cli/src/{startup,startup-prefetch.ts,ui/utils/updateCheck.ts}",
+      "classification": "retained_upstream",
+      "origin_repository": "https://github.com/QwenLM/qwen-code",
+      "upstream_commit": null,
+      "upstream_blob_sha256": null,
+      "license": "Apache-2.0",
+      "copyright": "Copyright 2025 Google LLC",
+      "reachability": "interactive post-render path only when LAL_MANAGED is not 1 and auto-update is enabled",
+      "owning_capability": "none in supported LAL operation",
+      "disposition": "quarantine_then_remove",
+      "protection": "startup-prefetch guard and source-anchor checker",
+      "source_evidence": [
+        {
+          "path": "apps/cli/packages/cli/src/startup/startup-prefetch.ts",
+          "needle": "process.env['LAL_MANAGED'] !== '1'"
+        },
+        {
+          "path": "apps/cli/packages/cli/src/ui/utils/updateCheck.ts",
+          "needle": "updateNotifier({"
+        }
+      ]
+    }
+  ]
+}
