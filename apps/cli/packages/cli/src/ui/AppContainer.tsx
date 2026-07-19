@@ -555,7 +555,11 @@ export const AppContainer = (props: AppContainerProps) => {
     const onStreamText = (event: AgentStreamTextEvent) => {
       const p = (event as AgentStreamTextEvent & { p?: number }).p;
       if (typeof p !== 'number') return;
-      setCertaintyWave((previous) => [...previous.slice(-47), p]);
+      // Footer renders this at full terminal width and slices to however many
+      // columns actually fit; keep enough history for the widest realistic
+      // terminal (a 500-column bar is already an extreme case) instead of the
+      // old fixed 47-sample cap that made the wave a small fixed-width strip.
+      setCertaintyWave((previous) => [...previous.slice(-499), p]);
     };
     emitter.on(AgentEventType.STREAM_TEXT, onStreamText);
     return () => emitter.off(AgentEventType.STREAM_TEXT, onStreamText);

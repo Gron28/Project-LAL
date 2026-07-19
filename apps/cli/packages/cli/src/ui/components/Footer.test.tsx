@@ -422,6 +422,67 @@ describe('<Footer />', () => {
     });
   });
 
+  describe('J-space certainty wave', () => {
+    it('spans the full terminal width, not a fixed-width strip', () => {
+      const values = Array.from({ length: 200 }, () => 0.9);
+      const { lastFrame } = renderWithWidth(
+        160,
+        createMockUIState({ certaintyWave: values }),
+      );
+      const jspaceLine = lastFrame()
+        ?.split('\n')
+        .find((line) => line.includes('J-space'));
+      expect(jspaceLine).toBeDefined();
+      // ink-testing-library's fake stdout hardcodes 100 real columns
+      // regardless of the useTerminalSize mock, so the line can't actually
+      // reach our mocked 160; what matters is that it fills the available
+      // render width instead of stopping at the old fixed ~47-sample cap
+      // (which would have produced a much shorter line, ~59 chars with the
+      // label/percentage included).
+      expect(jspaceLine!.length).toBeGreaterThan(90);
+    });
+
+    it('grows a narrower bar on a narrow terminal instead of overflowing', () => {
+      const values = Array.from({ length: 200 }, () => 0.9);
+      const wide = renderWithWidth(
+        160,
+        createMockUIState({ certaintyWave: values }),
+      );
+      const narrow = renderWithWidth(
+        80,
+        createMockUIState({ certaintyWave: values }),
+      );
+      const wideLine = wide
+        .lastFrame()
+        ?.split('\n')
+        .find((line) => line.includes('J-space'))!;
+      const narrowLine = narrow
+        .lastFrame()
+        ?.split('\n')
+        .find((line) => line.includes('J-space'))!;
+      expect(narrowLine.length).toBeLessThan(wideLine.length);
+    });
+
+    it('left-pads with a dim placeholder when there are fewer samples than the bar width', () => {
+      const { lastFrame } = renderWithWidth(
+        160,
+        createMockUIState({ certaintyWave: [0.9, 0.9, 0.9] }),
+      );
+      const jspaceLine = lastFrame()
+        ?.split('\n')
+        .find((line) => line.includes('J-space'));
+      expect(jspaceLine).toContain('·');
+    });
+
+    it('is not rendered when idle with no samples', () => {
+      const { lastFrame } = renderWithWidth(
+        160,
+        createMockUIState({ certaintyWave: [], streamingState: 'idle' }),
+      );
+      expect(lastFrame()).not.toContain('J-space');
+    });
+  });
+
   describe('footer rendering (golden snapshots)', () => {
     it('renders complete footer on wide terminal', () => {
       const { lastFrame } = renderWithWidth(120, createMockUIState());

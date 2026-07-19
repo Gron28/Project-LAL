@@ -5,6 +5,13 @@ purpose, including the runs that didn't work. Newest first.
 
 ## 2026-07-19 — Tool-call reliability and terminal visibility fixes
 
+Runtime `0.1.0-lal.22` redraws the J-space certainty wave: it now spans the full
+terminal width instead of a fixed ~47-sample strip, and each bar is colored by its
+own confidence tier (green/amber/red) rather than a single flat gray, using an
+eight-level bar instead of three for a smoother line. It renders as its own
+full-width row below the rest of the footer instead of sharing space with the
+right-hand indicators, which is what was capping its width before.
+
 Runtime `0.1.0-lal.21` fixes five defects found by blind-testing the terminal agent
 end to end. Replaying reasoning as inline `<recalled_thinking>` text broke Qwen3.5's
 native tool-call format — the model stopped closing `</think>` and its tool call
