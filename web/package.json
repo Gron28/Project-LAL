@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npm run lint && tsc --noEmit && npm run test:runtime",
-    "test:runtime": "node --experimental-strip-types --test src/lib/runtime-processes.test.ts src/lib/retention.test.ts src/lib/request-identity.test.ts src/lib/browser-mutation-guard.test.ts src/lib/host-profile.test.ts src/lib/workspace-grants.test.ts",
+    "test:runtime": "node --experimental-strip-types --test src/lib/runtime-processes.test.ts src/lib/retention.test.ts src/lib/request-identity.test.ts src/lib/browser-mutation-guard.test.ts src/lib/host-profile.test.ts src/lib/host-context.test.ts src/lib/state-migration.test.ts src/lib/workspace-grants.test.ts src/lib/capability-registry.test.ts src/lib/jobs.test.ts",
     "test:protocol": "node --test src/lib/protocol/protocol.conformance.test.ts",
     "check:protocol-drift": "node ../scripts/check_protocol_drift.mjs"
   },

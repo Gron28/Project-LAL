@@ -26,11 +26,15 @@ as background, not as a promise or implementation queue.
 - [Host-assumption inventory](design/host-assumption-inventory.md) — a redacted,
   hash-based current-host reproducibility snapshot for portability changes.
 - [Platform directories and host profiles](design/platform-host-profile-boundary.md)
-  — portable state roots, strict compatibility profiles, and safe diagnostic
-  fact export.
+  — portable state roots, strict compatibility profiles, host adapter/context
+  contracts, configuration explanation, dry-run state migration, and safe
+  diagnostic fact export.
 - [LAL CLI provenance and egress baseline](design/lal-cli-provenance-egress-baseline.md)
   — source-backed initial ledger and outbound-destination inventory, with an
   executable source-anchor check.
+- [Durable jobs foundation](design/durable-jobs-foundation.md) — versioned,
+  restart-aware job ledger with explicit resource reservations and verified
+  completion semantics.
 
 ## Supporting designs
 

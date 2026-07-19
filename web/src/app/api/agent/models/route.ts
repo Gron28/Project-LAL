@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { activatePublicModel, allModels, publicModels, readSettings, writeSettings, servingModel, deleteModel, renameModel } from "@/lib/lab";
 import { stopAllRuns } from "@/lib/runs";
 import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
+import { readOrRefreshLiveCapabilityRegistry } from "@/lib/capability-registry-live";
 
 export const dynamic = "force-dynamic";
 
@@ -10,9 +11,12 @@ export const dynamic = "force-dynamic";
 // no server route, so every model dropdown came up empty and every settings write
 // silently 404'd. GET returns the model list + current selection + saved options
 // + system prompt + serveIdleMinutes; PUT patches any subset.
-export function GET() {
+export async function GET() {
   const s = readSettings();
   const infos = publicModels();
+  // Existing dropdowns still select by legacy display name, while callers can
+  // now resolve that alias to immutable bytes/runtime identities.
+  const catalog = await readOrRefreshLiveCapabilityRegistry();
   return NextResponse.json({
     models: infos.map((m) => m.name),
     modelInfos: infos,              // name/source/gb — richer than names alone for the new UI
@@ -24,6 +28,7 @@ export function GET() {
     web: s.web,
     groundDocs: s.groundDocs,
     serveIdleMinutes: s.serveIdleMinutes,
+    catalog,
   });
 }
 
