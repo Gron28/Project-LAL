@@ -9,6 +9,13 @@ Its machine-readable records are:
 Run `node apps/cli/scripts/check-audit-inventories.mjs` from the repository root
 to ensure each record still has the source evidence it cites.
 
+Run `npm --prefix apps/cli run check:egress-acceptance` for the deterministic
+startup boundary check. It makes no network calls: it verifies that the package
+`lal` entry forcibly applies its managed-runtime marker, default startup keeps
+RUM and inherited update checks disabled, and the two forbidden routes still
+match the outbound inventory. It is a bounded startup acceptance check, not a
+substitute for lifecycle-wide socket/DNS/process interception.
+
 ## Scope and limits
 
 The records cover cohesive subtrees and the currently supported LAL startup,
@@ -38,14 +45,15 @@ Two inherited upstream routes are present in source but are not approved LAL
 destinations:
 
 - Alibaba RUM has a fixed hostname. Its logger is gated by usage statistics;
-  the current CLI settings-to-config default is `false`, but settings can still
-  enable it.
+  the supported LAL CLI entrypoint always disables those statistics, even when
+  a legacy settings file attempts to enable them. The retained code remains
+  quarantined pending removal.
 - The `update-notifier` path has no fixed registry host in this source. It is
   gated by both `LAL_MANAGED !== '1'` and auto-update being enabled. The package
-  `lal` entry wrapper sets `LAL_MANAGED=1` before loading the CLI.
+  `lal` entry wrapper forcibly sets `LAL_MANAGED=1` before loading the CLI.
 
-These are source reachability conditions, not runtime proof. The required next
-Gate B step is a deny-by-default harness that records DNS, connect, fetch, and
-child-process attempts for startup, native turn, attach, tool execution, update,
-sandbox start, and shutdown. Until that evidence exists, no destination should
-be described as fully contained.
+The startup boundary now has a deterministic, network-free acceptance check.
+The required next Gate B step is broader: record DNS, connect, fetch, and
+child-process attempts for native turn, attach, tool execution, update, sandbox
+start, and shutdown. Until that evidence exists, no destination should be
+described as fully contained.

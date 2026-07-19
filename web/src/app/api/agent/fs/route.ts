@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveSafe } from "@/lib/tools";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -92,6 +93,10 @@ export async function GET(req: NextRequest) {
 // since, and we 409 instead of silently clobbering. A second PUT without baseMtimeMs
 // is the deliberate overwrite.
 export async function PUT(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) {
+    return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
+  }
   const b = await req.json().catch(() => null);
   if (!b || typeof b.path !== "string" || typeof b.content !== "string") {
     return NextResponse.json({ error: "expected {project?, path, content, baseMtimeMs?}" }, { status: 400 });
@@ -124,6 +129,10 @@ export async function PUT(req: NextRequest) {
 // recursive delete here; a whole-folder wipe is destructive enough that it belongs
 // in a terminal, not a one-click library button).
 export async function DELETE(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) {
+    return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
+  }
   const sp = req.nextUrl.searchParams;
   const pr = projectRoot(sp.get("project"));
   if ("error" in pr) return NextResponse.json({ error: pr.error }, { status: 400 });

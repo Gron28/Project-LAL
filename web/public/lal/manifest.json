@@ -3,7 +3,5 @@
   "lalRuntimeVersion": "0.1.0-lal.24",
   "windowsArchive": "/lal/releases/0.1.0-lal.24/lal-cli-win-x64.zip",
   "windowsSha256": "71376dcff7b542ba4b482c89f89439a1549bd50aa7df26f375ade065398be71d",
-  "runtimeVersion": "0.19.9",
-  "defaultHost": "https://main-pc.tail3ba909.ts.net:8443",
-  "runtimeInstaller": "https://main-pc.tail3ba909.ts.net:8443/lal/install.ps1"
+  "defaultHost": "https://main-pc.tail3ba909.ts.net:8443"
 }

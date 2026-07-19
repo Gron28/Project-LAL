@@ -75,7 +75,7 @@
       ],
       "destination": "gb4w8c3ygj-default-sea.rum.aliyuncs.com",
       "classification": "forbidden_upstream_phone_home",
-      "reachability": "QwenLogger only exists when Config usage statistics are enabled. The CLI settings-to-config default is false, but a settings value can enable it.",
+      "reachability": "QwenLogger only exists when Config usage statistics are enabled. The supported LAL CLI entrypoint passes false regardless of legacy settings.",
       "authorization": "none; this is not an approved LAL destination",
       "source_evidence": [
         {
@@ -88,10 +88,10 @@
         },
         {
           "path": "apps/cli/packages/cli/src/config/config.ts",
-          "needle": "usageStatisticsEnabled: settings.privacy?.usageStatisticsEnabled ?? false,"
+          "needle": "usageStatisticsEnabled: false,"
         }
       ],
-      "acceptance_status": "must be blocked by the future harness and removed or made unenableable"
+      "acceptance_status": "blocked on the supported LAL entrypoint and covered by the startup acceptance check; remove retained code after broader lifecycle egress interception"
     },
     {
       "id": "inherited-npm-update-check",
@@ -100,12 +100,16 @@
       ],
       "destination": "npm registry selected by update-notifier; no fixed host is declared in this source",
       "classification": "forbidden_upstream_phone_home",
-      "reachability": "The post-render update task requires LAL_MANAGED not equal to 1 and settings.general.enableAutoUpdate true. The package bin sets LAL_MANAGED to 1 before loading the CLI.",
+      "reachability": "The post-render update task requires LAL_MANAGED not equal to 1 and settings.general.enableAutoUpdate true. The package bin forcibly sets LAL_MANAGED to 1 before loading the CLI, even if a caller supplied another value.",
       "authorization": "none; this is not an approved LAL destination",
       "source_evidence": [
         {
+          "path": "apps/cli/scripts/lal-runtime-policy.mjs",
+          "needle": "env[LAL_MANAGED_ENV] = LAL_MANAGED_VALUE;"
+        },
+        {
           "path": "apps/cli/scripts/cli-entry.js",
-          "needle": "process.env.LAL_MANAGED ??= '1';"
+          "needle": "applyLalManagedRuntimePolicy(process.env);"
         },
         {
           "path": "apps/cli/packages/cli/src/startup/startup-prefetch.ts",

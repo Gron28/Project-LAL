@@ -7,15 +7,12 @@ host="${LAL_HOST:-https://main-pc.tail3ba909.ts.net:8443}"
 host="${host%/}"
 lal_home="${LAL_HOME:-$HOME/.lal}"
 bin_dir="${LAL_BIN_DIR:-$HOME/.local/bin}"
-runtime_installer_default="https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 curl -fsSL "$host/lal/manifest.json" -o "$tmp/manifest.json"
-runtime_version="$(sed -n 's/.*"runtimeVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tmp/manifest.json")"
 client_version="$(sed -n 's/.*"clientVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tmp/manifest.json")"
-runtime_installer="$(sed -n 's/.*"runtimeInstaller"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tmp/manifest.json")"
-runtime_installer="${runtime_installer:-$runtime_installer_default}"
+runtime_version="$(sed -n 's/.*"lalRuntimeVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tmp/manifest.json")"
 if [ -z "$runtime_version" ] || [ -z "$client_version" ]; then printf 'Invalid LAL release manifest.\n' >&2; exit 1; fi
 
 mkdir -p "$lal_home" "$bin_dir"
@@ -51,12 +48,16 @@ curl -fsSL \
   -H "X-LAL-Client-Version: $client_version" \
   "$host/api/lal/client-settings" -o "$tmp/settings.json"
 
-installed_runtime=""
-if [ -f "$lal_home/runtime-version" ]; then installed_runtime="$(sed -n '1p' "$lal_home/runtime-version")"; fi
-if ! command -v qwen >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/qwen" ]; then installed_runtime=""; fi
-if [ "$installed_runtime" != "$runtime_version" ]; then
-  curl -fsSL "$runtime_installer/install-qwen-standalone.sh" -o "$tmp/install-runtime.sh"
-  QWEN_INSTALL_VERSION="$runtime_version" bash "$tmp/install-runtime.sh" --version "$runtime_version"
+runtime_command="${LAL_RUNTIME_COMMAND:-}"
+if [ -z "$runtime_command" ] && [ -s "$lal_home/runtime-command" ]; then runtime_command="$(sed -n '1p' "$lal_home/runtime-command")"; fi
+# `qwen` is a temporary local compatibility adapter for existing installs. LAL
+# never downloads it, checks its version, or contacts an upstream installer.
+runtime_command="${runtime_command:-qwen}"
+if [[ "$runtime_command" == */* ]]; then
+  if [ ! -x "$runtime_command" ]; then printf 'Configured LAL runtime is not executable: %s\n' "$runtime_command" >&2; exit 1; fi
+else
+  runtime_command="$(command -v "$runtime_command" 2>/dev/null || true)"
+  if [ -z "$runtime_command" ]; then printf 'LAL runtime is missing. Install an LAL-managed runtime or set LAL_RUNTIME_COMMAND, then rerun lal update.\n' >&2; exit 1; fi
 fi
 
 curl -fsSL "$host/lal/lal.sh" -o "$tmp/lal"
@@ -69,6 +70,7 @@ chmod 600 "$lal_home/.env"
 printf '%s\n' "$host" > "$lal_home/client-host"
 printf '%s\n' "$client_version" > "$lal_home/client-version"
 printf '%s\n' "$runtime_version" > "$lal_home/runtime-version"
+printf '%s\n' "$runtime_command" > "$lal_home/runtime-command"
 if [ ! -f "$lal_home/settings.json" ]; then mv "$tmp/settings.json" "$lal_home/settings.json"; fi
 curl -fsS --max-time 5 -X POST \
   -H "Authorization: Bearer $token" \

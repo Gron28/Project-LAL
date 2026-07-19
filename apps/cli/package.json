@@ -80,6 +80,7 @@
     "changelog": "node scripts/generate-changelog.js",
     "telemetry": "node scripts/telemetry.js",
     "check:lockfile": "node scripts/check-lockfile.js",
+    "check:egress-acceptance": "node scripts/check-egress-acceptance.mjs",
     "check:serve-fast-path-bundle": "node scripts/clean-package-build-artifacts.js && npm run build -- --cli-only && cross-env DEV=true npm run bundle && node scripts/check-serve-fast-path-bundle.js",
     "clean": "node scripts/clean.js",
     "pre-commit": "node scripts/pre-commit.js"
@@ -102,6 +103,7 @@
   "files": [
     "dist/",
     "scripts/cli-entry.js",
+    "scripts/lal-runtime-policy.mjs",
     "README.md",
     "LICENSE"
   ],

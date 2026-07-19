@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { activatePublicModel, allModels, publicModels, readSettings, writeSettings, servingModel, deleteModel, renameModel } from "@/lib/lab";
 import { stopAllRuns } from "@/lib/runs";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,10 @@ export function GET() {
 }
 
 export async function PUT(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) {
+    return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
+  }
   const b = await req.json().catch(() => ({}));
   const patch: Parameters<typeof writeSettings>[0] = {};
   const previous = readSettings();
@@ -63,6 +68,10 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) {
+    return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
+  }
   const b = await req.json().catch(() => ({}));
   const from = typeof b.from === "string" ? b.from.trim() : "";
   const to = typeof b.to === "string" ? b.to.trim() : "";
@@ -76,6 +85,10 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) {
+    return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
+  }
   const u = new URL(req.url);
   const name = (u.searchParams.get("name") || "").trim();
   const sourceRaw = u.searchParams.get("source") || "local";

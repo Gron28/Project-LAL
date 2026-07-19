@@ -30,7 +30,7 @@
         },
         {
           "path": "apps/cli/scripts/cli-entry.js",
-          "needle": "process.env.LAL_MANAGED ??= '1';"
+          "needle": "applyLalManagedRuntimePolicy(process.env);"
         }
       ]
     },
@@ -102,7 +102,7 @@
         },
         {
           "path": "apps/cli/packages/cli/src/config/config.ts",
-          "needle": "usageStatisticsEnabled: settings.privacy?.usageStatisticsEnabled ?? false,"
+          "needle": "usageStatisticsEnabled: false,"
         }
       ]
     },

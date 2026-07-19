@@ -24,8 +24,7 @@ class FakeDistribution(BaseHTTPRequestHandler):
         if self.path == "/lal/manifest.json":
             return self.reply_json({
                 "clientVersion": type(self).client_version,
-                "runtimeVersion": "0.19.9",
-                "runtimeInstaller": "https://invalid.example",
+                "lalRuntimeVersion": "0.1.0-lal.test",
             })
         if self.path == "/api/lal/client-settings":
             if self.headers.get("authorization") != "Bearer test-token":
@@ -70,6 +69,15 @@ class FakeDistribution(BaseHTTPRequestHandler):
 
 
 class LalDistributionTest(unittest.TestCase):
+    def test_linux_distribution_never_fetches_an_inherited_runtime(self):
+        installer = INSTALLER.read_text(encoding="utf-8")
+        wrapper = WRAPPER.read_text(encoding="utf-8")
+
+        self.assertNotIn("qwen-code-assets", installer)
+        self.assertNotIn("install-qwen", installer)
+        self.assertIn("LAL_RUNTIME_COMMAND", installer)
+        self.assertIn("LAL_MANAGED=1", wrapper)
+
     def test_install_invocation_and_update_preserve_user_state(self):
         FakeDistribution.heartbeats = []
         server = ThreadingHTTPServer(("127.0.0.1", 0), FakeDistribution)
@@ -84,13 +92,12 @@ class LalDistributionTest(unittest.TestCase):
                 lal_home = home / ".lal"
                 for directory in (home, bin_dir, fake_path, lal_home):
                     directory.mkdir(parents=True, exist_ok=True)
-                fake_qwen = fake_path / "qwen"
-                fake_qwen.write_text(
+                fake_runtime = fake_path / "lal-runtime"
+                fake_runtime.write_text(
                     "#!/bin/sh\nprintf 'home=%s token=%s args=%s\\n' \"$QWEN_HOME\" \"$LAL_API_KEY\" \"$*\"\n",
                     encoding="utf-8",
                 )
-                fake_qwen.chmod(0o755)
-                (lal_home / "runtime-version").write_text("0.19.9\n", encoding="utf-8")
+                fake_runtime.chmod(0o755)
                 env = {
                     **os.environ,
                     "HOME": str(home),
@@ -99,6 +106,7 @@ class LalDistributionTest(unittest.TestCase):
                     "LAL_BIN_DIR": str(bin_dir),
                     "LAL_HOST": f"http://127.0.0.1:{server.server_port}",
                     "LAL_TOKEN": "test-token",
+                    "LAL_RUNTIME_COMMAND": str(fake_runtime),
                 }
 
                 installed = subprocess.run(
@@ -110,6 +118,8 @@ class LalDistributionTest(unittest.TestCase):
                 )
                 self.assertEqual(installed.returncode, 0, installed.stderr)
                 self.assertTrue((bin_dir / "lal").is_file())
+                self.assertEqual((lal_home / "runtime-command").read_text().strip(), str(fake_runtime))
+                self.assertEqual((lal_home / "runtime-version").read_text().strip(), "0.1.0-lal.test")
                 self.assertEqual((lal_home / "client-version").read_text().strip(), "0.1.0")
                 self.assertEqual(json.loads((lal_home / "settings.json").read_text())["model"]["name"], "qwen3-4b-stock")
                 device_id = (lal_home / "device-id").read_text().strip()

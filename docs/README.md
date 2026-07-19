@@ -25,6 +25,9 @@ as background, not as a promise or implementation queue.
   deliberate gaps before registry-backed cleanup.
 - [Host-assumption inventory](design/host-assumption-inventory.md) — a redacted,
   hash-based current-host reproducibility snapshot for portability changes.
+- [Platform directories and host profiles](design/platform-host-profile-boundary.md)
+  — portable state roots, strict compatibility profiles, and safe diagnostic
+  fact export.
 - [LAL CLI provenance and egress baseline](design/lal-cli-provenance-egress-baseline.md)
   — source-backed initial ledger and outbound-destination inventory, with an
   executable source-anchor check.

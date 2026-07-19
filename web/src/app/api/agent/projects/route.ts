@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { listProjects, rememberProject, forgetProject } from "@/lib/lab";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,10 @@ export async function GET() {
 // or create a brand-new empty one first ("create") then register it. Same $HOME
 // confinement posture as /api/agent/browse (single-user LAN/tailscale app).
 export async function POST(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) {
+    return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
+  }
   const b = await req.json().catch(() => null);
   if (!b || typeof b.path !== "string" || !b.path.trim()) {
     return NextResponse.json({ error: "path required" }, { status: 400 });
@@ -41,6 +46,10 @@ export async function POST(req: NextRequest) {
 // Does NOT touch anything on disk; this is the safe/non-destructive "remove from
 // library" action, distinct from deleting the folder's actual files.
 export async function DELETE(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) {
+    return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
+  }
   const p = req.nextUrl.searchParams.get("path");
   if (!p) return NextResponse.json({ error: "path required" }, { status: 400 });
   forgetProject(p);

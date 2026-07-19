@@ -2071,7 +2071,9 @@ export async function loadCliConfig(
     // still initialize after render unless an initial prompt is present.
     deferTelemetryInitialization: interactive && !isAcpMode && !question,
     outboundCorrelation: settings.outboundCorrelation,
-    usageStatisticsEnabled: settings.privacy?.usageStatisticsEnabled ?? false,
+    // The retained upstream setting is accepted for compatibility but never
+    // enables Alibaba RUM on the supported LAL entrypoint.
+    usageStatisticsEnabled: false,
     clearContextOnIdle: settings.context?.clearContextOnIdle,
     fileFiltering: settings.context?.fileFiltering,
     plansDirectory: settings.plansDirectory,

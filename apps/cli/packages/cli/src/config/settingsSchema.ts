@@ -1176,11 +1176,11 @@ const SETTINGS_SCHEMA = {
     properties: {
       usageStatisticsEnabled: {
         type: 'boolean',
-        label: 'Enable Usage Statistics',
+        label: 'Usage Statistics (disabled in LAL)',
         category: 'Privacy',
         requiresRestart: true,
         default: false,
-        description: 'Allow collection of usage statistics',
+        description: 'Legacy compatibility setting. LAL does not send inherited usage statistics.',
         showInDialog: true,
       },
     },
