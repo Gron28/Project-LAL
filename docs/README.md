@@ -18,6 +18,14 @@ as background, not as a promise or implementation queue.
   whole-system host portability, training, and inherited CLI provenance/reduction;
   subordinate to the foundation roadmap.
 
+## Current implementation inventories
+
+- [Storage and retention inventory](design/storage-retention-inventory.md) —
+  the current mutable roots, effective retention, reference protections, and
+  deliberate gaps before registry-backed cleanup.
+- [Host-assumption inventory](design/host-assumption-inventory.md) — a redacted,
+  hash-based current-host reproducibility snapshot for portability changes.
+
 ## Supporting designs
 
 - [LAL CLI product plan](design/lal-cli-product-plan.md) — detailed capability

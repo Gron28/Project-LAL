@@ -12,18 +12,19 @@ the foundation work.
 
 ### Milestone 2 — trustworthy state
 
-- Replace the web/CLI protocol mirror with a real versioned shared package
-  consumed by both applications. Drift checks and fixtures exist, but the
-  shared package boundary does not.
-- Reconcile native CLI turns with attach-mode events. Native turns still do not
-  receive the complete LAL event vocabulary for thinking, confidence/context,
-  model loading, serving state, and structured errors.
+- The web/CLI protocol boundary now lives in `packages/protocol/`, consumed by
+  both applications; retain its conformance fixtures and import-boundary check.
+- Native `/rc` and managed-headless mirrors now carry thinking, usage/context,
+  host-observed model lifecycle/confidence/error events, approvals, rounds, and
+  named tool progress. Default interactive native turns still need a managed
+  lifecycle decision before they can claim automatic cross-device parity.
 - Make the CLI's model catalog, actual context window, loaded state, and GPU
   status come from host runtime data rather than inherited/static lookups.
-- Make the full storage system bounded: conversations, logs, artifacts,
-  downloaded models, caches, and training output still need explicit roots,
-  quotas, retention, and cleanup tests. Terminal ledger retention is the slice
-  currently implemented.
+- Make the full storage system bounded: the complete current-root inventory is
+  documented, but conversations, HIVE artifacts, downloaded models, caches,
+  datasets, screenshots, and training output still need registry-backed quotas,
+  retention, and cleanup tests. Terminal ledger and deliberation retention are
+  the only implemented eviction slices.
 - Complete the regression matrix for startup, reconnect/replay, cancellation,
   process cleanup, protocol compatibility, and storage limits across host, web,
   CLI, and real remote devices.
@@ -35,7 +36,6 @@ the foundation work.
 
 - Move `web/` to the intended `apps/web/` layout, or formally revise the target
   layout and document the decision.
-- Add `packages/protocol/` and remove the mirrored protocol arrangement.
 - Reduce the inherited CLI surface: cloud providers, phone-home telemetry,
   upstream update checks, enterprise channels, public docs site, desktop app,
   mobile MCP, general SDKs, computer-use driver, broad locale machinery, and
@@ -133,4 +133,3 @@ milestone: public launch and marketplace work, broad community/contribution
 automation, new model-training campaigns, large dataset commits, desktop and
 IDE products, SDK maintenance, enterprise channels, computer-use automation,
 and cosmetic redesign that hides missing system truth.
-
