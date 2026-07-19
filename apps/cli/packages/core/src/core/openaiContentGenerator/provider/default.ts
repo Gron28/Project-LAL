@@ -23,6 +23,20 @@ function shouldMirrorReasoningContentForQwen3(model: string): boolean {
 }
 
 /**
+ * Qwen3.5 chat templates read `message.reasoning_content` directly and
+ * re-render it as a native `<think>` block. Inlining a `<recalled_thinking>`
+ * pseudo-block into content instead corrupts the turn structure: the model
+ * imitates it, stops closing its real `</think>`, and its tool calls get
+ * swallowed into the reasoning channel where the server's tool parser never
+ * looks (verified against qwen35-9b via llama-server --jinja, 2026-07-18).
+ * For these models the untouched message — reasoning_content field intact —
+ * IS the native replay path.
+ */
+function templateConsumesReasoningNatively(model: string): boolean {
+  return /qwen3[._-]?5/.test(model.toLowerCase());
+}
+
+/**
  * Cap on replayed reasoning. The tail is kept — conclusions and decisions
  * live at the end of a think block, and small local context windows cannot
  * afford the whole thing.
@@ -191,9 +205,11 @@ export class DefaultOpenAICompatibleProvider
     // Apply output token limits to ensure max_tokens is set appropriately
     // This prevents occupying too much context window with output reservation
     const requestWithTokenLimits = this.applyOutputTokenLimit(request);
-    const replayedMessages = this.shouldReplayReasoningInline()
-      ? replayLatestAssistantReasoning(requestWithTokenLimits.messages)
-      : requestWithTokenLimits.messages;
+    const replayedMessages =
+      this.shouldReplayReasoningInline() &&
+      !templateConsumesReasoningNatively(request.model)
+        ? replayLatestAssistantReasoning(requestWithTokenLimits.messages)
+        : requestWithTokenLimits.messages;
     const messages = shouldMirrorReasoningContentForQwen3(request.model)
       ? replayedMessages.map(mirrorReasoningContentToReasoning)
       : replayedMessages;

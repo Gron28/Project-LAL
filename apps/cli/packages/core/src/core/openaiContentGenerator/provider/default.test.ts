@@ -671,6 +671,59 @@ describe('DefaultOpenAICompatibleProvider', () => {
       );
     });
 
+    it('skips inline replay for Qwen3.5-family models whose template consumes reasoning_content natively', () => {
+      // Regression: inlining <recalled_thinking> into content makes Qwen3.5
+      // stop closing its </think> block on the next turn, so its tool calls
+      // get swallowed into the reasoning channel and never execute
+      // (qwen35-9b via llama-server --jinja, 2026-07-18).
+      for (const model of ['qwen35-9b', 'qwen3.5-4b-stock', 'Qwen3_5-9B']) {
+        const originalRequest: OpenAI.Chat.ChatCompletionCreateParams = {
+          model,
+          messages: [
+            {
+              role: 'assistant',
+              content: 'Visible answer',
+              reasoning_content: 'Chain of thought',
+            } as OpenAI.Chat.ChatCompletionAssistantMessageParam & {
+              reasoning_content: string;
+            },
+            { role: 'user', content: 'Continue' },
+          ],
+        };
+
+        const result = provider.buildRequest(originalRequest, 'prompt-id');
+        const assistant = result.messages?.[0] as {
+          content?: string;
+          reasoning_content?: string;
+        };
+
+        expect(assistant.content).toBe('Visible answer');
+        expect(assistant.reasoning_content).toBe('Chain of thought');
+      }
+    });
+
+    it('still replays inline for non-3.5 Qwen3 models', () => {
+      const originalRequest: OpenAI.Chat.ChatCompletionCreateParams = {
+        model: 'qwen3-4b-stock',
+        messages: [
+          {
+            role: 'assistant',
+            content: 'Answer',
+            reasoning_content: 'Chain of thought',
+          } as OpenAI.Chat.ChatCompletionAssistantMessageParam & {
+            reasoning_content: string;
+          },
+        ],
+      };
+
+      const result = provider.buildRequest(originalRequest, 'prompt-id');
+      const assistant = result.messages?.[0] as { content?: string };
+
+      expect(assistant.content).toBe(
+        '<recalled_thinking>\nChain of thought\n</recalled_thinking>\n\nAnswer',
+      );
+    });
+
     it('is disabled when LAL_REPLAY_REASONING_CHARS is 0', () => {
       vi.stubEnv('LAL_REPLAY_REASONING_CHARS', '0');
       const originalRequest: OpenAI.Chat.ChatCompletionCreateParams = {

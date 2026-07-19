@@ -2398,6 +2398,10 @@ export class GeminiClient {
 
       const resultStream = turn.run(model, requestToSend, signal);
       let didUpdateIdeContextState = false;
+      // Loop-recovery instruction captured mid-stream; the recovery send is
+      // deferred until after the stream is closed (see the two guard blocks
+      // below — recursing while the stream is open deadlocks the send-lock).
+      let pendingLoopRecovery: string | null = null;
       try {
         for await (const event of resultStream) {
           if (messageDisplay && event.type === GeminiEventType.Content) {
@@ -2434,19 +2438,16 @@ export class GeminiClient {
               };
               yield { type: GeminiEventType.Retry, isContinuation: true };
               this.loopDetector.reset(prompt_id);
-              const recoveryTurn = yield* this.sendMessageStream(
-                [{ text: recovery }],
-                signal,
-                prompt_id,
-                {
-                  type: SendMessageType.Hook,
-                  modelOverride: options?.modelOverride,
-                  loopRecoveryAttempted: true,
-                },
-                boundedTurns - 1,
-              );
-              normalCompletion = true;
-              return recoveryTurn;
+              // Defer the recovery send until the current stream is closed:
+              // chat.sendMessageStream serializes on a send-lock that only
+              // releases when this stream's generator finishes, so recursing
+              // from inside its consumer loop deadlocks the whole turn — the
+              // lock waits on the consumer, the consumer waits on the lock
+              // (headless hang, 2026-07-18). `break` closes the stream via
+              // the iterator's return path, releasing the lock first; the
+              // recovery send happens after the loop.
+              pendingLoopRecovery = recovery;
+              break;
             }
             yield {
               type: GeminiEventType.LoopDetected,
@@ -2483,19 +2484,16 @@ export class GeminiClient {
               };
               yield { type: GeminiEventType.Retry, isContinuation: true };
               this.loopDetector.reset(prompt_id);
-              const recoveryTurn = yield* this.sendMessageStream(
-                [{ text: recovery }],
-                signal,
-                prompt_id,
-                {
-                  type: SendMessageType.Hook,
-                  modelOverride: options?.modelOverride,
-                  loopRecoveryAttempted: true,
-                },
-                boundedTurns - 1,
-              );
-              normalCompletion = true;
-              return recoveryTurn;
+              // Defer the recovery send until the current stream is closed:
+              // chat.sendMessageStream serializes on a send-lock that only
+              // releases when this stream's generator finishes, so recursing
+              // from inside its consumer loop deadlocks the whole turn — the
+              // lock waits on the consumer, the consumer waits on the lock
+              // (headless hang, 2026-07-18). `break` closes the stream via
+              // the iterator's return path, releasing the lock first; the
+              // recovery send happens after the loop.
+              pendingLoopRecovery = recovery;
+              break;
             }
             yield {
               type: GeminiEventType.LoopDetected,
@@ -2587,6 +2585,25 @@ export class GeminiClient {
         // belt-and-suspenders call in the outer finally further down is then
         // a no-op.
         await messageDisplay?.finish();
+      }
+
+      if (pendingLoopRecovery) {
+        // The loop above broke out on a detected loop; the stream (and its
+        // send-lock) is now released, so the recovery send is safe to start.
+        // HookSystemMessage + Retry were already yielded at detection time.
+        const recoveryTurn = yield* this.sendMessageStream(
+          [{ text: pendingLoopRecovery }],
+          signal,
+          prompt_id,
+          {
+            type: SendMessageType.Hook,
+            modelOverride: options?.modelOverride,
+            loopRecoveryAttempted: true,
+          },
+          boundedTurns - 1,
+        );
+        normalCompletion = true;
+        return recoveryTurn;
       }
 
       // Track API completion time for thinking block idle cleanup
