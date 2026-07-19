@@ -12,6 +12,11 @@ as background, not as a promise or implementation queue.
   reliability work that must precede feature expansion.
 - [Repository migration](plans/project-lal-repository-migration.md) — how to
   replace the nested CLI repository with one clean Project-LAL repository.
+- [Capability elevation plan](plans/project-lal-capability-elevation-plan.md) —
+  deep architecture and phased plan for model lifecycle, evaluation,
+  multimodality, resource-aware HIVE specialists, defensive research,
+  whole-system host portability, training, and inherited CLI provenance/reduction;
+  subordinate to the foundation roadmap.
 
 ## Supporting designs
 
