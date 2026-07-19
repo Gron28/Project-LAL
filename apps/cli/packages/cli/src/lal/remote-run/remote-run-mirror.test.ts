@@ -167,6 +167,98 @@ describe('RemoteRunMirror', () => {
     await mirror.stop();
   });
 
+  it('mirrors native approval and round-boundary events with their real tool details', async () => {
+    const emitter = new AgentEventEmitter();
+    const client = gateway();
+    const mirror = new RemoteRunMirror({
+      emitter,
+      client,
+      model: 'local-model',
+    });
+    await mirror.start();
+
+    emitter.emit(AgentEventType.TOOL_WAITING_APPROVAL, {
+      subagentId: 'a',
+      round: 1,
+      callId: 'approval-1',
+      name: 'run_shell_command',
+      description: 'run tests',
+      args: { command: 'npm test' },
+      confirmationDetails: {
+        type: 'exec',
+        title: 'Run tests',
+      } as never,
+      respond: async () => undefined,
+      timestamp: 1,
+    });
+    emitter.emit(AgentEventType.ROUND_END, {
+      subagentId: 'a',
+      round: 1,
+      promptId: 'prompt-1',
+      timestamp: 2,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const sent = (
+      client.appendClientRunEvents as ReturnType<typeof vi.fn>
+    ).mock.calls
+      .flatMap((call) => call[2] as Array<{ event: { k: string; v: unknown } }>)
+      .map((entry) => entry.event);
+    expect(sent).toContainEqual({
+      k: 'approval_needed',
+      v: {
+        id: 'approval-1',
+        name: 'run_shell_command',
+        args: { command: 'npm test' },
+      },
+    });
+    expect(sent).toContainEqual({ k: 'round' });
+    await mirror.stop();
+  });
+
+  it('keeps a tool progress event associated with its native tool name', async () => {
+    const emitter = new AgentEventEmitter();
+    const client = gateway();
+    const mirror = new RemoteRunMirror({
+      emitter,
+      client,
+      model: 'local-model',
+    });
+    await mirror.start();
+    emitter.emit(AgentEventType.TOOL_CALL, {
+      subagentId: 'a',
+      round: 1,
+      callId: 'call-1',
+      name: 'run_shell_command',
+      args: { command: 'npm test' },
+      description: 'test',
+      timestamp: 1,
+    });
+    emitter.emit(AgentEventType.TOOL_OUTPUT_UPDATE, {
+      subagentId: 'a',
+      round: 1,
+      callId: 'call-1',
+      outputChunk: 'running tests',
+      timestamp: 2,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const sent = (
+      client.appendClientRunEvents as ReturnType<typeof vi.fn>
+    ).mock.calls
+      .flatMap((call) => call[2] as Array<{ event: { k: string; v: unknown } }>)
+      .map((entry) => entry.event);
+    expect(sent).toContainEqual({
+      k: 'tool_progress',
+      v: {
+        id: 'call-1',
+        name: 'run_shell_command',
+        chars: 13,
+        preview: 'running tests',
+      },
+    });
+    await mirror.stop();
+  });
+
   it('cancels and settles the owning native session from a heartbeat', async () => {
     const emitter = new AgentEventEmitter();
     const client = gateway({ cancelRequested: true });

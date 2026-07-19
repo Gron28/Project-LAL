@@ -7,6 +7,7 @@
 import {
   AgentEventType,
   type AgentEventEmitter,
+  type AgentApprovalRequestEvent,
   type AgentToolCallEvent,
   type AgentToolOutputUpdateEvent,
   type AgentToolResultEvent,
@@ -85,6 +86,7 @@ export class RemoteRunMirror {
   private streamedText = '';
   private streamedThought = '';
   private readonly toolArguments = new Map<string, Record<string, unknown>>();
+  private readonly toolNames = new Map<string, string>();
 
   private readonly onStreamText = (event: {
     text: string;
@@ -115,6 +117,7 @@ export class RemoteRunMirror {
   };
   private readonly onToolCall = (event: AgentToolCallEvent) => {
     this.toolArguments.set(event.callId, event.args);
+    this.toolNames.set(event.callId, event.name);
     this.enqueue({
       k: 'tool_request',
       v: { id: event.callId, name: event.name, args: event.args },
@@ -125,7 +128,7 @@ export class RemoteRunMirror {
       k: 'tool_progress',
       v: {
         id: event.callId,
-        name: 'tool',
+        name: this.toolNames.get(event.callId) ?? 'tool',
         chars: text(event.outputChunk).length,
         preview: text(event.outputChunk, 500),
       },
@@ -142,6 +145,7 @@ export class RemoteRunMirror {
     });
     const args = this.toolArguments.get(event.callId) ?? {};
     this.toolArguments.delete(event.callId);
+    this.toolNames.delete(event.callId);
     if (
       event.success &&
       (event.name === 'edit' || event.name === 'write_file')
@@ -171,6 +175,12 @@ export class RemoteRunMirror {
       }
     }
   };
+  private readonly onApproval = (event: AgentApprovalRequestEvent) =>
+    this.enqueue({
+      k: 'approval_needed',
+      v: { id: event.callId, name: event.name, args: event.args },
+    });
+  private readonly onRoundEnd = () => this.enqueue({ k: 'round' });
   private readonly onUsage = (event: AgentUsageEvent) => {
     const usage = event.usage;
     const promptTokens = usage.promptTokenCount ?? 0;
@@ -236,6 +246,8 @@ export class RemoteRunMirror {
     this.emitter.on(AgentEventType.TOOL_CALL, this.onToolCall);
     this.emitter.on(AgentEventType.TOOL_OUTPUT_UPDATE, this.onToolOutput);
     this.emitter.on(AgentEventType.TOOL_RESULT, this.onToolResult);
+    this.emitter.on(AgentEventType.TOOL_WAITING_APPROVAL, this.onApproval);
+    this.emitter.on(AgentEventType.ROUND_END, this.onRoundEnd);
     this.emitter.on(AgentEventType.USAGE_METADATA, this.onUsage);
     this.emitter.on(AgentEventType.FINISH, this.onFinish);
     this.emitter.on(AgentEventType.ERROR, this.onError);
@@ -293,6 +305,8 @@ export class RemoteRunMirror {
     this.emitter.off(AgentEventType.TOOL_CALL, this.onToolCall);
     this.emitter.off(AgentEventType.TOOL_OUTPUT_UPDATE, this.onToolOutput);
     this.emitter.off(AgentEventType.TOOL_RESULT, this.onToolResult);
+    this.emitter.off(AgentEventType.TOOL_WAITING_APPROVAL, this.onApproval);
+    this.emitter.off(AgentEventType.ROUND_END, this.onRoundEnd);
     this.emitter.off(AgentEventType.USAGE_METADATA, this.onUsage);
     this.emitter.off(AgentEventType.FINISH, this.onFinish);
     this.emitter.off(AgentEventType.ERROR, this.onError);
