@@ -8,6 +8,7 @@ import { Panel } from "@/components/ui/panel";
 import { ICON_SIZE } from "@/components/ui/icon";
 
 type M = { name: string; source: "local" | "ollama"; gb: number };
+type ModelDownloadJob = { id: string; state: string; progress: { phase: string; completed: number; total?: number }; error?: { message: string } };
 type Doc = { id: string; name: string; folder: string; chars: number; ts: number };
 type DataFile = { name: string; chars: number; kind: "raw" | "sft"; rows?: number | null; sha256?: string };
 type ConvoRow = { id: string; title: string; updatedAt: number; kind: "chat" | "code"; project?: string };
@@ -36,11 +37,22 @@ function Models() {
   const [current, setCurrent] = useState("");
   const [renamingName, setRenamingName] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState("");
+  const [modelName, setModelName] = useState("");
+  const [modelId, setModelId] = useState("");
+  const [revision, setRevision] = useState("");
+  const [filePath, setFilePath] = useState("");
+  const [digest, setDigest] = useState("");
+  const [sizeBytes, setSizeBytes] = useState("");
+  const [licenseName, setLicenseName] = useState("");
+  const [acceptedLicense, setAcceptedLicense] = useState(false);
+  const [downloadStatus, setDownloadStatus] = useState("");
+  const [downloads, setDownloads] = useState<ModelDownloadJob[]>([]);
   const load = () => fetch("/api/agent/models").then((r) => r.json()).then((j) => {
     setDetail(j.modelInfos || j.detail || []);
     setCurrent(j.current || "");
   });
   useEffect(() => { load(); }, []);
+  useEffect(() => { const poll = () => fetch("/api/v1/model-acquisitions").then((response) => response.ok ? response.json() : null).then((body) => { if (body?.jobs) setDownloads(body.jobs); }); poll(); const timer = setInterval(poll, 2_000); return () => clearInterval(timer); }, []);
   const setCur = async (n: string) => { await fetch("/api/agent/models", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: n }) }); load(); };
   const del = async (n: string, source: "local" | "ollama") => { if (!confirm("Delete " + n + "?")) return; await fetch("/api/agent/models?name=" + encodeURIComponent(n) + "&source=" + source, { method: "DELETE" }); load(); };
   const startRename = (n: string) => { setRenamingName(n); setRenameVal(n); };
@@ -51,6 +63,15 @@ function Models() {
     const r = await fetch("/api/agent/models", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ from: oldName, to }) }).then((x) => x.json());
     if (!r.ok) alert(r.error || "rename failed");
     load();
+  };
+  const download = async () => {
+    setDownloadStatus("Planning verified download…");
+    try {
+      const response = await fetch("/api/v1/model-acquisitions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ modelName, modelId, revision, filePath, sha256: digest, sizeBytes: Number(sizeBytes), licenseName, acceptedLicense }) });
+      const body = await response.json();
+      setDownloadStatus(response.ok ? `Download accepted: ${body.job.id}` : `Download refused: ${body.error || body.detail || "invalid request"}`);
+      if (response.ok) load();
+    } catch { setDownloadStatus("Download request failed before transfer started."); }
   };
 
   const Row = ({ m }: { m: M }) => {
@@ -80,6 +101,18 @@ function Models() {
   const trained = detail.filter((m) => m.source === "local"), installed = detail.filter((m) => m.source === "ollama");
   return (
     <div className="flex flex-col gap-4">
+      <Panel padding="none">
+        <div className={head}><span className="text-[var(--accent-ai)]">◆</span> ADD VERIFIED HUGGING FACE GGUF</div>
+        <div className="p-4 grid gap-2 text-xs">
+          <p className="text-[var(--muted)]">This downloads one explicitly pinned file only. Copy the repository, commit hash, exact GGUF path, SHA-256, byte size, and license from its upstream record. The model appears here only after its bytes verify.</p>
+          <div className="grid sm:grid-cols-2 gap-2"><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="Local name (e.g. qwen3-4b)" value={modelName} onChange={(event) => setModelName(event.target.value)} /><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="Repository (org/model-GGUF)" value={modelId} onChange={(event) => setModelId(event.target.value)} /></div>
+          <div className="grid sm:grid-cols-2 gap-2"><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="Pinned commit hash" value={revision} onChange={(event) => setRevision(event.target.value)} /><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="File path (model-q4.gguf)" value={filePath} onChange={(event) => setFilePath(event.target.value)} /></div>
+          <div className="grid sm:grid-cols-2 gap-2"><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="SHA-256" value={digest} onChange={(event) => setDigest(event.target.value)} /><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="Exact byte size" inputMode="numeric" value={sizeBytes} onChange={(event) => setSizeBytes(event.target.value)} /></div>
+          <div className="flex flex-wrap gap-2 items-center"><input className="flex-1 min-w-48 bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="License name" value={licenseName} onChange={(event) => setLicenseName(event.target.value)} /><label className="flex items-center gap-1 text-[var(--muted)]"><input type="checkbox" checked={acceptedLicense} onChange={(event) => setAcceptedLicense(event.target.checked)} /> I reviewed and accept it</label><button className={btn} onClick={download}>Download verified GGUF</button></div>
+          {downloadStatus && <p className="text-[var(--muted)]">{downloadStatus}</p>}
+          {downloads.length > 0 && <div className="text-[10px] text-[var(--muted)]">{downloads.map((job) => <div key={job.id}>{job.id}: {job.state} · {job.progress.phase} {job.progress.total ? `${job.progress.completed}/${job.progress.total}` : ""}{job.error ? ` · ${job.error.message}` : ""}</div>)}</div>}
+        </div>
+      </Panel>
       <Panel padding="none">
         <div className={head}><span className="text-[var(--accent-ai)]">◆</span> YOUR TRAINED MODELS</div>
         {trained.length ? trained.map((m) => <Row key={m.name} m={m} />) : <div className="p-6 text-center text-[var(--muted)] text-xs">No trained models yet — make one in Train.</div>}

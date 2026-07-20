@@ -21,6 +21,8 @@ export type ResolutionPlan = { protocolVersion: 1; id: `acquisition-plan:sha256:
 export type ResolutionResult = { state: "ready"; plan: ResolutionPlan } | { state: "unavailable"; reason: "offline" | "unconfigured" | "not_found" | "revision_not_found" | "license_not_accepted" | "insufficient_disk" | "insufficient_memory"; detail: string };
 export type ImportState = "planned" | "partial" | "cancel_requested" | "cancelled" | "verified" | "failed";
 export type ImportRecord = { protocolVersion: 1; id: string; plan: ResolutionPlan; state: ImportState; receivedBytes: number; createdAt: string; updatedAt: string; error?: string; artifactPath?: string };
+export type ActivatedImportedModel = { name: string; path: string; artifactId: `artifact:sha256:${string}` };
+export type AcquisitionFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 const SHA256 = /^[a-f0-9]{64}$/i;
 const identifier = /^[a-z0-9][a-z0-9._:/@-]{0,255}$/i;
@@ -58,6 +60,35 @@ export function resolveModelAcquisition(catalogInput: OfflineCatalog, request: R
   return { state: "ready", plan: { protocolVersion: 1, id: `acquisition-plan:sha256:${digest(canonical(planValue))}`, ...planValue, requiresLicenseAcceptance: model.license.requiresAcceptance, transport: "external-authorized-adapter" } };
 }
 
+/** The only direct-transfer URL this first adapter can construct. Catalog data
+ * supplies identity and expected bytes; callers cannot redirect it elsewhere. */
+export function huggingFaceDownloadUrl(plan: ResolutionPlan): string {
+  if (plan.provider !== "huggingface") throw new Error("this transfer adapter only supports Hugging Face GGUF artifacts");
+  const safe = safeFile(plan.file);
+  const modelId = plan.modelId.split("/").map((part) => encodeURIComponent(part)).join("/");
+  const revision = encodeURIComponent(plan.revision);
+  const file = safe.path.split("/").map((part) => encodeURIComponent(part)).join("/");
+  return `https://huggingface.co/${modelId}/resolve/${revision}/${file}`;
+}
+
+function trustedHuggingFaceDownloadHost(host: string): boolean {
+  const normalized = host.toLowerCase();
+  return normalized === "huggingface.co" || normalized.endsWith(".huggingface.co") || normalized.endsWith(".hf.co") || normalized.endsWith(".xethub.hf.co");
+}
+async function fetchPinnedHuggingFace(url: string, fetchImpl: AcquisitionFetch): Promise<Response> {
+  let current = url;
+  for (let redirects = 0; redirects <= 4; redirects++) {
+    const response = await fetchImpl(current, { redirect: "manual", signal: AbortSignal.timeout(30 * 60_000) });
+    if (response.status < 300 || response.status > 399) return response;
+    const location = response.headers.get("location");
+    if (!location) throw new Error("Hugging Face download redirect has no location");
+    const next = new URL(location, current);
+    if (next.protocol !== "https:" || !trustedHuggingFaceDownloadHost(next.hostname)) throw new Error("Hugging Face download redirect left the approved provider CDN");
+    current = next.toString();
+  }
+  throw new Error("Hugging Face download exceeded redirect limit");
+}
+
 /** A local staging state machine; append receives bytes from an authorized transport only. */
 export class VerifiedModelImportStore {
   private readonly records: string; private readonly staging: string; private readonly artifacts: string; private readonly now: () => Date;
@@ -71,4 +102,46 @@ export class VerifiedModelImportStore {
   requestCancel(id: string): ImportRecord { const record = this.read(id); if (!record || !["planned", "partial"].includes(record.state)) throw new Error("import is not cancellable"); record.state = "cancel_requested"; record.updatedAt = this.now().toISOString(); this.write(record); return record; }
   settleCancel(id: string): ImportRecord { const record = this.read(id); if (!record || record.state !== "cancel_requested") throw new Error("cancellation was not requested"); try { fs.unlinkSync(this.part(id)); } catch (error: unknown) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } record.state = "cancelled"; record.updatedAt = this.now().toISOString(); this.write(record); return record; }
   verify(id: string): ImportRecord { const record = this.read(id); if (!record || !["planned", "partial"].includes(record.state)) throw new Error("import is not verifiable"); const part = this.part(id); let actual: Buffer; try { actual = fs.readFileSync(part); } catch { record.state = "failed"; record.error = "staged bytes are missing"; record.updatedAt = this.now().toISOString(); this.write(record); return record; } if (actual.length !== record.plan.file.sizeBytes || digest(actual) !== record.plan.file.sha256) { record.state = "failed"; record.error = "staged bytes do not match planned size and sha256"; record.updatedAt = this.now().toISOString(); this.write(record); return record; } const artifact = path.join(this.artifacts, `sha256-${record.plan.file.sha256}`); fs.renameSync(part, artifact); record.state = "verified"; record.artifactPath = artifact; record.updatedAt = this.now().toISOString(); this.write(record); return record; }
+
+  /** Make an exact verified GGUF visible to existing chat/code/HIVE selectors.
+   * It never replaces a user model; hard links avoid silently duplicating bytes. */
+  activateGguf(id: string, name: string, modelDirectory: string): ActivatedImportedModel {
+    const record = this.read(id);
+    if (!record || record.state !== "verified" || !record.artifactPath) throw new Error("only a verified import can be activated");
+    if (!/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(name)) throw new Error("model name must be a safe identifier");
+    if (!record.plan.file.path.toLowerCase().endsWith(".gguf")) throw new Error("only GGUF imports can activate in the llama.cpp runtime");
+    const magic = fs.readFileSync(record.artifactPath).subarray(0, 4).toString("ascii");
+    if (magic !== "GGUF") throw new Error("verified artifact is not a GGUF file");
+    fs.mkdirSync(modelDirectory, { recursive: true, mode: 0o700 });
+    const target = path.join(modelDirectory, `${name}-q4.gguf`);
+    if (fs.existsSync(target)) throw new Error("an installed model already uses that name");
+    try { fs.linkSync(record.artifactPath, target); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+      fs.copyFileSync(record.artifactPath, target, fs.constants.COPYFILE_EXCL);
+    }
+    if (process.platform !== "win32") try { fs.chmodSync(target, 0o600); } catch { /* filesystem may not support modes */ }
+    return { name, path: target, artifactId: `artifact:sha256:${record.plan.file.sha256}` };
+  }
+}
+
+/** Stream one explicitly requested, pinned file into the durable staging store.
+ * There is no redirect to arbitrary hosts, no implicit retry, and cancellation
+ * is checked between chunks before bytes can become an installed artifact. */
+export async function downloadHuggingFacePlan(input: {
+  plan: ResolutionPlan; store: VerifiedModelImportStore; importId: string; availableDiskBytes: number;
+  fetchImpl?: AcquisitionFetch; cancelled?: () => boolean; onProgress?: (record: ImportRecord) => void;
+}): Promise<ImportRecord> {
+  const { plan, store, importId } = input;
+  store.begin(importId, plan, input.availableDiskBytes);
+  const response = await fetchPinnedHuggingFace(huggingFaceDownloadUrl(plan), input.fetchImpl ?? fetch);
+  if (!response.ok || !response.body) throw new Error(`Hugging Face download failed: HTTP ${response.status}`);
+  const reader = response.body.getReader();
+  for (;;) {
+    if (input.cancelled?.()) { store.requestCancel(importId); return store.settleCancel(importId); }
+    const next = await reader.read();
+    if (next.done) break;
+    const record = store.append(importId, Buffer.from(next.value)); input.onProgress?.(record);
+  }
+  if (input.cancelled?.()) { store.requestCancel(importId); return store.settleCancel(importId); }
+  return store.verify(importId);
 }

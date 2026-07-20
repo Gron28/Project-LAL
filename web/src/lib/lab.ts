@@ -6,10 +6,17 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, ChildProcess, execSync } from "node:child_process";
 import { gradeItem, stripThink, type BenchItem } from "./graders";
+import { resolvePlatformDirectories } from "./host-profile";
 export type { BenchItem } from "./graders";
 
 const ROOT = path.resolve(process.cwd(), "..");
 export const MODELS_DIR = path.join(ROOT, "models");
+/** Legacy checkout models remain readable during migration. New verified imports
+ * live in the external owner-data root and are discovered by every existing
+ * chat/code/HIVE selector through this one function. */
+export function modelDirectories(): string[] {
+  return [...new Set([MODELS_DIR, path.join(resolvePlatformDirectories().data, "models")])];
+}
 const LLAMA_DIR = path.join(ROOT, "llama", "llama-b9835");
 const LLAMA_SERVER = path.join(LLAMA_DIR, "llama-server");
 const OLLAMA_STORE = "/usr/share/ollama/.ollama/models";
@@ -82,9 +89,8 @@ export function writeSettings(patch: SettingsFile) {
 // its q4 fits VRAM entirely. The f16 is kept as the requantization source.
 const GGUF_SUFFIXES = ["-q4.gguf", "-f16.gguf"] as const;
 export function modelFile(name: string): string | null {
-  for (const suf of GGUF_SUFFIXES) {
-    const p = path.join(MODELS_DIR, name + suf);
-    if (fs.existsSync(p)) return p;
+  for (const directory of modelDirectories()) for (const suf of GGUF_SUFFIXES) {
+    const p = path.join(directory, name + suf); if (fs.existsSync(p)) return p;
   }
   return null;
 }
@@ -95,16 +101,14 @@ export function deleteModel(name: string, source: "local" | "ollama" = "local") 
     return;
   }
   if (servingModel() === name) stopServing();
-  for (const suf of GGUF_SUFFIXES) {
-    try { fs.unlinkSync(path.join(MODELS_DIR, name + suf)); } catch {}
-  }
+  for (const directory of modelDirectories()) for (const suf of GGUF_SUFFIXES) try { fs.unlinkSync(path.join(directory, name + suf)); } catch {}
 }
 export function renameModel(oldName: string, newName: string): { ok: boolean; error?: string } {
   const clean = newName.replace(/[^a-zA-Z0-9_-]/g, "");
   if (!clean) return { ok: false, error: "invalid name" };
-  const pairs = GGUF_SUFFIXES
-    .map((suf) => ({ src: path.join(MODELS_DIR, oldName + suf), dst: path.join(MODELS_DIR, clean + suf) }))
-    .filter((p) => fs.existsSync(p.src));
+  const pairs = modelDirectories().flatMap((directory) => GGUF_SUFFIXES
+    .map((suf) => ({ src: path.join(directory, oldName + suf), dst: path.join(directory, clean + suf) }))
+    .filter((p) => fs.existsSync(p.src)));
   if (!pairs.length) return { ok: false, error: "model not found" };
   if (pairs.some((p) => fs.existsSync(p.dst))) return { ok: false, error: "name already taken" };
   if (servingModel() === oldName) stopServing();
@@ -132,17 +136,19 @@ export type LoraRequest = { id: number; scale: number }[];
 export function allModels(): ModelInfo[] {
   const out: ModelInfo[] = [];
   try {
-    const files = fs.readdirSync(MODELS_DIR);
     const seen = new Set<string>();
-    for (const suf of GGUF_SUFFIXES)               // q4 first — it wins when both exist
+    for (const directory of modelDirectories()) {
+      let files: string[] = []; try { files = fs.readdirSync(directory); } catch { continue; }
+      for (const suf of GGUF_SUFFIXES)               // q4 first — it wins when both exist
       for (const f of files)
         if (f.endsWith(suf)) {
           const name = f.slice(0, -suf.length);
           if (seen.has(name)) continue;
           seen.add(name);
-          const p = path.join(MODELS_DIR, f);
+          const p = path.join(directory, f);
           out.push({ name, source: "local", path: p, gb: +(fs.statSync(p).size / 1e9).toFixed(1) });
         }
+    }
   } catch {}
   const base = path.join(OLLAMA_STORE, "manifests");
   const walk = (d: string) => {
