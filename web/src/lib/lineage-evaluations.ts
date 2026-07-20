@@ -33,7 +33,7 @@ function assertId(value: string, subject: string) { if (!identifier.test(value))
 function assertHash(value: string, subject: string) { if (!sha256.test(value)) throw new Error(`${subject} must be a SHA-256 digest`); }
 function noDuplicate<T>(values: T[], key: (value: T) => string, subject: string) { if (new Set(values.map(key)).size !== values.length) throw new Error(`${subject} contains duplicates`); }
 function resultSummary(results: EvaluationCaseResult[]): NonNullable<EvaluationRun["summary"]> { const passed=results.filter((result)=>result.outcome==="pass").length, failed=results.filter((result)=>result.outcome==="fail").length, errors=results.filter((result)=>result.outcome==="error").length, latencies=results.flatMap((result)=>typeof result.metrics?.latencyMs==="number"?[result.metrics.latencyMs]:[]); return { total:results.length,passed,failed,errors,passRate:results.length ? passed/results.length : 0,...(latencies.length ? { meanLatencyMs:latencies.reduce((total,value)=>total+value,0)/latencies.length } : {}) }; }
-function runInputFrom(run: EvaluationRun): EvaluationRunInput { const { protocolVersion: _protocolVersion,state: _state,startedAt: _startedAt,completedAt: _completedAt,results: _results,summary: _summary,error: _error,...input }=run; return input; }
+function runInputFrom(run: EvaluationRun): EvaluationRunInput { return Object.fromEntries(Object.entries(run).filter(([key]) => !["protocolVersion","state","startedAt","completedAt","results","summary","error"].includes(key))) as EvaluationRunInput; }
 
 export class LineageEvaluationRepository {
   private readonly db: DatabaseSync; private readonly now: () => number;

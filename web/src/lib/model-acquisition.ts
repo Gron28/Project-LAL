@@ -25,7 +25,7 @@ export type ImportRecord = { protocolVersion: 1; id: string; plan: ResolutionPla
 const SHA256 = /^[a-f0-9]{64}$/i;
 const identifier = /^[a-z0-9][a-z0-9._:/@-]{0,255}$/i;
 function digest(value: string | Buffer): string { return crypto.createHash("sha256").update(value).digest("hex"); }
-function canonical(value: unknown): string { if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`; if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([a, b], [c, d]) => a.localeCompare(c)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`; return JSON.stringify(value); }
+function canonical(value: unknown): string { if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`; if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([a], [c]) => a.localeCompare(c)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`; return JSON.stringify(value); }
 function safeName(value: string, subject: string): string { if (!identifier.test(value) || value.includes("..")) throw new Error(`${subject} must be a stable identifier`); return value; }
 function safeFile(file: ModelFile): ModelFile { if (!file.path || path.isAbsolute(file.path) || file.path.split(/[\\/]/).includes("..")) throw new Error("catalog file path must be relative and contained"); if (!Number.isSafeInteger(file.sizeBytes) || file.sizeBytes <= 0) throw new Error("catalog file size must be positive"); if (!SHA256.test(file.sha256)) throw new Error("catalog file digest must be sha256"); return { ...file, sha256: file.sha256.toLowerCase() }; }
 
