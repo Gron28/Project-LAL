@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { ensurePlatformDirectories, resolvePlatformDirectories } from "../host-profile.ts";
 import type { WorkflowSpec } from "./contracts.ts";
 import { compileWorkflowDefinition, type WorkflowDefinition, type GraphCompileResult } from "./graph-authoring.ts";
 
@@ -58,4 +59,14 @@ export class WorkflowRevisionRepository {
     if (!changeNote.trim()) throw new Error("draft change note is required");
     return structuredClone({ ...existing.definition, parentRevision: existing.revision, changeNote });
   }
+}
+
+type GlobalWorkflowRevisionRepository = typeof globalThis & { __lal_workflow_revisions?: WorkflowRevisionRepository };
+export function getWorkflowRevisionRepository(): WorkflowRevisionRepository {
+  const global = globalThis as GlobalWorkflowRevisionRepository;
+  if (!global.__lal_workflow_revisions) {
+    const directories = ensurePlatformDirectories(resolvePlatformDirectories());
+    global.__lal_workflow_revisions = new WorkflowRevisionRepository({ databasePath: path.join(directories.state, "workflow-revisions.sqlite") });
+  }
+  return global.__lal_workflow_revisions;
 }
