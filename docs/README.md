@@ -35,6 +35,21 @@ as background, not as a promise or implementation queue.
 - [Durable jobs foundation](design/durable-jobs-foundation.md) — versioned,
   restart-aware job ledger with explicit resource reservations and verified
   completion semantics.
+- [Verified model acquisition](design/verified-model-acquisition.md) — offline
+  provider catalogs, deterministic resolution plans, and digest-verified staged
+  imports without implicit network access.
+- [Lineage and evaluation foundation](design/lineage-evaluation-foundation.md)
+  — immutable model/dataset relationships plus reproducible suites, run evidence,
+  raw results, and comparisons.
+- [Media artifact foundation](design/media-artifact-foundation.md) — local-only,
+  content-addressed media ingestion, verified authorized reads, and typed
+  observation/transcript workload contracts.
+- [Defensive research contract](design/defensive-research-contract.md) —
+  evidence-focused research contracts and mechanically bounded, auditable
+  defensive engagements.
+- [Lineage and evaluation foundation](design/lineage-evaluation-foundation.md)
+  — immutable dataset/provenance and evaluation-evidence records with exact
+  runtime capture and read-only inspection APIs.
 
 ## Supporting designs
 
