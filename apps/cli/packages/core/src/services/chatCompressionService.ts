@@ -83,6 +83,59 @@ export const WARN_BUFFER = 20_000;
 export const HARD_BUFFER = 3_000;
 
 /**
+ * Per-window-size compaction budget. The buffers above (SUMMARY_RESERVE,
+ * AUTOCOMPACT_BUFFER, WARN_BUFFER, HARD_BUFFER) were sized for large
+ * (128K+) windows where a flat 20K-token summary reserve is a small
+ * fraction of the window. On a 32K-window local model that same 20K
+ * reserve makes `effectiveWindow - AUTOCOMPACT_BUFFER` go negative, so
+ * `computeThresholds` falls back to its proportional floor (`DEFAULT_PCT`
+ * = 85%) — compaction doesn't fire until the window is nearly full,
+ * leaving no room for the model's own output. `getCompactionBudget` scales
+ * every buffer down for small/medium windows so the same ceiling-based
+ * formula in `computeThresholds` produces a sane (~55-65%) auto-compact
+ * point instead of degrading to the 85% floor.
+ */
+export interface CompactionBudget {
+  /** Token budget reserved for the compression side-query's summary output. */
+  readonly summaryReserve: number;
+  /** See AUTOCOMPACT_BUFFER doc. */
+  readonly autocompactBuffer: number;
+  /** See WARN_BUFFER doc. */
+  readonly warnBuffer: number;
+  /** See HARD_BUFFER doc. */
+  readonly hardBuffer: number;
+}
+
+/**
+ * Resolves the tiered compaction budget for a given context window. Pure
+ * function — no I/O, no shared state — safe to call repeatedly.
+ */
+export function getCompactionBudget(window: number): CompactionBudget {
+  if (window <= 32_768) {
+    return {
+      summaryReserve: 2_048,
+      autocompactBuffer: 11_000,
+      warnBuffer: 4_000,
+      hardBuffer: 800,
+    };
+  }
+  if (window <= 65_536) {
+    return {
+      summaryReserve: 4_096,
+      autocompactBuffer: 19_000,
+      warnBuffer: 6_400,
+      hardBuffer: 1_500,
+    };
+  }
+  return {
+    summaryReserve: SUMMARY_RESERVE,
+    autocompactBuffer: AUTOCOMPACT_BUFFER,
+    warnBuffer: WARN_BUFFER,
+    hardBuffer: HARD_BUFFER,
+  };
+}
+
+/**
  * Auto-compaction consecutive-failure circuit breaker. After this many
  * consecutive failures the cheap-gate NOOPs until a successful force
  * compress resets the counter. Co-located here with other compaction-
@@ -149,10 +202,15 @@ export interface CompactionThresholds {
  *
  * So large windows compact at ~pct (never crowding the ceiling), smaller
  * windows compact at the ceiling (leaving room for the summary), and a window
- * too small for even the ceiling (≤ SUMMARY_RESERVE + AUTOCOMPACT_BUFFER) falls
+ * too small for even the ceiling (≤ summaryReserve + autocompactBuffer) falls
  * back to the proportional value as a floor. This mirrors claude-code
  * (autoCompact.ts), which combines its percentage override with the absolute
  * ceiling via Math.min. `pct` defaults to DEFAULT_PCT.
+ *
+ * The buffers themselves (summaryReserve, autocompactBuffer, warnBuffer,
+ * hardBuffer) come from `getCompactionBudget(window)` — see its doc for why
+ * they must scale with the window instead of using the flat SUMMARY_RESERVE
+ * / AUTOCOMPACT_BUFFER / WARN_BUFFER / HARD_BUFFER constants directly.
  *
  * Pure function — no I/O, no shared state — safe to call repeatedly.
  */
@@ -164,32 +222,33 @@ export function computeThresholds(
     1,
     Math.max(0, pct !== undefined && Number.isFinite(pct) ? pct : DEFAULT_PCT),
   );
-  // Clamp to 0 for tiny windows (window < SUMMARY_RESERVE) so the surfaced
-  // value in `/context` stays meaningful.
-  const effectiveWindow = Math.max(0, window - SUMMARY_RESERVE);
+  const budget = getCompactionBudget(window);
+  // Clamp to 0 for tiny windows (window < budget.summaryReserve) so the
+  // surfaced value in `/context` stays meaningful.
+  const effectiveWindow = Math.max(0, window - budget.summaryReserve);
 
   // The absolute term is a ceiling: compact before the prompt leaves too little
-  // room for the summarization side-query (which needs up to SUMMARY_RESERVE of
+  // room for the summarization side-query (which needs up to summaryReserve of
   // output). Combine it with the proportional preference via `min`. When the
   // window is so small the ceiling is non-positive, fall back to the
   // proportional value as a floor so the trigger stays usable.
   const proportional = effectivePct * window;
-  const absoluteCeiling = effectiveWindow - AUTOCOMPACT_BUFFER;
+  const absoluteCeiling = effectiveWindow - budget.autocompactBuffer;
   const auto =
     absoluteCeiling > 0
       ? Math.min(proportional, absoluteCeiling)
       : proportional;
 
-  // Warn fires WARN_BUFFER below auto (claude-code positions its warning tier
+  // Warn fires warnBuffer below auto (claude-code positions its warning tier
   // the same way, relative to the auto threshold).
-  const warn = Math.max(0, auto - WARN_BUFFER);
+  const warn = Math.max(0, auto - budget.warnBuffer);
 
   // hard is the last-ditch force-compaction point: the window edge (hardEdge),
-  // but never below auto + HARD_BUFFER so it stays a distinct tier above auto on
+  // but never below auto + hardBuffer so it stays a distinct tier above auto on
   // degenerate small windows (where auto is the proportional floor and can
   // exceed hardEdge). Clamp to the window so hard never exceeds the actual limit.
-  const hardEdge = effectiveWindow - HARD_BUFFER;
-  const hard = Math.min(window, Math.max(hardEdge, auto + HARD_BUFFER));
+  const hardEdge = effectiveWindow - budget.hardBuffer;
+  const hard = Math.min(window, Math.max(hardEdge, auto + budget.hardBuffer));
 
   return { warn, auto, hard, effectiveWindow };
 }
@@ -334,6 +393,14 @@ export class ChatCompressionService {
     const chatCompressionSettings = config.getChatCompression();
     const slimmingConfig = resolveSlimmingConfig(chatCompressionSettings);
     const tuning = resolveCompactionTuning(chatCompressionSettings);
+    // Resolved once per call and reused for both the threshold gate and the
+    // side-query's own maxOutputTokens/truncation-guard cap below, so a
+    // small-window model never has its summary budgeted against the flat
+    // COMPACT_MAX_OUTPUT_TOKENS constant (see getCompactionBudget doc).
+    const contextLimit =
+      config.getContentGeneratorConfig()?.contextWindowSize ??
+      DEFAULT_TOKEN_LIMIT;
+    const summaryOutputCap = getCompactionBudget(contextLimit).summaryReserve;
 
     // Cheap gates first — these don't need the curated history. Forward
     // originalTokenCount on NOOP (matching the threshold-gate branch below)
@@ -355,9 +422,6 @@ export class ChatCompressionService {
       // guarantees `prompt + max_tokens ≤ window`, so no output budget needs
       // to be reserved out of the window here (this replaced the
       // #5957/#6266 reservedOutputTokens machinery).
-      const contextLimit =
-        config.getContentGeneratorConfig()?.contextWindowSize ??
-        DEFAULT_TOKEN_LIMIT;
       const { auto } = computeThresholds(
         contextLimit,
         config.getAutoCompactThreshold(),
@@ -508,12 +572,17 @@ export class ChatCompressionService {
     // The original history (with images) is preserved separately for
     // the post-compact image restoration block.
     const slim = slimCompactionInput(sideQueryHistory);
-    if (slim.stats.imagesStripped > 0 || slim.stats.documentsStripped > 0) {
+    if (
+      slim.stats.imagesStripped > 0 ||
+      slim.stats.documentsStripped > 0 ||
+      slim.stats.toolPayloadsSlimmed > 0
+    ) {
       config
         .getDebugLogger()
         .debug(
-          `[chat-compression] slimmed ${slim.stats.imagesStripped} image(s) ` +
-            `and ${slim.stats.documentsStripped} document(s) from side-query payload`,
+          `[chat-compression] slimmed ${slim.stats.imagesStripped} image(s), ` +
+            `${slim.stats.documentsStripped} document(s), and ` +
+            `${slim.stats.toolPayloadsSlimmed} oversized tool payload(s) from side-query payload`,
         );
     }
 
@@ -551,7 +620,7 @@ export class ChatCompressionService {
       // inconsistent (Anthropic/OpenAI count it separately, Gemini varies by model).
       config: {
         thinkingConfig: { includeThoughts: false },
-        maxOutputTokens: COMPACT_MAX_OUTPUT_TOKENS,
+        maxOutputTokens: summaryOutputCap,
       },
       abortSignal: signal ?? new AbortController().signal,
       promptId,
@@ -611,13 +680,13 @@ export class ChatCompressionService {
     if (
       !isSummaryEmpty &&
       typeof compressionOutputTokenCount === 'number' &&
-      compressionOutputTokenCount >= COMPACT_MAX_OUTPUT_TOKENS
+      compressionOutputTokenCount >= summaryOutputCap
     ) {
       config
         .getDebugLogger()
         .warn(
           `[chat-compression] summary output reached the ` +
-            `COMPACT_MAX_OUTPUT_TOKENS cap (${COMPACT_MAX_OUTPUT_TOKENS}); ` +
+            `per-window summary cap (${summaryOutputCap}); ` +
             `dropping potentially-truncated result. This counts as a ` +
             `compression failure for the per-chat circuit breaker.`,
         );

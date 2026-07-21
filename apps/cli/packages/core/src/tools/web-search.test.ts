@@ -4,8 +4,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { WebSearchTool } from './web-search.js';
+
+// gatewayOrigin() falls back to ~/.lal/client-host on disk, so on a paired
+// developer machine real credentials would leak into "no gateway configured"
+// assertions. Point homedir at an empty temp dir to keep this file hermetic.
+beforeAll(() => {
+  const emptyHome = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'lal-web-search-test-'),
+  );
+  vi.spyOn(os, 'homedir').mockReturnValue(emptyHome);
+});
 
 describe('WebSearchTool', () => {
   const originalEnv = { ...process.env };
@@ -58,17 +71,24 @@ describe('WebSearchTool', () => {
     );
   });
 
-  it('fails closed when the CLI has no paired gateway', async () => {
+  it('falls back to the default gateway origin when LAL_GATEWAY_URL is unset', async () => {
     delete process.env['LAL_GATEWAY_URL'];
-    const fetchMock = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ results: 'ok' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await new WebSearchTool()
+    await new WebSearchTool()
       .build({ query: 'anything' })
       .execute(new AbortController().signal);
 
-    expect(result.llmContent).toContain('LAL_GATEWAY_URL is unset');
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8770/api/lal/web-search',
+      expect.anything(),
+    );
   });
 
   it('returns a useful error instead of throwing on gateway failure', async () => {

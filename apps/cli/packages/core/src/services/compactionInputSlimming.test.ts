@@ -404,6 +404,116 @@ describe('compactionInputSlimming', () => {
       expect(result.stats.documentsStripped).toBe(0);
     });
 
+    it('slims an oversized write_file content argument into a stub', () => {
+      const bigContent = '<!DOCTYPE html>'.repeat(2_000); // > 2_000 chars
+      const history: Content[] = [
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'call-xyz',
+                name: 'write_file',
+                args: { file_path: '/a/index.html', content: bigContent },
+              },
+            },
+          ],
+        },
+      ];
+      const result = slimCompactionInput(history);
+      expect(result.stats.toolPayloadsSlimmed).toBe(1);
+      const args = result.slimmedHistory[0]!.parts![0]!.functionCall!
+        .args as Record<string, unknown>;
+      expect(args['file_path']).toBe('/a/index.html');
+      expect(args['content']).toEqual({
+        content_ref: 'tool-payload:call-xyz:content',
+        content_chars: bigContent.length,
+        content_preview: bigContent.slice(0, 300),
+      });
+      // Original untouched.
+      expect(
+        (history[0]!.parts![0]!.functionCall!.args as Record<string, unknown>)[
+          'content'
+        ],
+      ).toBe(bigContent);
+    });
+
+    it('slims an oversized edit new_string argument into a stub', () => {
+      const bigReplacement = 'x'.repeat(5_000);
+      const history: Content[] = [
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'edit',
+                args: {
+                  file_path: '/a/b.ts',
+                  old_string: 'foo',
+                  new_string: bigReplacement,
+                },
+              },
+            },
+          ],
+        },
+      ];
+      const result = slimCompactionInput(history);
+      expect(result.stats.toolPayloadsSlimmed).toBe(1);
+      const args = result.slimmedHistory[0]!.parts![0]!.functionCall!
+        .args as Record<string, unknown>;
+      expect(args['old_string']).toBe('foo');
+      expect(
+        (args['new_string'] as { content_chars: number }).content_chars,
+      ).toBe(bigReplacement.length);
+    });
+
+    it('does not slim a functionCall arg at or under the threshold', () => {
+      const okContent = 'y'.repeat(2_000); // exactly at threshold
+      const history: Content[] = [
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'write_file',
+                args: { file_path: '/a.txt', content: okContent },
+              },
+            },
+          ],
+        },
+      ];
+      const result = slimCompactionInput(history);
+      expect(result.stats.toolPayloadsSlimmed).toBe(0);
+      expect(result.slimmedHistory).toBe(history);
+    });
+
+    it('slims an oversized shell functionResponse output into a stub', () => {
+      const bigOutput = 'log line\n'.repeat(1_000);
+      const history: Content[] = [
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'call-shell-1',
+                name: 'run_shell_command',
+                response: { output: bigOutput },
+              },
+            },
+          ],
+        },
+      ];
+      const result = slimCompactionInput(history);
+      expect(result.stats.toolPayloadsSlimmed).toBe(1);
+      const response = result.slimmedHistory[0]!.parts![0]!.functionResponse!
+        .response as Record<string, unknown>;
+      expect(response['output']).toEqual({
+        content_ref: 'tool-payload:call-shell-1:output',
+        content_chars: bigOutput.length,
+        content_preview: bigOutput.slice(0, 300),
+      });
+    });
+
     it('leaves long plain text untouched (no externalization in this PR)', () => {
       const big = 'X'.repeat(50000);
       const history: Content[] = [{ role: 'user', parts: [{ text: big }] }];

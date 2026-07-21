@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { BaseDeclarativeTool, BaseToolInvocation, Kind } from './tools.js';
 import type { ToolInvocation, ToolResult } from './tools.js';
 import { ToolDisplayNames, ToolNames } from './tool-names.js';
@@ -15,9 +18,30 @@ export interface WebSearchToolParams {
 const MAX_QUERY_CHARS = 500;
 const MAX_RESULT_CHARS = 24_000;
 
-function gatewayOrigin(): string | null {
-  const value = process.env['LAL_GATEWAY_URL']?.trim();
-  return value ? value.replace(/\/+$/, '') : null;
+// Default origin for the gateway when nothing else is configured — mirrors
+// DEFAULT_GATEWAY_ORIGIN in packages/cli/src/lal/attach/gateway-client.ts.
+// Duplicated (not imported) because core cannot depend on the cli package.
+const DEFAULT_GATEWAY_ORIGIN = 'http://localhost:8770';
+
+// The Windows installer persists the paired host in ~/.lal/client-host so a
+// newly opened terminal works without manually exporting env values.
+function readLalFile(name: string): string | undefined {
+  try {
+    const value = fs
+      .readFileSync(path.join(os.homedir(), '.lal', name), 'utf8')
+      .trim();
+    return value || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function gatewayOrigin(): string {
+  const fromEnv = process.env['LAL_GATEWAY_URL']?.trim();
+  if (fromEnv) return fromEnv.replace(/\/+$/, '');
+  const pairedHost = readLalFile('client-host');
+  if (pairedHost) return pairedHost.replace(/\/+$/, '');
+  return DEFAULT_GATEWAY_ORIGIN;
 }
 
 function requestHeaders(): Record<string, string> {
@@ -51,13 +75,6 @@ class WebSearchToolInvocation extends BaseToolInvocation<
 
   async execute(signal: AbortSignal): Promise<ToolResult> {
     const origin = gatewayOrigin();
-    if (!origin) {
-      return {
-        llmContent:
-          'Web search is unavailable because this CLI is not paired with a LAL gateway (LAL_GATEWAY_URL is unset).',
-        returnDisplay: 'Web search unavailable: no LAL gateway',
-      };
-    }
 
     try {
       const response = await fetch(`${origin}/api/lal/web-search`, {

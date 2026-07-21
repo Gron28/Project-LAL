@@ -77,6 +77,9 @@ const DIST_ALLOWED_ENTRIES = new Set([
   'package.json',
   'README.md',
   'LICENSE',
+  // Always copied into dist/ by prepare-package.js's copyDocumentationFiles,
+  // same as README.md/LICENSE above.
+  'NOTICE-LAL.md',
   'locales',
   'examples',
   // Web Shell SPA served at the daemon root by `qwen serve` (index.html +

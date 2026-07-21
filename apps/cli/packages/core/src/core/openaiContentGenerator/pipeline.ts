@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type OpenAI from 'openai';
 import {
   type GenerateContentParameters,
@@ -31,8 +33,73 @@ import {
   QWEN_STREAM_IDLE_TIMEOUT_MS_ENV,
 } from './constants.js';
 import { createDebugLogger } from '../../utils/debugLogger.js';
+import type { Storage } from '../../config/storage.js';
 
 const debugLogger = createDebugLogger('OPENAI_PIPELINE');
+
+// Below this many raw buffered chars, a truncated tool call is almost
+// certainly metadata (e.g. an empty/near-empty args object), not lost work
+// worth writing a recovery file for.
+const MIN_SALVAGE_CHARS = 300;
+
+/**
+ * Called when a stream dies (rate limit, inactivity timeout, aborted
+ * connection, ...) before a tool call's arguments finished streaming.
+ * Tool-call arguments only ever turn into a real functionCall Part once
+ * finish_reason arrives (see converter.ts); until then they live solely in
+ * `context.toolCallParser`'s in-memory buffer, so an interrupted stream would
+ * otherwise discard everything already generated — e.g. a large write_file's
+ * content, mid-file. Persists the largest buffered call's best-effort repaired
+ * args to disk so the work isn't gone; returns null (never throws) if there's
+ * nothing worth salvaging.
+ */
+function salvageInterruptedToolCall(
+  context: RequestContext,
+  storage: Storage,
+): { filePath: string; toolName: string; chars: number } | null {
+  const parser = context.toolCallParser;
+  if (!parser) return null;
+
+  const completedCalls = parser.getCompletedToolCalls();
+  let best: (typeof completedCalls)[number] | null = null;
+  let bestChars = 0;
+  for (const call of completedCalls) {
+    if (!call.name) continue;
+    const chars = parser.getBuffer(call.index).length;
+    if (chars > bestChars) {
+      bestChars = chars;
+      best = call;
+    }
+  }
+  if (!best?.name || bestChars < MIN_SALVAGE_CHARS) return null;
+
+  try {
+    const dir = storage.getRecoveredToolCallsDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, `${Date.now()}-${best.name}.json`);
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify(
+        {
+          toolName: best.name,
+          args: best.args,
+          rawChars: bestChars,
+          savedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    return { filePath, toolName: best.name, chars: bestChars };
+  } catch (salvageError) {
+    // Never let a salvage failure mask the original stream error.
+    debugLogger.warn('Failed to salvage interrupted tool call', {
+      salvageError,
+    });
+    return null;
+  }
+}
 
 /**
  * Error thrown when the API returns an error embedded as stream content
@@ -578,6 +645,14 @@ export class ContentGenerationPipeline {
         yield pendingFinishResponse;
       }
     } catch (error) {
+      const salvaged = salvageInterruptedToolCall(
+        context,
+        this.config.cliConfig.storage,
+      );
+      if (salvaged && error instanceof Error) {
+        error.message += `\n\n[lal] The interrupted "${salvaged.toolName}" call had ${salvaged.chars} chars already generated — saved to ${salvaged.filePath} instead of being discarded.`;
+      }
+
       // Re-throw StreamContentError directly so it can be handled by
       // the caller's retry logic (e.g., TPM throttling retry in sendMessageStream)
       if (error instanceof StreamContentError) {

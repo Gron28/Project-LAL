@@ -84,9 +84,9 @@
           }
         },
         "enableAutoUpdate": {
-          "description": "Enable automatic update checks and installations on startup.",
+          "description": "Allow automatic update checks and installations on startup.",
           "type": "boolean",
-          "default": true
+          "default": false
         },
         "showSessionRecap": {
           "description": "Auto-show a one-line \"where you left off\" recap when returning to the terminal after being away. Off by default. Use /recap to trigger manually regardless of this setting.",
@@ -483,9 +483,9 @@
       "type": "object",
       "properties": {
         "usageStatisticsEnabled": {
-          "description": "Enable collection of usage statistics",
+          "description": "Legacy compatibility setting. LAL does not send inherited usage statistics.",
           "type": "boolean",
-          "default": true
+          "default": false
         }
       }
     },

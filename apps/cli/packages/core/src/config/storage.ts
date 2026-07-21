@@ -411,6 +411,16 @@ export class Storage {
     return path.join(this.getProjectTempDir(), 'checkpoints');
   }
 
+  /**
+   * Where an in-flight tool call's streamed arguments (e.g. a large
+   * write_file's content) are saved if the stream dies before finish_reason.
+   * Without this, a rate-limit/timeout mid-generation silently discards
+   * everything already produced.
+   */
+  getRecoveredToolCallsDir(): string {
+    return path.join(this.getProjectTempDir(), 'recovered-tool-calls');
+  }
+
   getExtensionsDir(): string {
     return path.join(this.getQwenDir(), 'extensions');
   }

@@ -274,6 +274,91 @@ interface SlimResult {
 interface SlimStats {
   imagesStripped: number;
   documentsStripped: number;
+  toolPayloadsSlimmed: number;
+}
+
+/**
+ * Any string argument/output over this many characters is replaced with a
+ * stub before reaching the compression side-query. Failed monolithic
+ * `write_file` calls or oversized `edit` replacements can carry 20K+ chars
+ * of raw file content; sending that (nearly) verbatim into the summarizer
+ * poisons the summary with content the summarizer can't usefully compress
+ * further and burns side-query input budget that a small-window model
+ * cannot spare.
+ */
+export const TOOL_PAYLOAD_CHAR_THRESHOLD = 2_000;
+const TOOL_PAYLOAD_PREVIEW_CHARS = 300;
+
+interface ToolPayloadStub {
+  content_ref: string;
+  content_chars: number;
+  content_preview: string;
+}
+
+function slimLargeString(
+  refId: string,
+  value: string,
+): ToolPayloadStub | undefined {
+  if (value.length <= TOOL_PAYLOAD_CHAR_THRESHOLD) return undefined;
+  return {
+    content_ref: `tool-payload:${refId}`,
+    content_chars: value.length,
+    content_preview: value.slice(0, TOOL_PAYLOAD_PREVIEW_CHARS),
+  };
+}
+
+/**
+ * Replaces any oversized string argument in a functionCall's `args` (e.g.
+ * write_file's `content`, edit's `new_string`/`old_string`) with a small
+ * stub. Generic over argument name and tool — any tool call carrying a
+ * large string argument benefits, not just the two named above.
+ * Returns undefined when no argument needed slimming.
+ */
+function slimFunctionCallArgs(
+  functionCall: NonNullable<Part['functionCall']>,
+  stats: SlimStats,
+): Record<string, unknown> | undefined {
+  const args = functionCall.args as Record<string, unknown> | undefined;
+  if (!args) return undefined;
+  const refId = functionCall.id ?? functionCall.name ?? 'call';
+  let touched = false;
+  const newArgs: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    const stub =
+      typeof value === 'string'
+        ? slimLargeString(`${refId}:${key}`, value)
+        : undefined;
+    if (stub) {
+      touched = true;
+      newArgs[key] = stub;
+    } else {
+      newArgs[key] = value;
+    }
+  }
+  if (!touched) return undefined;
+  stats.toolPayloadsSlimmed++;
+  return newArgs;
+}
+
+/**
+ * Replaces an oversized `functionResponse.response.output` (e.g. a large
+ * shell command's stdout/stderr) with a stub. Returns undefined when the
+ * output is absent, non-string, or under the threshold.
+ */
+function slimFunctionResponseOutput(
+  functionResponse: NonNullable<Part['functionResponse']>,
+  stats: SlimStats,
+): Part['functionResponse'] | undefined {
+  const output = functionResponse.response?.['output'];
+  if (typeof output !== 'string') return undefined;
+  const refId = functionResponse.id ?? functionResponse.name ?? 'response';
+  const stub = slimLargeString(`${refId}:output`, output);
+  if (!stub) return undefined;
+  stats.toolPayloadsSlimmed++;
+  return {
+    ...functionResponse,
+    response: { ...functionResponse.response, output: stub },
+  } as Part['functionResponse'];
 }
 
 /**
@@ -285,6 +370,7 @@ export function slimCompactionInput(history: Content[]): SlimResult {
   const stats: SlimStats = {
     imagesStripped: 0,
     documentsStripped: 0,
+    toolPayloadsSlimmed: 0,
   };
   let anyChange = false;
 
@@ -319,29 +405,55 @@ function transformPart(part: Part, stats: SlimStats): Part {
   if (part.fileData) {
     return mediaPlaceholderPart(part.fileData.mimeType, stats);
   }
-  // Walk into functionResponse.parts (qwen-code's nested-media carrier
-  // for tool results — see `coreToolScheduler.createFunctionResponsePart`).
-  // Without this, base64 images returned by read_file et al. leak into
-  // the side-query payload.
-  const nested = getFunctionResponseParts(part);
-  if (nested) {
-    let touched = false;
-    const newNested = nested.map((inner) => {
-      const replacement = transformPart(inner, stats);
-      if (replacement !== inner) {
-        touched = true;
-      }
-      return replacement;
-    });
-    if (touched) {
+  if (part.functionCall) {
+    const slimmedArgs = slimFunctionCallArgs(part.functionCall, stats);
+    if (slimmedArgs) {
       return {
         ...part,
-        functionResponse: {
-          ...part.functionResponse!,
-          parts: newNested,
-        } as Part['functionResponse'],
+        functionCall: { ...part.functionCall, args: slimmedArgs },
       };
     }
+  }
+  if (part.functionResponse) {
+    let result = part;
+    let touched = false;
+
+    const slimmedResponse = slimFunctionResponseOutput(
+      part.functionResponse,
+      stats,
+    );
+    if (slimmedResponse) {
+      result = { ...result, functionResponse: slimmedResponse };
+      touched = true;
+    }
+
+    // Walk into functionResponse.parts (qwen-code's nested-media carrier
+    // for tool results — see `coreToolScheduler.createFunctionResponsePart`).
+    // Without this, base64 images returned by read_file et al. leak into
+    // the side-query payload.
+    const nested = getFunctionResponseParts(result);
+    if (nested) {
+      let nestedTouched = false;
+      const newNested = nested.map((inner) => {
+        const replacement = transformPart(inner, stats);
+        if (replacement !== inner) {
+          nestedTouched = true;
+        }
+        return replacement;
+      });
+      if (nestedTouched) {
+        result = {
+          ...result,
+          functionResponse: {
+            ...result.functionResponse!,
+            parts: newNested,
+          } as Part['functionResponse'],
+        };
+        touched = true;
+      }
+    }
+
+    if (touched) return result;
   }
   return part;
 }

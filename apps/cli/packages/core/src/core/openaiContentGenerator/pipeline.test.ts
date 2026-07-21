@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { Mock } from 'vitest';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type OpenAI from 'openai';
@@ -4362,6 +4365,118 @@ describe('ContentGenerationPipeline', () => {
       expect(settled).toBe(false);
       gated.end();
       await consume;
+    });
+  });
+
+  describe('tool-call salvage on stream failure', () => {
+    function toolCallChunk(argsFragment: string): OpenAI.Chat.ChatCompletionChunk {
+      return {
+        id: 'c',
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call_1',
+                  function: { name: 'write_file', arguments: argsFragment },
+                },
+              ],
+            },
+          },
+        ],
+      } as unknown as OpenAI.Chat.ChatCompletionChunk;
+    }
+
+    beforeEach(() => {
+      // Mirror the real converter just enough to exercise the salvage path:
+      // route tool-call argument deltas into the request's toolCallParser.
+      (mockConverter.convertOpenAIChunkToGemini as Mock).mockImplementation(
+        (chunk: OpenAI.Chat.ChatCompletionChunk, context) => {
+          const toolCall = chunk.choices?.[0]?.delta?.tool_calls?.[0];
+          if (toolCall?.function) {
+            context.toolCallParser?.addChunk(
+              toolCall.index ?? 0,
+              toolCall.function.arguments ?? '',
+              toolCall.id,
+              toolCall.function.name,
+            );
+          }
+          const r = new GenerateContentResponse();
+          r.candidates = [{ content: { parts: [], role: 'model' } }];
+          return r;
+        },
+      );
+    });
+
+    async function runInterruptedStream(
+      recoveredDir: string,
+      argsFragment: string,
+    ): Promise<Error> {
+      mockCliConfig = {
+        storage: { getRecoveredToolCallsDir: () => recoveredDir },
+      } as unknown as Config;
+      mockConfig = { ...mockConfig, cliConfig: mockCliConfig };
+      const p = new ContentGenerationPipeline(mockConfig);
+
+      async function* failingStream() {
+        yield toolCallChunk(argsFragment);
+        throw new Error('upstream 429: rate limited');
+      }
+      (mockClient.chat.completions.create as Mock).mockResolvedValue(
+        failingStream(),
+      );
+
+      const gen = await p.executeStream(
+        {
+          model: 'test-model',
+          contents: [{ parts: [{ text: 'Hi' }], role: 'user' }],
+        } as GenerateContentParameters,
+        'id',
+      );
+      let caught: unknown;
+      try {
+        for await (const _ of gen) {
+          /* drain */
+        }
+      } catch (e) {
+        caught = e;
+      }
+      return caught as Error;
+    }
+
+    it('persists a large interrupted write_file call instead of discarding it', async () => {
+      const recoveredDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'lal-salvage-test-'),
+      );
+      const bigContent = 'x'.repeat(500);
+      const err = await runInterruptedStream(
+        recoveredDir,
+        `{"file_path":"a.html","content":"${bigContent}`,
+      );
+
+      expect(err.message).toContain('saved to');
+      const files = fs.readdirSync(recoveredDir);
+      expect(files).toHaveLength(1);
+      const saved = JSON.parse(
+        fs.readFileSync(path.join(recoveredDir, files[0]), 'utf8'),
+      );
+      expect(saved.toolName).toBe('write_file');
+      expect(saved.args.file_path).toBe('a.html');
+      expect(saved.args.content).toContain(bigContent);
+    });
+
+    it('does not create a recovery file for a trivially small interrupted call', async () => {
+      const recoveredDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'lal-salvage-test-'),
+      );
+      const err = await runInterruptedStream(
+        recoveredDir,
+        '{"file_path":"a.html"',
+      );
+
+      expect(err.message).not.toContain('saved to');
+      expect(fs.readdirSync(recoveredDir)).toHaveLength(0);
     });
   });
 });

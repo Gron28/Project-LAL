@@ -9,6 +9,7 @@ import {
   ChatCompressionService,
   COMPACT_MAX_OUTPUT_TOKENS,
   computeThresholds,
+  getCompactionBudget,
   MAX_CONSECUTIVE_FAILURES,
   MAX_HOOK_INSTRUCTIONS_CHARS,
 } from './chatCompressionService.js';
@@ -998,8 +999,12 @@ describe('ChatCompressionService', () => {
       contextWindowSize: 6_000,
     } as unknown as ReturnType<typeof mockConfig.getContentGeneratorConfig>);
 
+    // 6_000 chars (~1_500 estimated tokens) stays comfortably under this
+    // 6_000-token window's small-tier summary cap (2_048 tokens / ~8_192
+    // chars, see getCompactionBudget) so this test still exercises the
+    // INFLATED_TOKEN_COUNT path rather than tripping OUTPUT_TRUNCATED first.
     const mockGenerateContent = vi.fn().mockResolvedValue({
-      text: 'x'.repeat(40_000),
+      text: 'x'.repeat(6_000),
       usage: undefined,
     });
     vi.mocked(mockConfig.getBaseLlmClient).mockReturnValue({
@@ -1076,7 +1081,7 @@ describe('ChatCompressionService', () => {
       expect.stringContaining('local estimate'),
     );
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('COMPACT_MAX_OUTPUT_TOKENS'),
+      expect.stringContaining('per-window summary cap'),
     );
   });
 
@@ -1133,7 +1138,7 @@ describe('ChatCompressionService', () => {
       expect.stringContaining('local estimate'),
     );
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('COMPACT_MAX_OUTPUT_TOKENS'),
+      expect.stringContaining('per-window summary cap'),
     );
   });
 
@@ -1966,7 +1971,7 @@ describe('ChatCompressionService.compress sideQuery config', () => {
     );
     expect(result.newHistory).toBeNull();
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('COMPACT_MAX_OUTPUT_TOKENS'),
+      expect.stringContaining('per-window summary cap'),
     );
   });
 });
@@ -2068,25 +2073,65 @@ describe('ChatCompressionService.compress cheap-gate uses estimated tokens', () 
   });
 });
 
-describe('computeThresholds', () => {
-  it('32K window — degenerate ceiling, proportional floor governs auto', () => {
-    // effectiveWindow 12K, ceiling = 12K - 13K = -1K (≤ 0) → auto falls back to
-    // the proportional floor (0.85 * 32K).
-    const t = computeThresholds(32_000);
-    expect(t.warn).toBe(7_200); // auto - WARN_BUFFER = 27.2K - 20K
-    expect(t.auto).toBe(27_200); // proportional floor: 0.85 * 32K
-    expect(t.hard).toBe(30_200); // auto + HARD_BUFFER = 27.2K + 3K
-    expect(t.effectiveWindow).toBe(12_000);
+describe('getCompactionBudget', () => {
+  it('returns the small-tier budget at and below 32_768', () => {
+    expect(getCompactionBudget(32_768)).toEqual({
+      summaryReserve: 2_048,
+      autocompactBuffer: 11_000,
+      warnBuffer: 4_000,
+      hardBuffer: 800,
+    });
+    expect(getCompactionBudget(1_000)).toEqual(getCompactionBudget(32_768));
   });
 
-  it('60K window — ceiling governs auto; hard stays above auto (issue #4945)', () => {
-    // ceiling = ew(40K) - 13K = 27K < proportional(51K) → auto = ceiling.
+  it('returns the medium-tier budget between 32_768 and 65_536', () => {
+    expect(getCompactionBudget(32_769)).toEqual({
+      summaryReserve: 4_096,
+      autocompactBuffer: 19_000,
+      warnBuffer: 6_400,
+      hardBuffer: 1_500,
+    });
+    expect(getCompactionBudget(65_536)).toEqual(getCompactionBudget(32_769));
+  });
+
+  it('returns the original flat large-window budget above 65_536', () => {
+    expect(getCompactionBudget(65_537)).toEqual({
+      summaryReserve: COMPACT_MAX_OUTPUT_TOKENS,
+      autocompactBuffer: 13_000,
+      warnBuffer: 20_000,
+      hardBuffer: 3_000,
+    });
+    expect(getCompactionBudget(1_000_000)).toEqual(
+      getCompactionBudget(65_537),
+    );
+  });
+});
+
+describe('computeThresholds', () => {
+  it('32K window — small-tier budget scales the ceiling down (~59%), not the flat large-window buffers', () => {
+    // Small-tier budget (getCompactionBudget, window <= 32_768):
+    // summaryReserve=2_048, autocompactBuffer=11_000, warnBuffer=4_000, hardBuffer=800.
+    // effectiveWindow = 32K - 2_048 = 29_952; ceiling = ew - 11_000 = 18_952,
+    // which is below the proportional floor (0.85 * 32K = 27_200) so the
+    // ceiling governs auto — the fix for #（small-window compaction firing too late).
+    const t = computeThresholds(32_000);
+    expect(t.auto).toBe(18_952); // min(27_200, 18_952) = ceiling
+    expect(t.warn).toBe(14_952); // auto - warnBuffer = 18_952 - 4_000
+    expect(t.hard).toBe(29_152); // ew - hardBuffer = 29_952 - 800
+    expect(t.effectiveWindow).toBe(29_952);
+  });
+
+  it('60K window — medium-tier budget governs auto; hard stays above auto (issue #4945)', () => {
+    // Medium-tier budget (32_768 < window <= 65_536):
+    // summaryReserve=4_096, autocompactBuffer=19_000, warnBuffer=6_400, hardBuffer=1_500.
+    // effectiveWindow = 60K - 4_096 = 55_904; ceiling = ew - 19_000 = 36_904 <
+    // proportional(51K) → auto = ceiling.
     const t = computeThresholds(60_000);
-    expect(t.warn).toBe(7_000); // auto - WARN_BUFFER = 27K - 20K
-    expect(t.auto).toBe(27_000); // min(0.85*60K=51K, ew-13K=27K)
-    expect(t.hard).toBe(37_000); // ew - HARD_BUFFER = 40K - 3K
+    expect(t.auto).toBe(36_904); // min(0.85*60K=51K, ew-19K=36_904)
+    expect(t.warn).toBe(30_504); // auto - warnBuffer = 36_904 - 6_400
+    expect(t.hard).toBe(54_404); // ew - hardBuffer = 55_904 - 1_500
     expect(t.hard).toBeGreaterThan(t.auto);
-    expect(t.effectiveWindow).toBe(40_000);
+    expect(t.effectiveWindow).toBe(55_904);
   });
 
   it('128K window — ceiling governs auto (leaves room to compress)', () => {
@@ -2121,12 +2166,13 @@ describe('computeThresholds', () => {
     expect(t.warn).toBeGreaterThanOrEqual(0);
     expect(t.warn).toBeLessThanOrEqual(t.auto);
     expect(t.auto).toBeLessThanOrEqual(t.hard);
-    // window < SUMMARY_RESERVE: effectiveWindow clamps to 0 and the ceiling is
-    // negative, so auto falls back to the proportional floor (0.85 * 10K = 8.5K);
-    // warn = max(0, 8.5K - 20K) = 0.
+    // Small-tier budget: summaryReserve=2_048, autocompactBuffer=11_000.
+    // effectiveWindow = 10K - 2_048 = 7_952; ceiling = ew - 11_000 = -3_048
+    // (≤ 0) → auto falls back to the proportional floor (0.85 * 10K = 8.5K);
+    // warn = max(0, 8.5K - warnBuffer(4_000)) = 4_500.
     expect(t.auto).toBe(8_500);
-    expect(t.warn).toBe(0);
-    expect(t.effectiveWindow).toBe(0);
+    expect(t.warn).toBe(4_500);
+    expect(t.effectiveWindow).toBe(7_952);
   });
 
   it('zero window returns effectiveWindow=0 and non-negative tiers', () => {
@@ -2154,17 +2200,19 @@ describe('computeThresholds', () => {
       expect(explicitDefault).toEqual(defaultResult);
     });
 
-    it('custom pct=0.5 lowers the proportional floor on a degenerate window', () => {
-      // 32K: ceiling ≤ 0 → auto = proportional floor = 0.5 * 32K.
+    it('custom pct=0.5 lowers auto below the small-tier ceiling', () => {
+      // 32K small-tier ceiling = 18_952 (see getCompactionBudget test above).
+      // proportional(0.5*32K=16K) < ceiling → auto = proportional.
       const t = computeThresholds(32_000, 0.5);
       expect(t.auto).toBe(16_000); // 0.5 * 32K
-      expect(t.warn).toBe(0); // max(0, 16K - 20K)
+      expect(t.warn).toBe(12_000); // max(0, 16K - warnBuffer(4_000))
     });
 
-    it('custom pct=0.9 raises the proportional floor on a degenerate window', () => {
+    it('custom pct=0.9 still gets capped by the small-tier ceiling', () => {
+      // proportional(0.9*32K=28.8K) > ceiling(18_952) → auto = ceiling.
       const t = computeThresholds(32_000, 0.9);
-      expect(t.auto).toBe(28_800); // 0.9 * 32K
-      expect(t.warn).toBe(8_800); // 28.8K - 20K
+      expect(t.auto).toBe(18_952); // min(28.8K, ceiling=18_952)
+      expect(t.warn).toBe(14_952); // 18_952 - warnBuffer(4_000)
     });
 
     it('custom pct DOES pull auto earlier on large windows (ceiling semantics)', () => {
@@ -2197,12 +2245,13 @@ describe('computeThresholds', () => {
       expect(t.hard).toBeGreaterThan(t.auto);
     });
 
-    it('pct=1 sets proportional auto to full window; hard may equal auto for small windows', () => {
+    it('pct=1 on a small window: ceiling still caps auto below the proportional value', () => {
+      // Same min-semantics protection as the large-window case below: even at
+      // pct=1 the small-tier ceiling (18_952) governs, not the full window.
       const t = computeThresholds(32_000, 1);
-      expect(t.auto).toBe(32_000);
+      expect(t.auto).toBe(18_952); // min(32K, ceiling=18_952)
       expect(t.warn).toBeLessThanOrEqual(t.auto);
-      // For 32K window: hard = min(32000, max(effectiveWindow - HARD_BUFFER, 32000 + HARD_BUFFER)) = 32000
-      expect(t.hard).toBeLessThanOrEqual(t.auto);
+      expect(t.hard).toBeGreaterThan(t.auto);
     });
 
     it('pct=1 on a large window: ceiling still caps auto below the window', () => {
@@ -2571,22 +2620,22 @@ describe('ChatCompressionService.compress cheap-gate uses computeThresholds.auto
     expect(result.info.compressionStatus).not.toBe(CompressionStatus.NOOP);
   });
 
-  it('with default threshold, NOOPs at same token count (32K window, 20K tokens)', async () => {
+  it('with default threshold, NOOPs below the small-tier auto threshold (32K window, 15K tokens)', async () => {
     const spy = vi
       .spyOn(sideQueryModule, 'runSideQuery')
       .mockResolvedValue({ text: 's', usage: {} } as never);
 
     const config = makeFakeConfig({ contextWindowSize: 32_000 });
     // getAutoCompactThreshold returns undefined → default 0.85
-    // computeThresholds(32000).auto = 27200 (degenerate → 0.85 × 32K)
-    // 20K < 27.2K → NOOP
+    // computeThresholds(32000).auto = 18_952 (small-tier ceiling governs;
+    // see getCompactionBudget) — 15K < 18.952K → NOOP
     const result = await new ChatCompressionService().compress(makeFakeChat(), {
       promptId: 'p',
       force: false,
       model: 'qwen-test',
       config,
       consecutiveFailures: 0,
-      originalTokenCount: 20_000,
+      originalTokenCount: 15_000,
     });
 
     expect(spy).not.toHaveBeenCalled();

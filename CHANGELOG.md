@@ -3,6 +3,56 @@
 A running log of what got built, what broke, and what was learned — kept honest on
 purpose, including the runs that didn't work. Newest first.
 
+## 2026-07-20 — Compaction/write-loop fixes on small context windows, interrupted-stream salvage
+
+Runtime `0.1.0-lal.27` fixes the failure loop local models with small context
+windows (e.g. a 32K-token Qwen) hit when asked to write a large file in one shot:
+the model would generate 300+ lines into a single `write_file` call, hit the
+provider's `max_tokens` limit mid-JSON, and the truncated 20K+ char failed payload
+would get appended to chat history almost verbatim — bloating context to 85%+
+capacity with no room left to recover, so the model retried the exact same
+monolithic-write strategy and failed the same way again. Three fixes, in order of
+where the failure chain breaks:
+
+- **Auto-compaction now fires early enough on small windows to matter.**
+  `chatCompressionService`'s threshold math scaled a single 20K-token summary
+  reserve across every window size; on a 32K window that pushed the effective
+  ceiling negative, so compaction fell back to an 85%-full proportional trigger —
+  by then there was no output budget left to recover in. `getCompactionBudget`
+  now tiers the summary reserve and every buffer by window size (≤32K: compacts
+  around 58% full; ≤65K: around 65%; larger windows: unchanged), and the
+  compression side-query's own `maxOutputTokens` scales with it instead of
+  always requesting a 20K-token summary a small window can't afford.
+- **Oversized tool payloads no longer poison the compaction summary.**
+  `compactionInputSlimming` already stripped inline images/documents before
+  sending history to the summarizer, but a 20K-char failed `write_file` `content`
+  argument (or a large `edit` `new_string`, or shell output) passed through
+  untouched. Any functionCall string argument or functionResponse `output` over
+  2,000 chars is now replaced with a small `{content_ref, content_chars,
+  content_preview}` stub before it reaches the side-query.
+- **`write_file` now rejects oversized model-authored content before executing,**
+  capped at 8,000 chars (`MAX_MODEL_WRITE_CHARS`), telling the model to write a
+  skeleton and build the rest up with incremental `edit`/append calls instead.
+  The rejection is a normal parameter-validation error, which means it flows
+  through `coreToolScheduler`'s existing retry-loop circuit breaker for free — a
+  model that keeps retrying the same oversized write against the same file
+  escalates to a hard stop after a few attempts, no new breaker needed.
+  Human-edited content (`modified_by_user`) is exempt.
+
+Also folds in earlier uncommitted fixes that were built and packaged but never
+shipped: an interrupted tool-call stream (rate limit, timeout, dropped
+connection) mid-`write_file` used to silently discard everything already
+generated once `finish_reason` never arrived; the largest in-flight tool call's
+buffered arguments are now salvaged to
+`~/.qwen/tmp/<project-hash>/recovered-tool-calls/` before the stream error
+propagates. `web_search` now falls back to the Windows installer's paired
+`~/.lal/client-host` file when `LAL_GATEWAY_URL` is unset, instead of reporting
+search as unavailable. And the standalone-package asset allowlist now includes
+`NOTICE-LAL.md`, which `prepare-package.js` has always copied into `dist/` but
+the allowlist (added when asset-scan hardening landed) never listed — silently
+breaking every standalone build since, only caught once the release script was
+actually re-run end to end for this version.
+
 ## 2026-07-19 — Tool-call reliability and terminal visibility fixes
 
 Runtime `0.1.0-lal.24` flips the J-space bar direction. It read as backwards:
