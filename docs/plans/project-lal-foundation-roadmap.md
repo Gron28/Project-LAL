@@ -1,7 +1,9 @@
 # Project-LAL foundation roadmap
 
 Status: Milestones 0 and 1 are complete; Milestone 2 is active.
-Last updated: 2026-07-15.
+Last updated: 2026-07-22. See
+[`../status/project-lal-current-state.md`](../status/project-lal-current-state.md)
+for the concise implementation snapshot.
 
 ## Rule of the roadmap
 
@@ -105,12 +107,14 @@ runtime telemetry and the removal of inherited surface.
 Current implementation slice: protocol mirror drift and ledger conformance are
 checked, unknown event kinds are rejected before persistence, and terminal run
 ledgers are retained as paired metadata/log files for 30 days and capped at
-256 MiB without ever deleting live work. Native LAL `.12` now installs a small
-LAL-owned system prompt, caps default turns at 1,024 output tokens, identifies
-active versus requested context honestly, and avoids duplicating cumulative
-terminal output in the phone UI. The physical shared package and the remaining
-storage categories stay deferred until the root workspace boundary is
-established.
+256 MiB without ever deleting live work. The shared protocol package now carries
+the runtime model-profile contract. The Models API/UI, Chat, Code, inference
+gateway, and running CLI clients consume one per-model settings source and show
+requested, verified, active, and native context separately. Qwen 3.5 9B has a
+measured 100,051-token success on the current host; that result is model/host
+specific. Research now has observable tool use and mechanical evidence coverage
+gates. Remaining storage categories and full native/attach event parity are
+still open.
 
 Exit criterion: every user-visible status item has a real data source and an
 unknown or failed event degrades visibly rather than silently.

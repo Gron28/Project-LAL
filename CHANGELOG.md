@@ -3,6 +3,57 @@
 A running log of what got built, what broke, and what was learned — kept honest on
 purpose, including the runs that didn't work. Newest first.
 
+## 2026-07-22 — Unified model profiles, observable research, usable model acquisition
+
+Runtime `0.1.0-lal.28` makes Qwen 3.5 9B the practical high-context daily
+driver and closes several gaps that made the CLI and web application disagree
+or appear functional while doing no real work.
+
+- The Models page is now a first-class model control surface: it scans the real
+  GGUF and Ollama stores, distinguishes the saved default from the resident
+  model, loads/unloads models explicitly, and edits per-model context, output
+  limit, temperature, top-p, top-k, repeat penalty, GPU layers, and thinking.
+  The same durable profile is consumed by Web Chat, Web Code, the authenticated
+  inference gateway, and running LAL terminals. Web clients reconcile every two
+  seconds; the gateway enforces the current profile on every request; terminals
+  retain the last known profile for disconnected use. An explicit per-session
+  model or mode choice remains a session override.
+- Context is no longer a single misleading 32K label. The UI and APIs separately
+  expose requested, verified, active, and model-native limits. Qwen 3.5 9B was
+  exercised with real prompts at 60,046 and 100,051 input tokens, including
+  needle recall. Both completed with the stable long-context llama.cpp profile.
+  The earlier 131K production flags reproduced an AMD Vulkan reset at only
+  13,824 tokens, so 100K is the current measured ceiling—not an extrapolated
+  claim. Long-context launches now use the tested 256-token batch, quantized
+  K/V cache, flash attention, and single-sequence settings.
+- Deep research is now a runtime-controlled workflow rather than a prompt that
+  can be satisfied by narration. `/research` and explicit web-research requests
+  require observable searches and opened sources, count only successful tool
+  results, reject premature synthesis, route common small-model tool-name
+  mistakes, require linked evidence, and stop through bounded recovery instead
+  of looping forever. Web search uses the authenticated host gateway and exposes
+  failures rather than inventing results.
+- The web Models surface now searches pinned Hugging Face revisions, inspects
+  hash-addressed GGUF files and license metadata, starts resumable host download
+  jobs, reports progress/errors, verifies size and SHA-256 before publication,
+  and rescans the inventory when a job completes. A visible Models navigation
+  entry replaces the previously hidden/broken acquisition path.
+- CLI context preservation, post-compaction attachment recovery, tool-result
+  validation, oversized edit protection, bounded sub-agent/research recovery,
+  and terminal rendering were hardened. Linux uses a stable alternate-screen
+  renderer with idle redraw suppression and an explicit `--safe-terminal`
+  fallback, addressing repeated stale/blank-line flooding without changing the
+  Windows renderer. Headless `lal -p` turns no longer start extract/dream
+  agents after the requested answer; those maintenance jobs remain interactive
+  background work and can no longer delay a one-shot process exit.
+
+Known limits remain explicit: the 100K result is verified on the current host
+and model, not a universal guarantee; native Linux/macOS connected-client
+archives and signed release manifests are still pending; HIVE, benchmarking,
+training, and cross-device native-run parity remain behind their reliability
+gates. The canonical current-state inventory is
+`docs/status/project-lal-current-state.md`.
+
 ## 2026-07-20 — Compaction/write-loop fixes on small context windows, interrupted-stream salvage
 
 Runtime `0.1.0-lal.27` fixes the failure loop local models with small context

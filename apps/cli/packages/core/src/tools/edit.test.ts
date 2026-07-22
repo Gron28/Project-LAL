@@ -19,7 +19,7 @@ vi.mock('../telemetry/loggers.js', () => ({
 import type { Mock } from 'vitest';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { EditToolParams } from './edit.js';
-import { applyReplacement, EditTool } from './edit.js';
+import { applyReplacement, EditTool, MAX_MODEL_EDIT_CHARS } from './edit.js';
 import type { FileDiff, ToolInvocation, ToolResult } from './tools.js';
 import { ToolErrorType } from './tool-error.js';
 import path from 'node:path';
@@ -48,6 +48,9 @@ describe('EditTool', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'edit-tool-test-'));
     rootDir = path.join(tempDir, 'root');
     fs.mkdirSync(rootDir);
+    // Make Git-root discovery hermetic. A developer machine may itself have an
+    // unrelated /tmp/.git, which must not move this fixture's team-memory root.
+    fs.mkdirSync(path.join(rootDir, '.git'));
     fileReadCache = new FileReadCache();
     mockFileHistoryService = { trackEdit: vi.fn() };
     fsService = new StandardFileSystemService();
@@ -551,6 +554,34 @@ describe('EditTool', () => {
       expect(() => tool.build(params)).toThrow(
         /The 'file_path' parameter must be non-empty./,
       );
+    });
+
+    it('should reject model-authored edit over MAX_MODEL_EDIT_CHARS combined', async () => {
+      const params: EditToolParams = {
+        file_path: path.join(rootDir, 'big-edit.txt'),
+        old_string: 'x'.repeat(MAX_MODEL_EDIT_CHARS),
+        new_string: 'y',
+      };
+      expect(() => tool.build(params)).toThrow(/Payload too large/);
+    });
+
+    it('should allow old_string + new_string exactly at MAX_MODEL_EDIT_CHARS', async () => {
+      const params: EditToolParams = {
+        file_path: path.join(rootDir, 'ok-edit.txt'),
+        old_string: 'x'.repeat(MAX_MODEL_EDIT_CHARS - 1),
+        new_string: 'y',
+      };
+      expect(() => tool.build(params)).not.toThrow();
+    });
+
+    it('should allow an oversized edit when modified_by_user is true', async () => {
+      const params: EditToolParams = {
+        file_path: path.join(rootDir, 'user-edited.txt'),
+        old_string: 'x'.repeat(MAX_MODEL_EDIT_CHARS),
+        new_string: 'y',
+        modified_by_user: true,
+      };
+      expect(() => tool.build(params)).not.toThrow();
     });
 
     it('should reject when calculateEdit fails after an abort signal', async () => {

@@ -1019,7 +1019,22 @@ const SETTINGS_SCHEMA = {
         default: false,
         description:
           'Render conversation history in an in-app scrollable viewport instead of the terminal scrollback buffer. Recommended if you see flicker, scroll-storm, or interface freeze on long sessions, after Ctrl+O, after Ctrl+E / Ctrl+F (expand), after window resize, or when alt-tabbing back. Scroll with Shift+↑/↓ (line), PgUp/PgDn (page), Ctrl+Home/End (top/bottom), or the mouse wheel. Also enables mouse interactions: click an option in a menu/dialog to select it, hover to highlight it, and click in the prompt to position the cursor. Does NOT use the host terminal scrollback while enabled; for native text selection, hold Shift (or Option on macOS) while dragging.',
+        showInDialog: false,
+      },
+      terminalRenderer: {
+        type: 'enum',
+        label: 'Terminal renderer',
+        category: 'UI',
+        requiresRestart: true,
+        default: 'auto',
+        description:
+          'Auto uses a stable managed viewport on capable terminals and a non-animated, scrollback-safe renderer elsewhere.',
         showInDialog: true,
+        options: [
+          { value: 'auto', label: 'Auto (recommended)' },
+          { value: 'viewport', label: 'Managed viewport' },
+          { value: 'static', label: 'Static scrollback' },
+        ],
       },
       showScrollbar: {
         type: 'boolean',

@@ -9,7 +9,10 @@ export const dynamic = "force-dynamic";
 //   /api/agent/file/<base64url(projectRoot) | "_">/<relative/path>
 // Confined to the project root (lexical + symlink realpath checks). HTML gets a CSP
 // sandbox: scripts run, but the page can't reach the app's APIs or storage.
-const DEFAULT_WORKSPACE = path.join(path.resolve(process.cwd(), ".."), "workspace");
+// turbopackIgnore: this is a runtime filesystem path, not a bundler asset —
+// without the ignore comment Turbopack can't statically resolve process.cwd()
+// and conservatively traces the whole project tree looking for the target.
+const DEFAULT_WORKSPACE = path.join(/*turbopackIgnore: true*/ path.resolve(process.cwd(), ".."), "workspace");
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",

@@ -400,8 +400,19 @@ describe('SettingsSchema', () => {
       expect(useTerminalBuffer).toBeDefined();
       expect(useTerminalBuffer.type).toBe('boolean');
       expect(useTerminalBuffer.default).toBe(false);
-      expect(useTerminalBuffer.showInDialog).toBe(true);
+      expect(useTerminalBuffer.showInDialog).toBe(false);
       expect(useTerminalBuffer.requiresRestart).toBe(false);
+    });
+
+    it('defaults the terminal renderer to auto with safe explicit fallbacks', () => {
+      const renderer = getSettingsSchema().ui.properties.terminalRenderer;
+      expect(renderer.type).toBe('enum');
+      expect(renderer.default).toBe('auto');
+      expect(renderer.options?.map((option) => option.value)).toEqual([
+        'auto',
+        'viewport',
+        'static',
+      ]);
     });
 
     it('should expose response tokens/sec as an opt-in UI setting', () => {

@@ -10,6 +10,7 @@ import path from 'node:path';
 import { BaseDeclarativeTool, BaseToolInvocation, Kind } from './tools.js';
 import type { ToolInvocation, ToolResult } from './tools.js';
 import { ToolDisplayNames, ToolNames } from './tool-names.js';
+import { ToolErrorType } from './tool-error.js';
 
 export interface WebSearchToolParams {
   query: string;
@@ -106,6 +107,10 @@ class WebSearchToolInvocation extends BaseToolInvocation<
       return {
         llmContent: `Web search failed: ${message}`,
         returnDisplay: `Web search failed: ${message}`,
+        error: {
+          message: `Web search failed: ${message}`,
+          type: ToolErrorType.WEB_SEARCH_FAILED,
+        },
       };
     }
   }

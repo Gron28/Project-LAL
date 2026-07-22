@@ -1,4 +1,4 @@
-import { activatePublicModel, allModels, isPublicModelName, OLLAMA_CLI_CONTEXT, SERVE_PORT, touchServing } from "@/lib/lab";
+import { activatePublicModel, allModels, contextProfileForModel, isPublicModelName, modelRuntimeSettings, SERVE_PORT, touchServing } from "@/lib/lab";
 import { appendHostObservationForClientDevice } from "@/lib/runs";
 import { acquireCliGpuLease, cliAuthenticatedDeviceId, cliAuthorized, recordCliAccess, streamWithRelease, unauthorizedResponse } from "@/lib/lal-cli";
 
@@ -122,7 +122,9 @@ export async function POST(request: Request) {
   }
 
   const startedAt = Date.now();
-  let observedContext = modelInfo?.source === "ollama" ? OLLAMA_CLI_CONTEXT : 32768;
+  const managedSettings = modelRuntimeSettings(model);
+  const plannedContext = contextProfileForModel(model);
+  let observedContext = plannedContext.activeTokens ?? plannedContext.verifiedTokens ?? plannedContext.requestedTokens;
   let streamText = "";
   let lastUsage: Usage | null = null;
   const decoder = new TextDecoder();
@@ -164,17 +166,18 @@ export async function POST(request: Request) {
     });
   };
 
-  appendHostObservationForClientDevice(deviceId, { k: "model_loading", v: { model, ctx: modelInfo?.source === "ollama" ? 16384 : 32768 } });
+  appendHostObservationForClientDevice(deviceId, { k: "model_loading", v: { model, ctx: observedContext, contextProfile: plannedContext } });
   const release = await acquireCliGpuLease();
   try {
-    const runtime = await activatePublicModel(model, 32768);
+    const runtime = await activatePublicModel(model);
     const isOllama = runtime.backend === "ollama";
     const upstreamModel = runtime.runtimeProfile;
     const runtimeContext = runtime.context;
     const runtimeOffload = runtime.gpuOffload;
     observedContext = runtimeContext;
     touchServing();
-    appendHostObservationForClientDevice(deviceId, { k: "model_ready", v: { model, ctx: runtimeContext, backend: runtime.backend, gpuOffload: runtimeOffload, ...(upstreamModel !== model ? { runtimeProfile: upstreamModel } : {}) } });
+    appendHostObservationForClientDevice(deviceId, { k: "context_profile", v: runtime.contextProfile });
+    appendHostObservationForClientDevice(deviceId, { k: "model_ready", v: { model, ctx: runtimeContext, backend: runtime.backend, contextProfile: runtime.contextProfile, gpuOffload: runtimeOffload, ...(upstreamModel !== model ? { runtimeProfile: upstreamModel } : {}) } });
     // llama.cpp rejects logprobs together with streamed tool definitions. Keep
     // the terminal agent's tool loop working first; request token confidence
     // only for plain streamed turns where this backend supports it.
@@ -184,9 +187,28 @@ export async function POST(request: Request) {
     // must remain valid even if an older managed config requested it.
     delete payloadWithoutLogprobs.logprobs;
     delete payloadWithoutLogprobs.top_logprobs;
+    const clientMaxTokens = typeof payloadWithoutLogprobs.max_tokens === "number" && payloadWithoutLogprobs.max_tokens > 0
+      ? Math.floor(payloadWithoutLogprobs.max_tokens)
+      : null;
+    const managedMaxTokens = managedSettings.maxOutputTokens > 0
+      ? clientMaxTokens == null ? managedSettings.maxOutputTokens : Math.min(clientMaxTokens, managedSettings.maxOutputTokens)
+      : clientMaxTokens;
+    const priorTemplate = payloadWithoutLogprobs.chat_template_kwargs && typeof payloadWithoutLogprobs.chat_template_kwargs === "object"
+      ? payloadWithoutLogprobs.chat_template_kwargs as Record<string, unknown>
+      : {};
+    const managedPayload = {
+      ...payloadWithoutLogprobs,
+      temperature: managedSettings.temperature,
+      top_p: managedSettings.topP,
+      top_k: managedSettings.topK,
+      repeat_penalty: managedSettings.repeatPenalty,
+      ...(managedMaxTokens != null ? { max_tokens: managedMaxTokens } : {}),
+      chat_template_kwargs: { ...priorTemplate, enable_thinking: managedSettings.thinking },
+      ...(isOllama ? { think: managedSettings.thinking } : {}),
+    };
     const upstreamPayload = payload.stream === true
       ? {
-          ...payloadWithoutLogprobs,
+          ...managedPayload,
           ...(hasTools ? { tools: compactTools(payload.tools) } : {}),
           // Ollama's OpenAI compatibility layer does not reliably accept or
           // return logprobs; only ask llama.cpp for the J-space signal.
@@ -204,7 +226,7 @@ export async function POST(request: Request) {
             include_usage: true,
           },
         }
-      : payloadWithoutLogprobs;
+      : managedPayload;
     const upstream = await fetch(`${isOllama ? "http://127.0.0.1:11434" : `http://127.0.0.1:${SERVE_PORT}`}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: request.headers.get("accept") ?? "application/json" },

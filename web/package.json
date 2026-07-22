@@ -8,13 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npm run lint && tsc --noEmit && npm run test:runtime",
-    "test:runtime": "node --experimental-strip-types --test src/lib/runtime-processes.test.ts src/lib/retention.test.ts src/lib/request-identity.test.ts src/lib/browser-mutation-guard.test.ts src/lib/host-profile.test.ts src/lib/host-context.test.ts src/lib/state-migration.test.ts src/lib/workspace-grants.test.ts src/lib/capability-registry.test.ts src/lib/jobs.test.ts src/lib/model-acquisition.test.ts src/lib/model-downloads.test.ts src/lib/lineage-evaluations.test.ts src/lib/media-artifacts.test.ts src/lib/defensive-engagement.test.ts src/lib/hive/graph.test.ts src/lib/hive/graph-authoring.test.ts src/lib/hive/graph-revisions.test.ts",
+    "test:runtime": "node --experimental-strip-types --test src/lib/runtime-processes.test.ts src/lib/retention.test.ts src/lib/request-identity.test.ts src/lib/browser-mutation-guard.test.ts src/lib/host-profile.test.ts src/lib/host-context.test.ts src/lib/state-migration.test.ts src/lib/workspace-grants.test.ts src/lib/capability-registry.test.ts src/lib/context-profile.test.ts src/lib/jobs.test.ts src/lib/model-acquisition.test.ts src/lib/model-downloads.test.ts src/lib/huggingface-catalog.test.ts src/lib/lineage-evaluations.test.ts src/lib/media-artifacts.test.ts src/lib/defensive-engagement.test.ts src/lib/hive/graph.test.ts src/lib/hive/graph-authoring.test.ts src/lib/hive/graph-revisions.test.ts",
     "test:lineage-evaluations": "node --experimental-strip-types --test src/lib/lineage-evaluations.test.ts",
     "test:protocol": "node --test src/lib/protocol/protocol.conformance.test.ts",
     "check:protocol-drift": "node ../scripts/check_protocol_drift.mjs"
   },
   "dependencies": {
-    "@project-lal/protocol": "file:../packages/protocol",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.11",
     "@codemirror/lang-javascript": "^6.2.5",
@@ -23,6 +22,7 @@
     "@codemirror/lang-python": "^6.2.1",
     "@codemirror/theme-one-dark": "^6.1.3",
     "@mozilla/readability": "^0.6.0",
+    "@project-lal/protocol": "file:../packages/protocol",
     "codemirror": "^6.0.2",
     "linkedom": "^0.18.12",
     "lucide-react": "^1.22.0",

@@ -7,7 +7,20 @@ import crypto from "node:crypto";
 import { spawn, ChildProcess, execSync } from "node:child_process";
 import { gradeItem, stripThink, type BenchItem } from "./graders";
 import { resolvePlatformDirectories } from "./host-profile";
+import { ContextProfileStore, contextCandidates, contextHardwareFingerprint, makeContextProfile, readGgufContextLength } from "./context-profile";
+import type { ContextProfile } from "@project-lal/protocol";
 export type { BenchItem } from "./graders";
+export type ModelRuntimeSettings = {
+  contextTokens: number;
+  maxOutputTokens: number;
+  gpuLayers: number | null;
+  temperature: number;
+  topP: number;
+  topK: number;
+  repeatPenalty: number;
+  thinking: boolean;
+  updatedAt: string | null;
+};
 
 const ROOT = path.resolve(process.cwd(), "..");
 export const MODELS_DIR = path.join(ROOT, "models");
@@ -17,6 +30,33 @@ export const MODELS_DIR = path.join(ROOT, "models");
 export function modelDirectories(): string[] {
   return [...new Set([MODELS_DIR, path.join(resolvePlatformDirectories().data, "models")])];
 }
+export type ModelScanRoot = {
+  kind: "gguf" | "ollama";
+  path: string;
+  exists: boolean;
+  readable: boolean;
+  detail?: string;
+};
+
+/** Human-readable discovery facts for the Models UI. Discovery remains
+ * read-only: a missing owner-data directory is a valid empty state, while a
+ * present-but-unreadable directory is surfaced as a failure instead of being
+ * silently converted to "0 models". */
+export function modelScanRoots(): ModelScanRoot[] {
+  const roots: ModelScanRoot[] = modelDirectories().map((directory) => {
+    const exists = fs.existsSync(directory);
+    if (!exists) return { kind: "gguf", path: directory, exists: false, readable: true };
+    try { fs.accessSync(directory, fs.constants.R_OK); return { kind: "gguf", path: directory, exists: true, readable: true }; }
+    catch (error) { return { kind: "gguf", path: directory, exists: true, readable: false, detail: error instanceof Error ? error.message : String(error) }; }
+  });
+  const exists = fs.existsSync(OLLAMA_STORE);
+  if (!exists) roots.push({ kind: "ollama", path: OLLAMA_STORE, exists: false, readable: true });
+  else {
+    try { fs.accessSync(OLLAMA_STORE, fs.constants.R_OK); roots.push({ kind: "ollama", path: OLLAMA_STORE, exists: true, readable: true }); }
+    catch (error) { roots.push({ kind: "ollama", path: OLLAMA_STORE, exists: true, readable: false, detail: error instanceof Error ? error.message : String(error) }); }
+  }
+  return roots;
+}
 const LLAMA_DIR = path.join(ROOT, "llama", "llama-b9835");
 const LLAMA_SERVER = path.join(LLAMA_DIR, "llama-server");
 const OLLAMA_STORE = "/usr/share/ollama/.ollama/models";
@@ -25,6 +65,12 @@ const CONVOS_DIR = path.join(DATA, "conversations");
 const EXPERIMENTS_DIR = path.join(DATA, "experiments");
 const SETTINGS_FILE = path.join(DATA, "settings.json");
 export const SERVE_PORT = 8099;
+export function localRuntimeAvailability() {
+  return {
+    llamaServer: fs.existsSync(LLAMA_SERVER) ? "available" as const : "missing" as const,
+    ollamaStore: fs.existsSync(OLLAMA_STORE) ? "available" as const : "missing" as const,
+  };
+}
 
 // Training env vars — defaults target this project's dev box (AMD RDNA2 on Linux via
 // ROCm/HIP). HSA_* vars are ROCm-specific and are simply ignored by CUDA/CPU torch, so
@@ -54,7 +100,17 @@ export const DEFAULT_OPTIONS: Options = {
   num_ctx: 8192, num_predict: -1, num_gpu: null,
   temperature: 0.6, top_p: 0.9, top_k: 40, repeat_penalty: 1.1,
 };
-type SettingsFile = { model?: string; options?: Partial<Options>; system?: string; web?: boolean; groundDocs?: boolean; serveIdleMinutes?: number };
+type SettingsFile = {
+  model?: string;
+  options?: Partial<Options>;
+  modelSettings?: Record<string, Partial<ModelRuntimeSettings>>;
+  system?: string;
+  web?: boolean;
+  groundDocs?: boolean;
+  serveIdleMinutes?: number;
+};
+const CONTEXT_PROFILES_FILE = path.join(DATA, "context-profiles.json");
+const contextProfiles = new ContextProfileStore(CONTEXT_PROFILES_FILE);
 
 // serveIdleMinutes: llama-server auto-unloads after this long with no model use
 // and no live run (0 = never). Before this existed, the singleton stayed GPU-
@@ -67,7 +123,7 @@ export function readSettings() {
   const models = publicModels();
   const model = s.model && models.find((m) => m.name === s.model) ? s.model! : models[0]?.name ?? "";
   return {
-    model, options: { ...DEFAULT_OPTIONS, ...(s.options || {}) }, system: s.system ?? "", web: !!s.web, groundDocs: !!s.groundDocs,
+    model, options: { ...DEFAULT_OPTIONS, ...(s.options || {}) }, modelSettings: s.modelSettings ?? {}, system: s.system ?? "", web: !!s.web, groundDocs: !!s.groundDocs,
     serveIdleMinutes: typeof s.serveIdleMinutes === "number" ? s.serveIdleMinutes : DEFAULT_SERVE_IDLE_MINUTES,
   };
 }
@@ -80,8 +136,68 @@ export function writeSettings(patch: SettingsFile) {
   if (patch.groundDocs !== undefined) s.groundDocs = patch.groundDocs;
   if (patch.serveIdleMinutes !== undefined) s.serveIdleMinutes = patch.serveIdleMinutes;
   if (patch.options) s.options = { ...(s.options || {}), ...patch.options };
+  if (patch.modelSettings) {
+    s.modelSettings = { ...(s.modelSettings || {}) };
+    for (const [model, values] of Object.entries(patch.modelSettings)) {
+      s.modelSettings[model] = { ...(s.modelSettings[model] || {}), ...values };
+    }
+  }
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(s, null, 2));
   return s;
+}
+
+function finiteNumber(value: unknown, fallback: number, min: number, max: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+}
+
+/** The one durable per-model policy read by Web, CLI, and the runtime gateway. */
+export function modelRuntimeSettings(model: string): ModelRuntimeSettings {
+  const settings = readSettings();
+  const saved = settings.modelSettings[model] ?? {};
+  const nativeMaximum = nativeContextLimit(model);
+  const info = publicModels().find((item) => item.name === model);
+  const safeUnsavedDefault = info?.source === "local" ? Math.min(32_768, nativeMaximum ?? 32_768) : OLLAMA_CLI_CONTEXT;
+  const fallbackContext = Math.max(safeUnsavedDefault, settings.options.num_ctx || DEFAULT_OPTIONS.num_ctx);
+  const contextMaximum = nativeMaximum ?? 1_048_576;
+  return {
+    contextTokens: Math.round(finiteNumber(saved.contextTokens, fallbackContext, 2_048, contextMaximum)),
+    maxOutputTokens: Math.round(finiteNumber(saved.maxOutputTokens, settings.options.num_predict, -1, 262_144)),
+    gpuLayers: saved.gpuLayers === null ? null : Math.round(finiteNumber(saved.gpuLayers, settings.options.num_gpu ?? 99, 0, 999)),
+    temperature: finiteNumber(saved.temperature, settings.options.temperature, 0, 2),
+    topP: finiteNumber(saved.topP, settings.options.top_p, 0, 1),
+    topK: Math.round(finiteNumber(saved.topK, settings.options.top_k, 0, 10_000)),
+    repeatPenalty: finiteNumber(saved.repeatPenalty, settings.options.repeat_penalty, 0, 2),
+    thinking: typeof saved.thinking === "boolean" ? saved.thinking : true,
+    updatedAt: typeof saved.updatedAt === "string" ? saved.updatedAt : null,
+  };
+}
+
+export function writeModelRuntimeSettings(model: string, patch: Partial<ModelRuntimeSettings>): ModelRuntimeSettings {
+  if (!publicModels().some((item) => item.name === model)) throw new Error(`unknown model: ${model}`);
+  const current = modelRuntimeSettings(model);
+  const nativeMaximum = nativeContextLimit(model) ?? 1_048_576;
+  const next: ModelRuntimeSettings = {
+    contextTokens: Math.round(finiteNumber(patch.contextTokens, current.contextTokens, 2_048, nativeMaximum)),
+    maxOutputTokens: Math.round(finiteNumber(patch.maxOutputTokens, current.maxOutputTokens, -1, 262_144)),
+    gpuLayers: patch.gpuLayers === null ? null : patch.gpuLayers === undefined ? current.gpuLayers : Math.round(finiteNumber(patch.gpuLayers, current.gpuLayers ?? 99, 0, 999)),
+    temperature: finiteNumber(patch.temperature, current.temperature, 0, 2),
+    topP: finiteNumber(patch.topP, current.topP, 0, 1),
+    topK: Math.round(finiteNumber(patch.topK, current.topK, 0, 10_000)),
+    repeatPenalty: finiteNumber(patch.repeatPenalty, current.repeatPenalty, 0, 2),
+    thinking: typeof patch.thinking === "boolean" ? patch.thinking : current.thinking,
+    updatedAt: new Date().toISOString(),
+  };
+  writeSettings({ modelSettings: { [model]: next } });
+  return next;
+}
+
+export function allModelRuntimeSettings(): Record<string, ModelRuntimeSettings> {
+  return Object.fromEntries(publicModels().map((model) => [model.name, modelRuntimeSettings(model.name)]));
+}
+
+export function modelSettingsRevision(): string {
+  const settings = readSettings();
+  return crypto.createHash("sha256").update(JSON.stringify({ model: settings.model, models: allModelRuntimeSettings() })).digest("hex").slice(0, 16);
 }
 
 // A local model is one or both of <name>-q4.gguf / <name>-f16.gguf. q4 is preferred
@@ -130,6 +246,9 @@ export function isPublicModelName(name: string): boolean {
 }
 export function publicModels(): ModelInfo[] {
   return allModels().filter((model) => isPublicModelName(model.name));
+}
+function preferredRuntimeBackend(model: ModelInfo | undefined): "ollama" | "llama.cpp" {
+  return model?.source === "ollama" && /gemma/i.test(model.name) ? "ollama" : "llama.cpp";
 }
 export type ServingLora = { key: string; path: string };
 export type LoraRequest = { id: number; scale: number }[];
@@ -317,7 +436,82 @@ export type ActivatedModelRuntime = {
   backend: "ollama" | "llama.cpp";
   context: number;
   gpuOffload: string;
+  contextProfile: ContextProfile;
 };
+
+function contextIdentity(model: string, backend: "ollama" | "llama.cpp"): string {
+  const info = publicModels().find((item) => item.name === model);
+  let artifact = `${info?.path ?? model}:unknown`;
+  try {
+    const stat = info ? fs.statSync(info.path) : null;
+    if (stat) artifact = `${info!.path}:${stat.size}:${stat.mtimeMs}`;
+  } catch {}
+  let runtime: string = backend;
+  if (backend === "llama.cpp") {
+    try { const stat = fs.statSync(LLAMA_SERVER); runtime = `${backend}:${stat.size}:${stat.mtimeMs}`; } catch {}
+  }
+  return crypto.createHash("sha256").update(`${artifact}\n${contextHardwareFingerprint(runtime)}`).digest("hex");
+}
+
+const nativeContextCache = new Map<string, number | null>();
+function nativeContextLimit(model: string): number | null {
+  const info = publicModels().find((item) => item.name === model);
+  if (!info || preferredRuntimeBackend(info) === "ollama") return null;
+  try {
+    const stat = fs.statSync(info.path), key = `${info.path}:${stat.size}:${stat.mtimeMs}`;
+    if (nativeContextCache.has(key)) return nativeContextCache.get(key) ?? null;
+    const value = readGgufContextLength(info.path);
+    nativeContextCache.set(key, value);
+    return value;
+  } catch { return null; }
+}
+
+export function contextProfileForModel(model: string): ContextProfile {
+  const info = publicModels().find((item) => item.name === model);
+  const backend = preferredRuntimeBackend(info);
+  const fingerprint = contextIdentity(model, backend);
+  const cached = contextProfiles.get(fingerprint);
+  const runtime = servingRuntimeStatus();
+  const active = runtime.alive && runtime.model === model && runtime.backend === backend ? runtime.context : null;
+  const maximum = nativeContextLimit(model);
+  const requested = Math.min(modelRuntimeSettings(model).contextTokens, maximum ?? Number.POSITIVE_INFINITY);
+  if (cached) {
+    const verified = cached.verifiedTokens;
+    return {
+    ...cached, modelMaxTokens: maximum ?? cached.modelMaxTokens, requestedTokens: requested,
+    // Verification is durable, residency is not. Never present the last
+    // successful allocation/offload as active after the backend was unloaded.
+    activeTokens: active,
+    gpuOffload: active ? runtime.gpuOffload : null,
+    verification: active
+      ? active >= requested ? "verified" : "degraded"
+      : verified != null && verified >= requested ? "verified" : "planned",
+    source: active ? "runtime" : "cache",
+    ...(verified != null && verified < requested
+      ? { reason: `requested ${requested} tokens; highest verified allocation is ${verified}` }
+      : {}),
+  };
+  }
+  return makeContextProfile({ model, backend, modelMaxTokens: maximum, requestedTokens: requested, activeTokens: active, fingerprint, source: active ? "runtime" : "fallback", gpuOffload: active ? runtime.gpuOffload : null });
+}
+
+export function resolvedContextTarget(model: string, minimum = 0): number {
+  const profile = contextProfileForModel(model);
+  const requested = Math.max(minimum, profile.requestedTokens);
+  return profile.modelMaxTokens ? Math.min(requested, profile.modelMaxTokens) : requested;
+}
+
+function recordVerifiedContext(model: string, backend: "ollama" | "llama.cpp", requested: number, active: number, offload: string): ContextProfile {
+  const previous = contextProfileForModel(model);
+  const profile = makeContextProfile({
+    model, backend, modelMaxTokens: previous.modelMaxTokens,
+    requestedTokens: requested, activeTokens: active, verifiedTokens: Math.max(previous.verifiedTokens ?? 0, active),
+    fingerprint: contextIdentity(model, backend), source: "runtime", gpuOffload: offload,
+    ...(active < requested ? { reason: `backend allocated ${active} of ${requested} requested tokens` } : {}),
+  });
+  contextProfiles.put(profile);
+  return profile;
+}
 
 export function managedOllamaModel(model: string): string {
   const candidate = `${model}${MANAGED_MODEL_PROFILE_SUFFIX}`;
@@ -330,11 +524,11 @@ export function managedOllamaModel(model: string): string {
   return model;
 }
 
-export async function verifyOllamaRuntime(model: string): Promise<{ context: number; offload: string }> {
+export async function verifyOllamaRuntime(model: string, requestedContext = OLLAMA_CLI_CONTEXT): Promise<{ context: number; offload: string }> {
   const loaded = await fetch("http://127.0.0.1:11434/api/generate", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model, prompt: "", stream: false, keep_alive: "10m" }),
+    body: JSON.stringify({ model, prompt: "", stream: false, keep_alive: "10m", options: { num_ctx: requestedContext, num_predict: 1 } }),
     signal: AbortSignal.timeout(180_000),
   });
   if (!loaded.ok) throw new Error(`Ollama failed to load ${model}: HTTP ${loaded.status}`);
@@ -354,15 +548,15 @@ export async function verifyOllamaRuntime(model: string): Promise<{ context: num
 }
 
 /** Single-GPU model handoff used by both settings switches and inference. */
-export async function activatePublicModel(model: string, minContext = 32768): Promise<ActivatedModelRuntime> {
+export async function activatePublicModel(model: string, minContext = 0): Promise<ActivatedModelRuntime> {
   const info = publicModels().find((item) => item.name === model);
   if (!info) throw new Error(`unknown or internal model: ${model}`);
   const current = servingRuntimeStatus();
-  const expectedBackend = info.source === "ollama" ? "ollama" : "llama.cpp";
+  const expectedBackend = preferredRuntimeBackend(info);
   // Gemma is exposed by its public name but deliberately runs through the
   // visible managed 16K Ollama profile. Do not compare that profile against
   // the generic 32K llama.cpp request or it will be unloaded on every turn.
-  const requiredContext = info.source === "ollama" ? OLLAMA_CLI_CONTEXT : minContext;
+  const requiredContext = expectedBackend === "ollama" ? resolvedContextTarget(model, Math.max(OLLAMA_CLI_CONTEXT, minContext)) : resolvedContextTarget(model, minContext);
   const canReuseCurrent =
     current.alive &&
     current.model === model &&
@@ -372,14 +566,18 @@ export async function activatePublicModel(model: string, minContext = 32768): Pr
     await stopAllServing();
   }
 
-  if (info.source === "ollama") {
+  if (expectedBackend === "ollama") {
     // llama.cpp and Ollama share one GPU. Ensure the old local process is gone
     // before asking Ollama to make the requested profile resident.
     if (servingRuntimeStatus().backend === "llama.cpp") await stopAllServing();
     const runtimeProfile = managedOllamaModel(model);
-    const verified = await verifyOllamaRuntime(runtimeProfile);
+    const verified = await verifyOllamaRuntime(runtimeProfile, requiredContext);
+    if (verified.context < requiredContext) {
+      throw new Error(`Ollama loaded ${model} with ${verified.context} context, expected at least ${requiredContext}`);
+    }
     markOllamaServing(model, verified.context, verified.offload);
-    return { model, runtimeProfile, backend: "ollama", context: verified.context, gpuOffload: verified.offload };
+    const contextProfile = recordVerifiedContext(model, "ollama", requiredContext, verified.context, verified.offload);
+    return { model, runtimeProfile, backend: "ollama", context: verified.context, gpuOffload: verified.offload, contextProfile };
   }
 
   await ensureServing(model, requiredContext);
@@ -391,7 +589,55 @@ export async function activatePublicModel(model: string, minContext = 32768): Pr
     throw new Error(`llama.cpp loaded ${model} with ${verified.context ?? "unknown"} context, expected at least ${requiredContext}`);
   }
   if (!verified.gpuOffload) throw new Error(`llama.cpp did not report GPU/offload state for ${model}`);
-  return { model, runtimeProfile: model, backend: "llama.cpp", context: verified.context!, gpuOffload: verified.gpuOffload };
+  const contextProfile = recordVerifiedContext(model, "llama.cpp", requiredContext, verified.context!, verified.gpuOffload);
+  return { model, runtimeProfile: model, backend: "llama.cpp", context: verified.context!, gpuOffload: verified.gpuOffload, contextProfile };
+}
+
+/** Explicit, disruptive optimization pass used by the Models UI. */
+export async function probePublicModelContext(model: string, emit?: (profile: ContextProfile) => void): Promise<ContextProfile> {
+  const initial = contextProfileForModel(model);
+  const candidates = contextCandidates(initial.modelMaxTokens);
+  const ascending = candidates.filter((value) => value >= 32_768).sort((a, b) => a - b);
+  const fallbacks = candidates.filter((value) => value < 32_768).sort((a, b) => b - a);
+  let best: ContextProfile | null = null;
+  const probe = async (candidate: number): Promise<boolean> => {
+    emit?.({ ...initial, requestedTokens: candidate, verification: "probing", reason: undefined });
+    try {
+      await stopAllServing();
+      // Passing the candidate bypasses no limit: activatePublicModel clamps to
+      // native metadata and verifies the backend-reported allocation.
+      const runtime = await activatePublicModel(model, candidate);
+      const smoke = await fetch(runtime.backend === "ollama" ? "http://127.0.0.1:11434/api/chat" : `http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(runtime.backend === "ollama"
+          ? { model: runtime.runtimeProfile, messages: [{ role: "user", content: "Reply OK" }], stream: false, options: { num_ctx: candidate, num_predict: 1 }, keep_alive: -1 }
+          : { model, messages: [{ role: "user", content: "Reply OK" }], stream: false, max_tokens: 1, temperature: 0 }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!smoke.ok) throw new Error(`inference smoke returned HTTP ${smoke.status}`);
+      best = runtime.contextProfile;
+      emit?.(best);
+      return runtime.context >= candidate;
+    } catch (error) {
+      const failed = makeContextProfile({ model, backend: initial.backend, modelMaxTokens: initial.modelMaxTokens, requestedTokens: candidate, verifiedTokens: best?.verifiedTokens ?? null, activeTokens: null, fingerprint: initial.fingerprint, source: "runtime", reason: error instanceof Error ? error.message : String(error) });
+      if (best) {
+        best = { ...best, reason: `higher ${candidate}-token probe failed: ${failed.reason}` };
+        contextProfiles.put(best);
+      }
+      emit?.(failed);
+      return false;
+    }
+  };
+  for (const candidate of ascending) {
+    if (!(await probe(candidate))) break;
+  }
+  if (!best) {
+    for (const candidate of fallbacks) {
+      if (await probe(candidate)) break;
+    }
+  }
+  if (!best) throw new Error(`no adaptive context candidate passed for ${model}`);
+  return best;
 }
 
 export async function ensureServing(model: string, minCtx = 0, loras: ServingLora[] = []): Promise<void> {
@@ -405,8 +651,8 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
   }
   const requestedLoras = JSON.stringify(normalizedLoras);
   const loadedLoras = JSON.stringify(srv.loras);
-  const o = readSettings().options;
-  const ctx = Math.max(o.num_ctx || 8192, minCtx);
+  const runtimeSettings = modelRuntimeSettings(model);
+  const ctx = Math.max(runtimeSettings.contextTokens, minCtx);
   // Enforce one-GPU ownership even on the healthy-local-server fast path below.
   // Ollama has no relationship to our singleton state, so it may still hold a
   // previous Gemma after a cancelled Hive run.
@@ -458,8 +704,15 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
     const loraArgs = normalizedLoras.length
       ? [...normalizedLoras.flatMap((adapter) => ["--lora", adapter.path]), "--lora-init-without-apply"]
       : [];
+    // Long-context Vulkan needs short watchdog-safe submissions, flash
+    // attention, and a compact KV cache. A real 100,051-token Qwen3.5 prompt
+    // completed on this host with this profile; the former 512/f16/auto setup
+    // reset the AMD device at 13,824 tokens despite passing a tiny smoke test.
+    const longContextArgs = ctx > 32_768 && ngl > 0
+      ? ["-b", "256", "-ub", "256", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1"]
+      : ["-b", "512", "-ub", "512"];
     const proc = spawn(LLAMA_SERVER,
-      ["-m", mi.path, "-ngl", String(ngl), "--host", "127.0.0.1", "--port", String(SERVE_PORT), "-c", ctxArg, "--jinja", "-b", "512", "-ub", "512", ...loraArgs],
+      ["-m", mi.path, "-ngl", String(ngl), "--host", "127.0.0.1", "--port", String(SERVE_PORT), "-c", ctxArg, "--jinja", ...longContextArgs, ...loraArgs],
       { env, stdio: logFd === undefined ? "ignore" : ["ignore", logFd, logFd] });
     if (logFd !== undefined) try { fs.closeSync(logFd); } catch {}
     srv.proc = proc; srv.model = model; srv.loras = normalizedLoras; srv.ctx = ctx;
@@ -474,7 +727,7 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
     return false;
   };
 
-  const configuredNgl = o.num_gpu == null ? 99 : o.num_gpu;
+  const configuredNgl = runtimeSettings.gpuLayers == null ? 99 : runtimeSettings.gpuLayers;
   // graceful degradation like Ollama: try full GPU, then partial offloads, then CPU —
   // so a big model still serves (just slower) when something else is holding VRAM.
   const ladder = (configuredNgl > 0 ? [configuredNgl, 24, 12, 0] : [0])

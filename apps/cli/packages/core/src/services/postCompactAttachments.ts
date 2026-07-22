@@ -485,6 +485,7 @@ export function buildImageRestorationBlock(
  */
 const RESUME_TRAILER =
   'Resume the prior task using the summary above. Continue from the last in-flight step; do not acknowledge the summary, do not re-introduce, do not greet the user again.';
+export const POST_COMPACT_ACK = 'Got it. Thanks for the additional context!';
 
 /**
  * Strip the model's drafting scratchpad before the summary becomes the new
@@ -532,7 +533,135 @@ export function stripAnalysisBlock(rawSummary: string): string {
   return result.trim();
 }
 
-export function postProcessSummary(rawSummary: string): string {
+const MAX_WORKING_STATE_ROWS = 80;
+const MAX_WORKING_STATE_DETAIL_CHARS = 240;
+
+function singleLine(value: unknown): string {
+  return String(value ?? '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .trim();
+}
+
+function decodeWorkingStateText(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * Build a deterministic evidence appendix from actual history events.  This
+ * is intentionally not authored by the summary model: a stated intention or
+ * a confident assistant sentence can never become a verified file/test/tool
+ * claim merely because compaction occurred.
+ */
+export function buildVerifiedWorkingState(history: Content[]): string {
+  const rows: string[] = [];
+  const calls = new Map<string, { name: string; target: string }>();
+  // A previous deterministic appendix is trusted only in the synthetic
+  // summary+ack shape created by this module. Starting at the final opening
+  // tag excludes any earlier unclosed tag echoed by the summary model.
+  const firstText = history[0]?.parts?.find(
+    (part) => typeof part.text === 'string',
+  )?.text;
+  const hasSyntheticAck =
+    history[1]?.role === 'model' &&
+    history[1].parts?.some((part) => part.text === POST_COMPACT_ACK);
+  const appendixStart = hasSyntheticAck
+    ? (firstText?.lastIndexOf('<verified-working-state>') ?? -1)
+    : -1;
+  const priorAppendix =
+    appendixStart >= 0 ? firstText?.slice(appendixStart) : undefined;
+  const priorCurrentRequest = priorAppendix?.match(
+    /<current-request>([\s\S]*?)<\/current-request>/,
+  )?.[1];
+  let latestUserRequest = priorCurrentRequest
+    ? decodeWorkingStateText(priorCurrentRequest.trim())
+    : '';
+  for (const [contentIndex, content] of history.entries()) {
+    const parts = content.parts ?? [];
+    if (
+      content.role === 'user' &&
+      !(contentIndex === 0 && priorAppendix) &&
+      !parts.some((part) => part.functionResponse)
+    ) {
+      const text = parts
+        .find(
+          (part) =>
+            typeof part.text === 'string' &&
+            !/^\s*(?:\[research_controller\]|Research coverage gate rejected synthesis:)/i.test(
+              part.text,
+            ),
+        )
+        ?.text?.trim();
+      if (text && !text.startsWith('<verified-working-state>')) {
+        latestUserRequest = text.slice(0, 2_000);
+      }
+    }
+    for (const part of parts) {
+      const call = part.functionCall;
+      if (call) {
+        const args = call.args as Record<string, unknown> | undefined;
+        const target = singleLine(
+          args?.['file_path'] ?? args?.['path'] ?? args?.['command'] ?? '',
+        ).slice(0, MAX_WORKING_STATE_DETAIL_CHARS);
+        if (call.id)
+          calls.set(call.id, { name: call.name ?? 'unknown', target });
+      }
+      const response = part.functionResponse as
+        | { id?: string; name?: string; response?: Record<string, unknown> }
+        | undefined;
+      if (response) {
+        const failed =
+          !response.response ||
+          'error' in response.response ||
+          response.response['success'] === false;
+        const detail = singleLine(
+          response.response?.['error'] ??
+            response.response?.['output'] ??
+            response.response?.['result'] ??
+            '',
+        ).slice(0, MAX_WORKING_STATE_DETAIL_CHARS);
+        const call = response.id ? calls.get(response.id) : undefined;
+        // A request is not evidence. Record it only once an actual response
+        // exists, and include its target only after the permission/tool layer
+        // has allowed the operation to execute.
+        rows.push(
+          `- tool ${failed ? 'failed' : 'succeeded'}: ${escapeXml(response.name ?? call?.name ?? 'unknown')}${call?.target ? ` — ${escapeXml(call.target)}` : ''}${detail ? ` — ${escapeXml(detail)}` : ''}`,
+        );
+      }
+    }
+  }
+  const priorEvidence = priorAppendix?.match(
+    /<evidence>([\s\S]*?)<\/evidence>/,
+  )?.[1];
+  const priorRows =
+    priorEvidence?.split('\n').filter((line) => line.trim().startsWith('- ')) ??
+    [];
+  const evidence = [...new Set([...priorRows, ...rows])].slice(
+    -MAX_WORKING_STATE_ROWS,
+  );
+  return [
+    '<verified-working-state>',
+    '<current-request>',
+    escapeXml(latestUserRequest || '[not recoverable from transcript]'),
+    '</current-request>',
+    '<evidence>',
+    ...(evidence.length
+      ? evidence
+      : ['- no mechanically verified tool evidence recorded']),
+    '</evidence>',
+    '<completion-rule>Do not claim completion unless the evidence above records the required mutation and a fresh validation after it.</completion-rule>',
+    '</verified-working-state>',
+  ].join('\n');
+}
+
+export function postProcessSummary(
+  rawSummary: string,
+  history: Content[] = [],
+): string {
   const stripped = stripAnalysisBlock(rawSummary);
   // Defensive sentinel only. Callers gate on `isSummaryEmpty`, which now
   // checks the STRIPPED summary — so a response that strips to nothing is
@@ -541,7 +670,8 @@ export function postProcessSummary(rawSummary: string): string {
   // (a tiny `[Summary unavailable]` is smaller than the original, so the
   // guard wouldn't fire) — the upstream emptiness check is what prevents it.
   const body = stripped.length > 0 ? stripped : '[Summary unavailable]';
-  return `${body}\n\n${RESUME_TRAILER}`;
+  const verifiedState = buildVerifiedWorkingState(history);
+  return `${body}\n\n${verifiedState}\n\n${RESUME_TRAILER}`;
 }
 
 /**
@@ -825,12 +955,10 @@ export async function composePostCompactHistory(
   //                       model→model adjacency that would otherwise
   //                       arise from a separate appended entry.
   const trailingFc = trailingFunctionCallContent(history);
-  const ackParts: Part[] = [
-    { text: 'Got it. Thanks for the additional context!' },
-  ];
+  const ackParts: Part[] = [{ text: POST_COMPACT_ACK }];
 
   const out: Content[] = [
-    { role: 'user', parts: [{ text: postProcessSummary(summary) }] },
+    { role: 'user', parts: [{ text: postProcessSummary(summary, history) }] },
   ];
 
   if (postAckParts.length > 0) {

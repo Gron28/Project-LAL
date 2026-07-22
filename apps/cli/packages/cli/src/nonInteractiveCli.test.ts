@@ -975,6 +975,37 @@ describe('runNonInteractive', () => {
     expect(finalize).not.toHaveBeenCalled();
   });
 
+  it('does not block a completed one-shot answer on background memory maintenance', async () => {
+    setupMetricsMock();
+    mockGeminiClient.sendMessageStream.mockReturnValue(
+      createStreamFromEvents([
+        { type: GeminiEventType.Content, value: 'Done' },
+        {
+          type: GeminiEventType.Finished,
+          value: { reason: undefined, usageMetadata: { totalTokenCount: 1 } },
+        },
+      ]),
+    );
+    mockGeminiClient.consumePendingMemoryTaskPromises.mockReturnValue([
+      new Promise<number>(() => undefined),
+    ]);
+
+    const result = await Promise.race([
+      runNonInteractive(
+        mockConfig,
+        mockSettings,
+        'Test input',
+        'prompt-background-memory',
+      ),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('background memory blocked exit')), 100),
+      ),
+    ]);
+
+    expect(result).toBe(0);
+    expect(processStdoutSpy).toHaveBeenCalledWith('Done\n');
+  });
+
   it('should handle a single tool call and respond', async () => {
     setupMetricsMock();
     const toolCallEvent: ServerGeminiStreamEvent = {

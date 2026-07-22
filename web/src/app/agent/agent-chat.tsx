@@ -8,6 +8,7 @@ import MarkdownView from "@/components/markdown-view";
 import { StatsGlance, type Usage } from "@/components/agent/stats-hud";
 import { SignalTrace } from "@/components/ui/signal-trace";
 import CertaintyWave, { type TokenAlternatives } from "@/components/agent/certainty-wave";
+import { useModelSettingsSync } from "./use-model-settings-sync";
 
 type Msg = { role: "user" | "assistant"; content: string; thinking?: string; status?: string; images?: string[]; visionModel?: string; truncated?: boolean; wave?: number[]; alternatives?: TokenAlternatives[] };
 type Convo = { id: string; title: string; model: string; updatedAt: string };
@@ -315,6 +316,7 @@ export default function AgentChat() {
   const [listOpen, setListOpen] = useState(false);
 
   const [think, setThink] = useState(true);
+  useModelSettingsSync({ model, adoptDefault: !convoId, setModel, setModels, setThinking: setThink });
   const [usage, setUsage] = useState<Usage>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [webMode, setWebMode] = useState(false);

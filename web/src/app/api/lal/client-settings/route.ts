@@ -1,10 +1,7 @@
-import { publicModels, servingModel, servingRuntimeStatus } from "@/lib/lab";
+import { publicModels, servingModel, servingRuntimeStatus, contextProfileForModel, modelRuntimeSettings, modelSettingsRevision, readSettings } from "@/lib/lab";
 import { cliAuthorized, cliDeviceCustomHeaders, recordCliAccess, unauthorizedResponse } from "@/lib/lal-cli";
 
 export const dynamic = "force-dynamic";
-
-const LOCAL_CONTEXT_WINDOW_SIZE = 32768;
-const OLLAMA_CONTEXT_WINDOW_SIZE = 16384;
 
 // Cheap, local-only heuristics so the CLI's model picker can show
 // "name · family/role · loaded · context request" without a second round trip.
@@ -50,9 +47,11 @@ export function GET(request: Request) {
     .map((model) => {
       const family = inferFamily(model.name);
       const role = inferRole(model.name);
-      const loaded = model.name === resident;
+      const loaded = runtime.alive && model.name === resident;
       const activeContext = loaded ? runtime.context : null;
-      const contextWindowSize = model.source === "ollama" ? OLLAMA_CONTEXT_WINDOW_SIZE : LOCAL_CONTEXT_WINDOW_SIZE;
+      const contextProfile = contextProfileForModel(model.name);
+      const runtimeSettings = modelRuntimeSettings(model.name);
+      const contextWindowSize = contextProfile.activeTokens ?? contextProfile.requestedTokens;
       const contextLabel = activeContext
         ? `${Math.round(activeContext / 1024)}k active context`
         : `requests ${Math.round(contextWindowSize / 1024)}k context`;
@@ -77,22 +76,29 @@ export function GET(request: Request) {
           timeout: 600000,
           maxRetries: 1,
           contextWindowSize,
+          contextProfile,
           ...(Object.keys(customHeaders).length ? { customHeaders } : {}),
-          // Deliberately NO max_tokens here: a managed value is treated by the
-          // CLI as an explicit user ceiling (min() with everything else wins),
-          // which silently capped every reply at 8K and defeated /tokens. The
-          // CLI's own window clamp (clampOutputTokensToWindow) already sizes
-          // each request to the room left in the context window — that is the
-          // honest budget for a locally-served model.
-          samplingParams: { temperature: 0.2 },
+          // The owner-selected per-model ceiling is shared by Web and CLI.
+          // Session `/tokens` choices can still be lower; the gateway also
+          // enforces this durable upper bound on every request.
+          samplingParams: {
+            temperature: runtimeSettings.temperature,
+            top_p: runtimeSettings.topP,
+            top_k: runtimeSettings.topK,
+            repetition_penalty: runtimeSettings.repeatPenalty,
+            ...(runtimeSettings.maxOutputTokens > 0 ? { max_tokens: runtimeSettings.maxOutputTokens } : {}),
+          },
+          reasoning: runtimeSettings.thinking ? {} : false,
           // Native /rc turns mirror visible model reasoning into the owner's
           // local run ledger. This is model-provided reasoning output, not a
           // claim to expose hidden provider internals.
-          extra_body: { chat_template_kwargs: { enable_thinking: true } },
+          extra_body: { chat_template_kwargs: { enable_thinking: runtimeSettings.thinking } },
         },
       };
     });
-  const preferred = models.find((model) => model.id === "qwen35-9b")?.id ?? models[0]?.id ?? "";
+  const savedDefault = readSettings().model;
+  const preferred = models.find((model) => model.id === savedDefault)?.id ?? models[0]?.id ?? "";
+  const revision = modelSettingsRevision();
   return Response.json(
     {
       $version: 4,
@@ -158,6 +164,6 @@ export function GET(request: Request) {
       model: { name: preferred, maxSessionTurns: 120 },
       modelProviders: { openai: models },
     },
-    { headers: { "content-type": "application/json; charset=utf-8" } },
+    { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", etag: `"${revision}"`, "x-lal-settings-revision": revision } },
   );
 }

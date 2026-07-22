@@ -27,6 +27,14 @@ export type AcquisitionFetch = (input: string, init?: RequestInit) => Promise<Re
 const SHA256 = /^[a-f0-9]{64}$/i;
 const identifier = /^[a-z0-9][a-z0-9._:/@-]{0,255}$/i;
 function digest(value: string | Buffer): string { return crypto.createHash("sha256").update(value).digest("hex"); }
+async function digestFile(file: string, cancelled: () => boolean): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  for await (const chunk of fs.createReadStream(file)) {
+    if (cancelled()) throw new Error("model import verification cancelled");
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
+}
 function canonical(value: unknown): string { if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`; if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([a], [c]) => a.localeCompare(c)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`; return JSON.stringify(value); }
 function safeName(value: string, subject: string): string { if (!identifier.test(value) || value.includes("..")) throw new Error(`${subject} must be a stable identifier`); return value; }
 function safeFile(file: ModelFile): ModelFile { if (!file.path || path.isAbsolute(file.path) || file.path.split(/[\\/]/).includes("..")) throw new Error("catalog file path must be relative and contained"); if (!Number.isSafeInteger(file.sizeBytes) || file.sizeBytes <= 0) throw new Error("catalog file size must be positive"); if (!SHA256.test(file.sha256)) throw new Error("catalog file digest must be sha256"); return { ...file, sha256: file.sha256.toLowerCase() }; }
@@ -101,7 +109,8 @@ export class VerifiedModelImportStore {
   append(id: string, chunk: Buffer): ImportRecord { const record = this.read(id); if (!record || !["planned", "partial"].includes(record.state)) throw new Error("import is not writable"); if (!Buffer.isBuffer(chunk) || !chunk.length) throw new Error("import chunk must be non-empty bytes"); if (record.receivedBytes + chunk.length > record.plan.file.sizeBytes) throw new Error("import exceeds planned size"); fs.appendFileSync(this.part(id), chunk, { mode: 0o600 }); record.receivedBytes += chunk.length; record.state = "partial"; record.updatedAt = this.now().toISOString(); this.write(record); return record; }
   requestCancel(id: string): ImportRecord { const record = this.read(id); if (!record || !["planned", "partial"].includes(record.state)) throw new Error("import is not cancellable"); record.state = "cancel_requested"; record.updatedAt = this.now().toISOString(); this.write(record); return record; }
   settleCancel(id: string): ImportRecord { const record = this.read(id); if (!record || record.state !== "cancel_requested") throw new Error("cancellation was not requested"); try { fs.unlinkSync(this.part(id)); } catch (error: unknown) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } record.state = "cancelled"; record.updatedAt = this.now().toISOString(); this.write(record); return record; }
-  verify(id: string): ImportRecord { const record = this.read(id); if (!record || !["planned", "partial"].includes(record.state)) throw new Error("import is not verifiable"); const part = this.part(id); let actual: Buffer; try { actual = fs.readFileSync(part); } catch { record.state = "failed"; record.error = "staged bytes are missing"; record.updatedAt = this.now().toISOString(); this.write(record); return record; } if (actual.length !== record.plan.file.sizeBytes || digest(actual) !== record.plan.file.sha256) { record.state = "failed"; record.error = "staged bytes do not match planned size and sha256"; record.updatedAt = this.now().toISOString(); this.write(record); return record; } const artifact = path.join(this.artifacts, `sha256-${record.plan.file.sha256}`); fs.renameSync(part, artifact); record.state = "verified"; record.artifactPath = artifact; record.updatedAt = this.now().toISOString(); this.write(record); return record; }
+  discard(id: string, reason: string): ImportRecord | null { const record = this.read(id); if (!record || ["verified", "cancelled", "failed"].includes(record.state)) return record; try { fs.unlinkSync(this.part(id)); } catch (error: unknown) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } record.state = "failed"; record.error = reason; record.updatedAt = this.now().toISOString(); this.write(record); return record; }
+  async verify(id: string, cancelled: () => boolean = () => false): Promise<ImportRecord> { const record = this.read(id); if (!record || !["planned", "partial"].includes(record.state)) throw new Error("import is not verifiable"); const part = this.part(id); let size = -1, actualDigest = ""; try { size = fs.statSync(part).size; actualDigest = await digestFile(part, cancelled); } catch { if (cancelled()) { record.state = "cancel_requested"; record.updatedAt = this.now().toISOString(); this.write(record); return this.settleCancel(id); } record.state = "failed"; record.error = "staged bytes are missing or unreadable"; record.updatedAt = this.now().toISOString(); this.write(record); return record; } if (cancelled()) { record.state = "cancel_requested"; record.updatedAt = this.now().toISOString(); this.write(record); return this.settleCancel(id); } if (size !== record.plan.file.sizeBytes || actualDigest !== record.plan.file.sha256) { try { fs.unlinkSync(part); } catch (error: unknown) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } record.state = "failed"; record.error = "staged bytes do not match planned size and sha256"; record.updatedAt = this.now().toISOString(); this.write(record); return record; } const artifact = path.join(this.artifacts, `sha256-${record.plan.file.sha256}`); fs.renameSync(part, artifact); record.state = "verified"; record.artifactPath = artifact; record.updatedAt = this.now().toISOString(); this.write(record); return record; }
 
   /** Make an exact verified GGUF visible to existing chat/code/HIVE selectors.
    * It never replaces a user model; hard links avoid silently duplicating bytes. */
@@ -110,7 +119,10 @@ export class VerifiedModelImportStore {
     if (!record || record.state !== "verified" || !record.artifactPath) throw new Error("only a verified import can be activated");
     if (!/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(name)) throw new Error("model name must be a safe identifier");
     if (!record.plan.file.path.toLowerCase().endsWith(".gguf")) throw new Error("only GGUF imports can activate in the llama.cpp runtime");
-    const magic = fs.readFileSync(record.artifactPath).subarray(0, 4).toString("ascii");
+    const magicBuffer = Buffer.alloc(4), magicFd = fs.openSync(record.artifactPath, "r");
+    try { fs.readSync(magicFd, magicBuffer, 0, magicBuffer.length, 0); }
+    finally { fs.closeSync(magicFd); }
+    const magic = magicBuffer.toString("ascii");
     if (magic !== "GGUF") throw new Error("verified artifact is not a GGUF file");
     fs.mkdirSync(modelDirectory, { recursive: true, mode: 0o700 });
     const target = path.join(modelDirectory, `${name}-q4.gguf`);
@@ -129,7 +141,7 @@ export class VerifiedModelImportStore {
  * is checked between chunks before bytes can become an installed artifact. */
 export async function downloadHuggingFacePlan(input: {
   plan: ResolutionPlan; store: VerifiedModelImportStore; importId: string; availableDiskBytes: number;
-  fetchImpl?: AcquisitionFetch; cancelled?: () => boolean; onProgress?: (record: ImportRecord) => void;
+  fetchImpl?: AcquisitionFetch; cancelled?: () => boolean; onProgress?: (record: ImportRecord) => void; onVerifying?: () => void;
 }): Promise<ImportRecord> {
   const { plan, store, importId } = input;
   store.begin(importId, plan, input.availableDiskBytes);
@@ -143,5 +155,6 @@ export async function downloadHuggingFacePlan(input: {
     const record = store.append(importId, Buffer.from(next.value)); input.onProgress?.(record);
   }
   if (input.cancelled?.()) { store.requestCancel(importId); return store.settleCancel(importId); }
-  return store.verify(importId);
+  input.onVerifying?.();
+  return await store.verify(importId, input.cancelled);
 }

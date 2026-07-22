@@ -3618,7 +3618,7 @@ export class Config {
       // the preset budget — switching modes must not silently shrink it.
       { respectPins: true },
     );
-    this.setContextWindowOverride(preset.ctx);
+    if (preset.ctx !== undefined) this.setContextWindowOverride(preset.ctx);
     this.setThinkingEnabled(preset.think);
     this.setAppendSystemPrompt(preset.addendum || undefined);
   }

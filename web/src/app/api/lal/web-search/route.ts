@@ -39,5 +39,8 @@ export async function POST(request: Request) {
 
   const normalized = query.trim();
   const results = await webSearch(normalized);
+  if (/^\(web search (?:failed|appears blocked\/rate-limited)/i.test(results)) {
+    return Response.json({ error: results }, { status: 502 });
+  }
   return Response.json({ query: normalized, results });
 }

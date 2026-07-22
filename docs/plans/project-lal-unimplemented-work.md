@@ -1,12 +1,16 @@
 # Project-LAL unimplemented work
 
-Status: gap audit, 2026-07-15. This document records work described by the
+Status: gap audit, reconciled 2026-07-22. This document records work described by the
 current foundation roadmap and its subordinate CLI and repository plans that is
 not yet implemented, not yet proven end to end, or is currently blocked.
 
 The authoritative plan is `project-lal-foundation-roadmap.md`. The CLI product
 plan is a capability inventory, not permission to expand the product ahead of
 the foundation work.
+
+Completed items are removed from the gap list rather than left as ambiguous
+unchecked plans. The concise positive inventory is
+[`../status/project-lal-current-state.md`](../status/project-lal-current-state.md).
 
 ## 1. Foundation roadmap gaps
 
@@ -18,8 +22,10 @@ the foundation work.
   host-observed model lifecycle/confidence/error events, approvals, rounds, and
   named tool progress. Default interactive native turns still need a managed
   lifecycle decision before they can claim automatic cross-device parity.
-- Make the CLI's model catalog, actual context window, loaded state, and GPU
-  status come from host runtime data rather than inherited/static lookups.
+- Finish truthful CLI runtime coverage beyond the implemented host model catalog,
+  requested/verified/active context, loaded state, GPU state, and synchronized
+  sampling/thinking profile. Queue ownership and all failure transitions still
+  need equivalent native and attach rendering.
 - Make the full storage system bounded: the complete current-root inventory is
   documented, but conversations, HIVE artifacts, downloaded models, caches,
   datasets, screenshots, and training output still need registry-backed quotas,
@@ -72,20 +78,21 @@ the foundation work.
 The CLI product plan's P0 battery is not complete end to end. The following
 areas remain absent, partial, or unproven:
 
-- **Chat:** native LAL event streaming, default-visible truthful telemetry,
-  thinking controls, model/context/loaded-state picker, server conversation
-  resume, reconnect and cross-device idle watching, stop-all, and the shared
-  conversation handoff contract.
-- **Chat P1/P2:** confidence/J-space rendering, sampling and system-prompt
-  settings, edit/resend and truncation continuation, grounding toggles, image
+- **Chat:** finish native/attach event parity and default-visible telemetry for
+  queue ownership and every error transition; add server-conversation resume,
+  reconnect and cross-device idle watching, stop-all, and the shared
+  conversation handoff contract. Model/context/runtime telemetry and persisted
+  thinking/sampling controls now exist.
+- **Chat P1/P2:** edit/resend and truncation continuation, grounding toggles, image
   routing, chat-to-code handoff, artifact previews, and crash guidance.
-- **Code:** full LAL event rendering, typed runtime-state lines, tool approval
-  blocks with complete arguments, live diffs, LAL mode presets, bounded
-  auto-continue, rewind/edit, sub-agent grouping, local Git commands, preview
-  URLs, and session diagnosis/report cards.
-- **Research:** a complete CLI phase/debate/convergence renderer, durable
-  artifact display, retrospective/ground view, and the open-inquiry confidence
-  protocol.
+- **Code:** complete typed LAL runtime/error lines, approval details, rewind/edit,
+  sub-agent grouping, local Git commands, preview URLs, and session
+  diagnosis/report cards. LAL mode presets, live mutation display, and bounded
+  non-progress recovery now exist but still need cross-device acceptance.
+- **Research:** the evidence-gated search/fetch controller and live tool display
+  now work; remaining work is a richer phase/debate/convergence renderer,
+  durable research artifact display, retrospective/ground view, source-quality
+  grading, and the open-inquiry confidence protocol.
 - **Hive:** mission creation/listing, attach/replay controls, operator steering,
   node detail, retry/override, approvals, plan/workspace/evidence/audit panes,
   live vitals, role management, and readiness reporting.
@@ -94,9 +101,11 @@ areas remain absent, partial, or unproven:
   remote-project mission.
 - **Lab:** CLI forms and telemetry for training, dataset management, benchmark
   execution/leaderboards, experiment history, and Lens/visual handoff links.
-- **Library/status:** full model/document/folder/run management, diagnosis and
-  report cards, complete dashboard stream, resident-model unload, and all
-  device/session management flows.
+- **Library/status:** model scanning, verified acquisition, default/resident
+  selection, per-model settings, and web/CLI synchronization now work. Remaining
+  work is full document/folder/run management, diagnosis/report cards, complete
+  dashboard streaming, explicit resident-model unload UX, storage quotas, and
+  all device/session management flows.
 
 ## 3. Hardening and distribution gaps
 

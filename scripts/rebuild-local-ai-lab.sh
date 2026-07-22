@@ -4,7 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/.." && pwd)"
 APP="$ROOT/web"
 BACKUP="$APP/.next.last-good"
-FAILED="$APP/.next.failed"
+CANDIDATE="$APP/.next.candidate-$$"
+FAILED="$APP/.next.failed-$(date +%Y%m%d-%H%M%S)"
+TSCONFIG_BACKUP="$APP/.tsconfig.before-candidate-$$.json"
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/rebuild-local-ai-lab-${UID}.lock"
 PORT="${PORT:-8770}"
 SERVICE="${PROJECT_LAL_SERVICE:-project-lal.service}"
@@ -14,6 +16,13 @@ if ! flock -n 9; then
   echo "Local AI Lab is already being rebuilt."
   exit 1
 fi
+
+restore_tsconfig() {
+  if [ -f "$TSCONFIG_BACKUP" ]; then
+    mv "$TSCONFIG_BACKUP" "$APP/tsconfig.json"
+  fi
+}
+trap restore_tsconfig EXIT
 
 cd "$APP"
 
@@ -43,30 +52,36 @@ if pgrep -f 'python[0-9.]* .*finetune' >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "==> Local AI Lab: preserving the last working production build"
-rm -rf "$BACKUP" "$FAILED"
-if [ -d .next ]; then
-  cp -a .next "$BACKUP"
-fi
-
-echo "==> Local AI Lab: building current code"
-if ! npm run build; then
-  echo "==> Build failed; restoring the previous production build."
-  if [ -d "$BACKUP" ]; then
-    mv .next "$FAILED" 2>/dev/null || true
-    mv "$BACKUP" .next
-  fi
+echo "==> Local AI Lab: building an isolated candidate"
+# Never write chunks into the directory the live Next process is serving. That
+# race produced valid HTML pointing at half-replaced CSS/JS assets and made the
+# whole app appear broken until a manual restart.
+cp tsconfig.json "$TSCONFIG_BACKUP"
+if ! NEXT_DIST_DIR="$(basename "$CANDIDATE")" npm run build; then
+  restore_tsconfig
+  echo "==> Candidate build failed; the live production build was not touched."
+  rm -rf "$CANDIDATE"
   exit 1
 fi
+restore_tsconfig
 
-rm -rf "$BACKUP" "$FAILED"
-
-echo "==> Local AI Lab: activating the successful build"
-systemctl --user restart "$SERVICE"
+echo "==> Local AI Lab: atomically activating the successful candidate"
+systemctl --user stop "$SERVICE"
+rm -rf "$BACKUP"
+if [ -d .next ]; then mv .next "$BACKUP"; fi
+mv "$CANDIDATE" .next
+if ! systemctl --user start "$SERVICE"; then
+  echo "==> Candidate could not start; restoring the previous build."
+  mv .next "$FAILED"
+  if [ -d "$BACKUP" ]; then mv "$BACKUP" .next; fi
+  systemctl --user start "$SERVICE" || true
+  exit 1
+fi
 
 for _ in $(seq 1 60); do
   if curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/"; then
     echo "==> Local AI Lab is healthy: http://localhost:${PORT}"
+    rm -rf "$BACKUP"
     if [ "${OPEN_BROWSER:-0}" = "1" ]; then
       xdg-open "http://localhost:${PORT}/code" >/dev/null 2>&1 || true
     fi
@@ -77,4 +92,11 @@ done
 
 echo "Local AI Lab did not become healthy within 60 seconds."
 systemctl --user --no-pager --full status "$SERVICE"
+systemctl --user stop "$SERVICE" || true
+mv .next "$FAILED"
+if [ -d "$BACKUP" ]; then
+  mv "$BACKUP" .next
+  systemctl --user start "$SERVICE" || true
+  echo "Previous production build restored; failed candidate retained at $FAILED"
+fi
 exit 1

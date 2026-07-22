@@ -4,6 +4,67 @@
 
 export const PROTOCOL_VERSION = 1;
 
+export type ContextVerificationStatus =
+  | "unknown"
+  | "planned"
+  | "probing"
+  | "verified"
+  | "degraded"
+  | "failed";
+
+/**
+ * One context-window truth shared by the host, browser, and terminal.  The
+ * model limit is metadata; requested is policy; active is what the backend
+ * actually allocated.  Consumers must never present one as another.
+ */
+export type ContextProfile = {
+  model: string;
+  backend: "llama.cpp" | "ollama";
+  modelMaxTokens: number | null;
+  requestedTokens: number;
+  activeTokens: number | null;
+  verifiedTokens: number | null;
+  verification: ContextVerificationStatus;
+  source: "gguf" | "ollama" | "cache" | "runtime" | "fallback";
+  gpuOffload: string | null;
+  fingerprint: string;
+  checkedAt: string | null;
+  reason?: string;
+};
+
+/** Owner-selected defaults for one model, shared by every LAL surface. */
+export type ModelRuntimeSettings = {
+  contextTokens: number;
+  maxOutputTokens: number;
+  gpuLayers: number | null;
+  temperature: number;
+  topP: number;
+  topK: number;
+  repeatPenalty: number;
+  thinking: boolean;
+  updatedAt: string | null;
+};
+
+export type WorkingStateEvidence = {
+  kind: "file" | "tool" | "test" | "research" | "error";
+  ref: string;
+  summary: string;
+};
+
+/** Durable state which must survive transcript compaction. */
+export type WorkingState = {
+  revision: number;
+  objective: string;
+  latestUserRequest: string;
+  constraints: string[];
+  decisions: string[];
+  completed: string[];
+  pending: string[];
+  blockers: string[];
+  evidence: WorkingStateEvidence[];
+  updatedAt: string;
+};
+
 export type ProtocolHandshakeEvent = { k: "protocol"; v: typeof PROTOCOL_VERSION };
 
 export type ToolLoopEvent =
@@ -24,7 +85,8 @@ export type ToolLoopEvent =
   | { k: "usage"; v: { promptTokens: number; completionTokens: number; totalTokens: number; tokPerSec: number | null; ctx: number; conf?: { avg: number; min: number; low: number } | null } }
   | { k: "truncated"; v: { round: number } }
   | { k: "context_limit"; v: { estimatedTokens: number; reserveTokens: number; ctx: number } }
-  | { k: "context_compacted"; v: { trimmed: number } };
+  | { k: "context_compacted"; v: { trimmed: number } }
+  | { k: "context_profile"; v: ContextProfile };
 
 export type Role = { name: string; lens: string; bias?: string };
 
@@ -59,8 +121,8 @@ export type HiveWorkflowEvent =
 export type HiveTaggedToolLoopEvent = ToolLoopEvent & { workflowId: string; nodeId: string; role: string; modelVersion?: string };
 
 export type AdditionalRouteEvent =
-  | { k: "model_loading"; v: { model: string; ctx: number } }
-  | { k: "model_ready"; v: { model: string; ctx: number; backend?: string } }
+  | { k: "model_loading"; v: { model: string; ctx: number; contextProfile?: ContextProfile } }
+  | { k: "model_ready"; v: { model: string; ctx: number; backend?: string; contextProfile?: ContextProfile; gpuOffload?: string; runtimeProfile?: string } }
   | { k: "token_confidence"; v: { token?: string; p: number; alts?: [string, number][] } }
   | { k: "model"; v: string }
   | { k: "project"; v: { root: string; instructionFiles?: string[] } }
@@ -81,7 +143,7 @@ export const KNOWN_EVENT_KINDS = new Set<string>([
   "protocol", "run", "turn", "status", "approval_needed", "approval_result",
   "text", "think", "tool_request", "tool_progress", "tool_result", "round", "max_rounds",
   "act_nudge", "model_swap", "think_recovered", "forced_verify", "mutation_required_nudge",
-  "stall_nudge", "research_depth_nudge", "usage", "truncated", "context_limit", "context_compacted",
+  "stall_nudge", "research_depth_nudge", "usage", "truncated", "context_limit", "context_compacted", "context_profile",
   "phase", "roles", "role_progress", "debate_turn", "convergence", "artifact", "inner", "error",
   "workflow_routing", "stage_trace", "workflow_started", "workflow_node", "workflow_finished",
   "model_loading", "model_ready", "token_confidence", "model", "project", "done", "query", "transcript",

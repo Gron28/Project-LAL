@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { t, ta, getCurrentLanguage } from '../../i18n/index.js';
+import { terminalAnimationsEnabled } from '../utils/terminal-renderer.js';
 
 export const WITTY_LOADING_PHRASES: string[] = ["I'm Feeling Lucky"];
 
@@ -22,6 +23,7 @@ export const usePhraseCycler = (
   isWaiting: boolean,
   customPhrases?: string[],
 ) => {
+  const animationsEnabled = terminalAnimationsEnabled();
   // Get phrases from translations if available
   const currentLanguage = getCurrentLanguage();
   const loadingPhrases = useMemo(() => {
@@ -47,7 +49,7 @@ export const usePhraseCycler = (
         clearInterval(phraseIntervalRef.current);
         phraseIntervalRef.current = null;
       }
-    } else if (isActive) {
+    } else if (isActive && animationsEnabled) {
       if (phraseIntervalRef.current) {
         clearInterval(phraseIntervalRef.current);
       }
@@ -78,7 +80,7 @@ export const usePhraseCycler = (
         phraseIntervalRef.current = null;
       }
     };
-  }, [isActive, isWaiting, loadingPhrases]);
+  }, [animationsEnabled, isActive, isWaiting, loadingPhrases]);
 
   return currentLoadingPhrase;
 };

@@ -974,7 +974,9 @@ describe('ChatCompressionService', () => {
     expect(result.info.compressionStatus).toBe(CompressionStatus.COMPRESSED);
     expect(result.info.originalTokenCount).toBe(5_000);
     expect(result.info.newTokenCount).toBeGreaterThan(1_000);
-    expect(result.info.newTokenCount).toBeLessThan(1_100);
+    // The deterministic post-compact working-state appendix retains the latest
+    // user request and verified tool evidence in addition to the model summary.
+    expect(result.info.newTokenCount).toBeLessThan(1_800);
     expect(result.newHistory).not.toBeNull();
     expect(result.newHistory![0].parts![0].text).toContain('Summary');
     expect(debug).toHaveBeenCalledWith(

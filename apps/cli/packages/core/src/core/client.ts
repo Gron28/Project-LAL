@@ -59,6 +59,22 @@ import {
 // Services
 import { LoopDetectionService } from '../services/loopDetectionService.js';
 import { CommitAttributionService } from '../services/commitAttribution.js';
+import {
+  createResearchTrace,
+  isExplicitWebResearchRequest,
+  isResearchSynthesis,
+  recordResearchCall,
+  recordResearchResults,
+  routeResearchToolArgs,
+  routeResearchToolCall,
+  researchContinuation,
+  researchCoverage,
+  researchSynthesisContinuation,
+  RESEARCH_CONTROLLER_INSTRUCTION,
+  RESEARCH_MAX_NUDGES,
+  RESEARCH_MAX_SYNTHESIS_NUDGES,
+  type ResearchTrace,
+} from '../services/research-controller.js';
 
 // Tools
 import type { RelevantAutoMemoryPromptResult } from '../memory/manager.js';
@@ -219,6 +235,16 @@ export class GeminiClient {
   private cachedGitStatus: string | null | undefined;
   private readonly surfacedRelevantAutoMemoryPaths = new Set<string>();
   private shutdownRequested = false;
+  private researchTrace: ResearchTrace | undefined;
+
+  /**
+   * True while the current user request is an explicit external-research
+   * request. Read-only web tools use this to avoid an impossible confirmation
+   * prompt in headless mode after the user has already asked for web research.
+   */
+  isResearchModeActive(): boolean {
+    return this.researchTrace?.enabled === true;
+  }
 
   private readonly loopDetector: LoopDetectionService;
   private lastPromptId: string | undefined = undefined;
@@ -1567,6 +1593,18 @@ export class GeminiClient {
       return;
     }
 
+    // One-shot/SDK turns have no durable UI lifetime in which maintenance can
+    // remain genuinely background work. Starting extract + dream agents here
+    // delayed a completed `lal -p` answer by roughly a minute and left host
+    // inference running after the client exited. Interactive sessions retain
+    // the existing background-memory behavior.
+    if (!this.config.isInteractive()) {
+      debugLogger.debug(
+        'Skipping background memory tasks: non-interactive session.',
+      );
+      return;
+    }
+
     // autoSkill counts tool calls and can trigger on both UserQuery and
     // ToolResult turns so the threshold can fire mid-session.
     if (
@@ -1821,6 +1859,15 @@ export class GeminiClient {
     turns: number = MAX_TURNS,
   ): AsyncGenerator<ServerGeminiStreamEvent, Turn> {
     const messageType = options?.type ?? SendMessageType.UserQuery;
+    if (
+      messageType === SendMessageType.ToolResult &&
+      this.researchTrace?.promptId === prompt_id
+    ) {
+      recordResearchResults(
+        this.researchTrace,
+        Array.isArray(request) ? request : [request],
+      );
+    }
     let strippedRetryEntries: Content[] = [];
     // Snapshot of GeminiChat's user-content push counter, taken right after the
     // strip. The Retry's re-submitted content is the first thing the send
@@ -1951,6 +1998,20 @@ export class GeminiClient {
       messageType === SendMessageType.Cron ||
       messageType === SendMessageType.Notification ||
       messageType === SendMessageType.Teammate;
+    if (messageType === SendMessageType.UserQuery) {
+      const promptText = partToString(request);
+      const activeCodeMode = (
+        this.config as Config & { getActiveCodeMode?: () => string | undefined }
+      ).getActiveCodeMode?.();
+      const enabled =
+        activeCodeMode === 'deep-research' ||
+        isExplicitWebResearchRequest(promptText);
+      this.researchTrace = createResearchTrace(prompt_id, enabled);
+      if (enabled) {
+        const requestArray = Array.isArray(request) ? request : [request];
+        request = [...requestArray, { text: RESEARCH_CONTROLLER_INSTRUCTION }];
+      }
+    }
     if (isTopLevelInteraction) {
       this.loopDetector.reset(prompt_id);
       this.lastPromptId = prompt_id;
@@ -2397,6 +2458,7 @@ export class GeminiClient {
           : null;
 
       const resultStream = turn.run(model, requestToSend, signal);
+      let visibleResponseText = '';
       let didUpdateIdeContextState = false;
       // Loop-recovery instruction captured mid-stream; the recovery send is
       // deferred until after the stream is closed (see the two guard blocks
@@ -2404,8 +2466,39 @@ export class GeminiClient {
       let pendingLoopRecovery: string | null = null;
       try {
         for await (const event of resultStream) {
+          if (
+            event.type === GeminiEventType.ToolCallRequest &&
+            this.researchTrace?.promptId === prompt_id
+          ) {
+            const originalName = event.value.name;
+            event.value.name = routeResearchToolCall(
+              this.researchTrace,
+              originalName,
+              event.value.args,
+            );
+            event.value.args = routeResearchToolArgs(
+              originalName,
+              event.value.name,
+              event.value.args,
+            );
+            if (event.value.name !== originalName) {
+              yield {
+                type: GeminiEventType.HookSystemMessage,
+                value: `Research controller corrected ${originalName} to ${event.value.name} so the intended external research action runs directly and visibly without a shell wrapper.`,
+              };
+            }
+            recordResearchCall(
+              this.researchTrace,
+              event.value.callId,
+              event.value.name,
+              event.value.args,
+            );
+          }
           if (messageDisplay && event.type === GeminiEventType.Content) {
             messageDisplay.addChunk(event.value);
+          }
+          if (event.type === GeminiEventType.Content) {
+            visibleResponseText += event.value;
           }
           if (shouldUpdateIdeContextState && !didUpdateIdeContextState) {
             this.lastSentIdeContext = nextIdeContext;
@@ -2608,6 +2701,78 @@ export class GeminiClient {
 
       // Track API completion time for thinking block idle cleanup
       this.lastApiCompletionTimestamp = Date.now();
+
+      // A deep-research answer without observable search/fetch breadth is an
+      // unsupported completion claim. Continue the same prompt (and preserve
+      // its trace) until the deterministic successful-result floor passes.
+      const researchTrace =
+        this.researchTrace?.promptId === prompt_id
+          ? this.researchTrace
+          : undefined;
+      if (
+        researchTrace?.enabled &&
+        !turn.pendingToolCalls.length &&
+        signal &&
+        !signal.aborted
+      ) {
+        const coverage = researchCoverage(researchTrace);
+        if (!coverage.passed) {
+          const continuation = researchContinuation(researchTrace);
+          if (researchTrace.nudges < RESEARCH_MAX_NUDGES && boundedTurns > 1) {
+            researchTrace.nudges++;
+            yield {
+              type: GeminiEventType.HookSystemMessage,
+              value: continuation,
+            };
+            yield { type: GeminiEventType.Retry, isContinuation: true };
+            const researchTurn = yield* this.sendMessageStream(
+              [{ text: continuation }],
+              signal,
+              prompt_id,
+              { type: SendMessageType.Hook },
+              boundedTurns - 1,
+            );
+            normalCompletion = true;
+            return researchTurn;
+          }
+          yield {
+            type: GeminiEventType.HookSystemMessage,
+            value: `Research incomplete after ${researchTrace.nudges} continuation attempts: ${coverage.queryCount} successful distinct searches and ${coverage.sourceCount} successfully opened sources (${coverage.attemptedQueryCount} searches and ${coverage.attemptedSourceCount} fetches attempted). Any synthesis shown above is unverified; inspect the failed calls or retry when web access is available.`,
+          };
+        } else if (!isResearchSynthesis(visibleResponseText)) {
+          const continuation = researchSynthesisContinuation(researchTrace);
+          if (
+            researchTrace.synthesisNudges < RESEARCH_MAX_SYNTHESIS_NUDGES &&
+            boundedTurns > 1
+          ) {
+            researchTrace.synthesisNudges++;
+            yield {
+              type: GeminiEventType.HookSystemMessage,
+              value: continuation,
+            };
+            yield { type: GeminiEventType.Retry, isContinuation: true };
+            const synthesisTurn = yield* this.sendMessageStream(
+              [{ text: continuation }],
+              signal,
+              prompt_id,
+              { type: SendMessageType.Hook },
+              boundedTurns - 1,
+            );
+            normalCompletion = true;
+            return synthesisTurn;
+          }
+          yield {
+            type: GeminiEventType.HookSystemMessage,
+            value: `Research evidence passed the coverage floor, but no substantive evidence-linked final synthesis was produced after ${researchTrace.synthesisNudges} continuation attempts. The run is incomplete; do not treat an empty or citation-free result as researched output.`,
+          };
+        } else if (!researchTrace.announcedPass) {
+          researchTrace.announcedPass = true;
+          yield {
+            type: GeminiEventType.HookSystemMessage,
+            value: `Research coverage and synthesis gates passed: ${coverage.queryCount} successful distinct searches, ${coverage.sourceCount} successfully opened sources, and a substantive evidence-linked final answer.`,
+          };
+        }
+      }
 
       // Fire Stop hook through MessageBus (only if hooks are enabled and registered)
       // This must be done before any early returns to ensure hooks are always triggered

@@ -3060,21 +3060,29 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
               subagentRawText,
               terminateMode,
             );
+            const emptyGoalResult =
+              terminateMode === AgentTerminateMode.GOAL && !modelVisibleText;
             const finalText =
               appendStopHookBlockingCapWarning(
-                terminateMode === AgentTerminateMode.GOAL
-                  ? modelVisibleText ||
-                      '(subagent produced no model-visible output)'
+                emptyGoalResult
+                  ? 'Subagent exited without a model-visible result. Any workspace mutations are partial and unreviewed; inspect the diff and validate it before continuing.'
                   : modelVisibleText,
                 stopHookWarning,
               ) + wtSuffix;
             const completionStats = getCompletionStats();
-            if (terminateMode === AgentTerminateMode.GOAL) {
+            if (terminateMode === AgentTerminateMode.GOAL && !emptyGoalResult) {
               registry.complete(hookOpts.agentId, finalText, completionStats);
               patchAgentMeta(metaPath, {
                 status: 'completed',
                 lastUpdatedAt: new Date().toISOString(),
                 lastError: undefined,
+              });
+            } else if (emptyGoalResult) {
+              registry.fail(hookOpts.agentId, finalText, completionStats);
+              patchAgentMeta(metaPath, {
+                status: 'failed',
+                lastUpdatedAt: new Date().toISOString(),
+                lastError: finalText,
               });
             } else if (
               terminateMode === AgentTerminateMode.CANCELLED ||
@@ -3535,10 +3543,17 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
             returnDisplay: this.currentDisplay!,
           };
         }
-        const visibleFinalText =
-          finalText || '(subagent produced no model-visible output)';
+        if (!finalText) {
+          const message =
+            'Subagent exited without a model-visible result. Any workspace mutations are partial and unreviewed; inspect the diff and validate it before continuing.';
+          return {
+            llmContent: [{ text: message + wtSuffix }],
+            returnDisplay: this.currentDisplay!,
+            error: { message },
+          };
+        }
         return {
-          llmContent: [{ text: visibleFinalText + wtSuffix }],
+          llmContent: [{ text: finalText + wtSuffix }],
           returnDisplay: this.currentDisplay!,
         };
       } finally {

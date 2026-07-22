@@ -41,6 +41,7 @@ import {
   preResolveHomeEnvOverrides,
 } from './config/settings.js';
 import { SettingsWatcher } from './config/settingsWatcher.js';
+import { startManagedSettingsSync } from './lal/managed-settings-sync.js';
 import { registerMcpHotReload } from './config/hot-reload.js';
 import { LspConfigWatcher } from './config/lsp-config-watcher.js';
 import { ExtensionFileWatcher } from './config/extension-file-watcher.js';
@@ -635,6 +636,26 @@ export async function main() {
       registerCleanup(disposeMcpHotReload);
     }
 
+    if (!isBareMode(argv.bare)) {
+      const managedSettingsSync = startManagedSettingsSync(config, settings);
+      if (config.isInteractive()) {
+        registerCleanup(managedSettingsSync);
+      } else {
+        // A one-shot command needs one current snapshot, not a background poll
+        // mutating its live provider while an SSE/tool-call stream is open.
+        // Bound offline startup and retain the last persisted profile if the
+        // host cannot be reached.
+        await Promise.race([
+          managedSettingsSync.ready,
+          new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 2_000);
+            timer.unref?.();
+          }),
+        ]);
+        managedSettingsSync();
+      }
+    }
+
     registerLspHotReload(config, registerCleanup);
 
     const extensionRefreshState = new ExtensionRefreshState();
@@ -895,6 +916,7 @@ export async function main() {
         {
           postRenderConnectIde: deferIdeConnection,
           extensionRefreshState,
+          safeTerminal: argv.safeTerminal,
         },
       );
       // Clean up corruption env vars so subsequent relaunch children

@@ -31,6 +31,7 @@ import type { LineEnding } from '../services/fileSystemService.js';
 import { createPatchSmart, getDiffStat } from './diffOptions.js';
 import { checkPriorRead, StructuredToolError } from './priorReadEnforcement.js';
 import { ReadFileTool } from './read-file.js';
+import { WriteFileTool } from './write-file.js';
 import { createDebugLogger } from '../utils/debugLogger.js';
 import { ToolNames, ToolDisplayNames } from './tool-names.js';
 import { logFileOperation } from '../telemetry/loggers.js';
@@ -55,6 +56,25 @@ import {
 } from '../utils/editHelper.js';
 
 const debugLogger = createDebugLogger('EDIT_PRIOR_READ');
+
+/**
+ * Hard cap on model-authored `old_string.length + new_string.length`. This
+ * tool's contract requires `old_string` to uniquely anchor the change with
+ * several lines of context on each side — for a near-total rewrite, the only
+ * way to get a unique anchor spanning that much churn is to make `old_string`
+ * cover almost the whole file, so the model ends up generating the entire old
+ * file AND the entire new file in one call (roughly double the output of an
+ * equivalent write_file). On a small-context local model that reliably blows
+ * the provider's max_tokens mid-JSON, corrupting the call the same way an
+ * oversized write_file does (see MAX_MODEL_WRITE_CHARS in write-file.ts).
+ * Rejecting it up front steers the model toward several smaller sequential
+ * edits, each with a small, cheap-to-reproduce anchor, instead of one
+ * monolithic replacement.
+ *
+ * Does not apply to `modified_by_user` content — see the equivalent note on
+ * MAX_MODEL_WRITE_CHARS.
+ */
+export const MAX_MODEL_EDIT_CHARS = 8_000;
 
 export function applyReplacement(
   currentContent: string | null,
@@ -767,6 +787,7 @@ Expectation for required parameters:
 3. \`new_string\` MUST be the exact literal text to replace \`old_string\` with (also including all whitespace, indentation, newlines, and surrounding code etc.). Ensure the resulting code is correct and idiomatic.
 4. NEVER escape \`old_string\` or \`new_string\`, that would break the exact literal text requirement.
 **Important:** If ANY of the above are not satisfied, the tool will fail. CRITICAL for \`old_string\`: Must uniquely identify the single instance to change. Include at least 3 lines of context BEFORE and AFTER the target text, matching whitespace and indentation precisely. If this string matches multiple locations, or does not match exactly, the tool will fail.
+\`old_string\` + \`new_string\` combined are capped at ${MAX_MODEL_EDIT_CHARS} characters. For a change spanning most of a file, do NOT put the whole file into one \`old_string\`/\`new_string\` pair — split it into several smaller, sequential ${EditTool.Name} calls, each with a small, minimal unique anchor.
 **Multiple replacements:** Set \`replace_all\` to true when you want to replace every occurrence that matches \`old_string\`.`,
       Kind.Edit,
       {
@@ -825,6 +846,20 @@ Expectation for required parameters:
     );
     if (teamMemoryError) {
       return teamMemoryError;
+    }
+
+    const combinedLength =
+      (params.old_string ?? '').length + (params.new_string ?? '').length;
+    if (!params.modified_by_user && combinedLength > MAX_MODEL_EDIT_CHARS) {
+      return (
+        `Payload too large: old_string + new_string is ${combinedLength} ` +
+        `characters, which exceeds the ${MAX_MODEL_EDIT_CHARS}-character ` +
+        `limit for a single ${EditTool.Name} call. Do not try to rewrite ` +
+        `this much of the file in one call. Split the change into several ` +
+        `smaller ${EditTool.Name} calls, each with a small, minimal ` +
+        `unique anchor (a few lines), or use ${WriteFileTool.Name} for a ` +
+        `small skeleton and build the rest up incrementally.`
+      );
     }
 
     return null;

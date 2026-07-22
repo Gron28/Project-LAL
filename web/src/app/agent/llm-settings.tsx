@@ -5,13 +5,14 @@ import { X } from "lucide-react";
 import { getVoice, setVoice } from "./voice";
 
 type Options = {
-  num_ctx: number;
-  num_predict: number;
-  num_gpu: number | null;
+  contextTokens: number;
+  maxOutputTokens: number;
+  gpuLayers: number | null;
   temperature: number;
-  top_p: number;
-  top_k: number;
-  repeat_penalty: number;
+  topP: number;
+  topK: number;
+  repeatPenalty: number;
+  thinking: boolean;
 };
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -68,9 +69,9 @@ export default function LlmSettings({
     if (!open) return;
     fetch("/api/agent/models")
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (j?.options) setOpts(j.options); if (j?.system !== undefined) setSystem(j.system ?? ""); })
+      .then((j) => { if (j?.modelSettings?.[model]) { setOpts(j.modelSettings[model]); onThinkChange(!!j.modelSettings[model].thinking); } if (j?.system !== undefined) setSystem(j.system ?? ""); })
       .catch(() => {});
-  }, [open]);
+  }, [open, model, onThinkChange]);
 
   const saveSystem = (s: string) => {
     fetch("/api/agent/models", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ system: s }) })
@@ -80,9 +81,14 @@ export default function LlmSettings({
 
   const save = (patch: Partial<Options>) => {
     setOpts((o) => (o ? { ...o, ...patch } : o));
-    fetch("/api/agent/models", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ options: patch }) })
+    fetch("/api/agent/models", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ modelSettings: { model, values: patch } }) })
       .then(() => setSavedAt(Date.now()))
       .catch(() => {});
+  };
+
+  const saveThinking = (value: boolean) => {
+    onThinkChange(value);
+    save({ thinking: value });
   };
 
   if (!open) return null;
@@ -102,7 +108,7 @@ export default function LlmSettings({
           </Row>
 
           <Row label="Thinking" hint="Model reasons before answering (slower, often better).">
-            <button onClick={() => onThinkChange(!think)} className={`text-xs border rounded-[var(--r-sm)] px-2.5 py-1 ${think ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)]"}`}>
+            <button onClick={() => saveThinking(!think)} className={`text-xs border rounded-[var(--r-sm)] px-2.5 py-1 ${think ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)]"}`}>
               {think ? "On" : "Off"}
             </button>
           </Row>
@@ -135,15 +141,15 @@ export default function LlmSettings({
           <div className="border-t border-[var(--border-soft)] pt-3 text-[10px] uppercase tracking-widest text-[var(--muted)]">Performance / memory</div>
           {opts ? (
             <>
-              <Slider label="Context size (num_ctx)" hint="Total tokens (prompt + output). Bigger = more room for long output, but more VRAM." min={2048} max={32768} step={1024} value={opts.num_ctx} onChange={(v) => save({ num_ctx: v })} />
-              <Num label="Max output (num_predict)" hint="-1 = generate until done. Raise to avoid truncated long code." value={opts.num_predict} onChange={(v) => save({ num_predict: v })} />
-              <Num label="GPU layers (num_gpu)" hint="-1 = auto. LOWER this to stop a big model crashing the GPU (offloads layers to CPU, slower but stable)." value={opts.num_gpu ?? -1} onChange={(v) => save({ num_gpu: v < 0 ? null : v })} />
+              <Slider label="Context size" hint="Per-model context requested by Web and CLI. Larger contexts reload the model with the long-context profile." min={2048} max={262144} step={1024} value={opts.contextTokens} onChange={(v) => save({ contextTokens: v })} />
+              <Num label="Max output" hint="-1 = generate until done. Raise to avoid truncated long code." value={opts.maxOutputTokens} onChange={(v) => save({ maxOutputTokens: v })} />
+              <Num label="GPU layers" hint="-1 = auto. Lower this to offload layers to CPU when a model cannot fit." value={opts.gpuLayers ?? -1} onChange={(v) => save({ gpuLayers: v < 0 ? null : v })} />
 
               <div className="border-t border-[var(--border-soft)] pt-3 text-[10px] uppercase tracking-widest text-[var(--muted)]">Sampling</div>
               <Slider label="Temperature" hint="Higher = more creative/random." min={0} max={2} step={0.05} value={opts.temperature} onChange={(v) => save({ temperature: v })} />
-              <Slider label="Top P" min={0} max={1} step={0.05} value={opts.top_p} onChange={(v) => save({ top_p: v })} />
-              <Num label="Top K" value={opts.top_k} onChange={(v) => save({ top_k: v })} />
-              <Slider label="Repeat penalty" hint="Higher discourages repetition." min={1} max={2} step={0.05} value={opts.repeat_penalty} onChange={(v) => save({ repeat_penalty: v })} />
+              <Slider label="Top P" min={0} max={1} step={0.05} value={opts.topP} onChange={(v) => save({ topP: v })} />
+              <Num label="Top K" value={opts.topK} onChange={(v) => save({ topK: v })} />
+              <Slider label="Repeat penalty" hint="Higher discourages repetition." min={0} max={2} step={0.05} value={opts.repeatPenalty} onChange={(v) => save({ repeatPenalty: v })} />
             </>
           ) : (
             <p className="text-xs text-[var(--muted)]">Loading…</p>

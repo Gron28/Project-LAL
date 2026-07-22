@@ -40,6 +40,10 @@ import {
   writeTerminalTitle,
 } from '../utils/windowTitle.js';
 import { getCliVersion } from '../utils/version.js';
+import {
+  resolveTerminalRenderer,
+  setTerminalRenderer,
+} from './utils/terminal-renderer.js';
 
 const debugLogger = createDebugLogger('STARTUP');
 
@@ -52,6 +56,7 @@ export interface StartInteractiveUIOptions {
   postRenderConnectIde?: boolean;
   postRenderInitializeTelemetry?: boolean;
   extensionRefreshState?: ExtensionRefreshState;
+  safeTerminal?: boolean;
 }
 
 export async function startInteractiveUI(
@@ -63,6 +68,14 @@ export async function startInteractiveUI(
   options: StartInteractiveUIOptions = {},
 ) {
   const version = await getCliVersion();
+  const renderer = resolveTerminalRenderer({
+    configured: settings.merged.ui?.terminalRenderer,
+    legacyViewport: settings.merged.ui?.useTerminalBuffer,
+    isTTY: process.stdout.isTTY,
+    screenReader: config.getScreenReader(),
+    safeTerminal: options.safeTerminal,
+  });
+  setTerminalRenderer(renderer);
   setWindowTitle(settings, basename(workspaceRoot));
 
   // Write a small runtime.json sidecar next to the chat log so external
@@ -86,11 +99,11 @@ export async function startInteractiveUI(
   }
 
   const restoreTerminalRedrawOptimizer =
-    process.stdout.isTTY && !config.getScreenReader()
+    renderer === 'viewport' && process.stdout.isTTY && !config.getScreenReader()
       ? installTerminalRedrawOptimizer(process.stdout)
       : () => {};
   const restoreSynchronizedOutput =
-    process.stdout.isTTY && !config.getScreenReader()
+    renderer === 'viewport' && process.stdout.isTTY && !config.getScreenReader()
       ? installSynchronizedOutput(process.stdout)
       : () => {};
 
@@ -184,7 +197,7 @@ export async function startInteractiveUI(
     );
   };
 
-  const useVP = settings.merged.ui?.useTerminalBuffer ?? false;
+  const useVP = renderer === 'viewport';
   const instance = render(
     process.env['DEBUG'] ? (
       <React.StrictMode>

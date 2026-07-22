@@ -6,6 +6,9 @@ as background, not as a promise or implementation queue.
 
 ## Current authority
 
+- [Current implementation state](status/project-lal-current-state.md) — what
+  works now, exact behavior, measured context results, and the prioritized
+  remaining work. Start here.
 - [Project architecture](design/project-lal-architecture.md) — product purpose,
   topology, boundaries, and target monorepo.
 - [Foundation roadmap](plans/project-lal-foundation-roadmap.md) — the ordered
@@ -17,6 +20,8 @@ as background, not as a promise or implementation queue.
   multimodality, resource-aware HIVE specialists, defensive research,
   whole-system host portability, training, and inherited CLI provenance/reduction;
   subordinate to the foundation roadmap.
+- [Unimplemented-work audit](plans/project-lal-unimplemented-work.md) — detailed
+  gaps that have not yet passed an end-to-end gate.
 
 ## Current implementation inventories
 
@@ -47,10 +52,6 @@ as background, not as a promise or implementation queue.
 - [Defensive research contract](design/defensive-research-contract.md) —
   evidence-focused research contracts and mechanically bounded, auditable
   defensive engagements.
-- [Lineage and evaluation foundation](design/lineage-evaluation-foundation.md)
-  — immutable dataset/provenance and evaluation-evidence records with exact
-  runtime capture and read-only inspection APIs.
-
 ## Supporting designs
 
 - [LAL CLI product plan](design/lal-cli-product-plan.md) — detailed capability

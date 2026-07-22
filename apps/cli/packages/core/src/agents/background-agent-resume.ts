@@ -940,20 +940,28 @@ export class BackgroundAgentResumeService {
             subagent.getFinalText(),
             terminateMode,
           );
+          const emptyGoalResult =
+            terminateMode === AgentTerminateMode.GOAL && !modelVisibleText;
           const finalText = appendStopHookBlockingCapWarning(
-            terminateMode === AgentTerminateMode.GOAL
-              ? modelVisibleText ||
-                  '(subagent produced no model-visible output)'
+            emptyGoalResult
+              ? 'Subagent exited without a model-visible result. Any workspace mutations are partial and unreviewed; inspect the diff and validate it before continuing.'
               : modelVisibleText,
             stopHookWarning,
           );
           const stats = getCompletionStats(subagent, liveToolCallCount);
-          if (terminateMode === AgentTerminateMode.GOAL) {
+          if (terminateMode === AgentTerminateMode.GOAL && !emptyGoalResult) {
             registry.complete(meta.agentId, finalText, stats);
             patchAgentMeta(metaPath, {
               status: 'completed',
               lastUpdatedAt: new Date().toISOString(),
               lastError: undefined,
+            });
+          } else if (emptyGoalResult) {
+            registry.fail(meta.agentId, finalText, stats);
+            patchAgentMeta(metaPath, {
+              status: 'failed',
+              lastUpdatedAt: new Date().toISOString(),
+              lastError: finalText,
             });
           } else if (terminateMode === AgentTerminateMode.CANCELLED) {
             registry.finalizeCancelled(meta.agentId, finalText, stats);

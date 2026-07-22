@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
+import { terminalAnimationsEnabled } from '../utils/terminal-renderer.js';
 
 const TIMER_REFRESH_INTERVAL_MS = 500;
 
@@ -32,6 +33,7 @@ export const useTimer = (
   resetKey: unknown,
   isPaused = false,
 ) => {
+  const effectiveActive = isActive && terminalAnimationsEnabled();
   const [elapsedTime, setElapsedTime] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const activeSinceRef = useRef<number | null>(null);
@@ -63,7 +65,7 @@ export const useTimer = (
 
     if (
       prevResetKeyRef.current !== resetKey ||
-      (!prevIsActiveRef.current && isActive)
+      (!prevIsActiveRef.current && effectiveActive)
     ) {
       accumulatedElapsedMsRef.current = 0;
       activeSinceRef.current = null;
@@ -71,19 +73,19 @@ export const useTimer = (
       prevResetKeyRef.current = resetKey;
     }
 
-    if (!isActive) {
+    if (!effectiveActive) {
       if (prevIsActiveRef.current) {
         finalizeRunningSegment();
       }
       clearTimer();
-      prevIsActiveRef.current = isActive;
+      prevIsActiveRef.current = effectiveActive;
       return clearTimer;
     }
 
     if (isPaused) {
       finalizeRunningSegment();
       clearTimer();
-      prevIsActiveRef.current = isActive;
+      prevIsActiveRef.current = effectiveActive;
       return clearTimer;
     }
 
@@ -103,9 +105,9 @@ export const useTimer = (
     );
     updateElapsedTime();
 
-    prevIsActiveRef.current = isActive;
+    prevIsActiveRef.current = effectiveActive;
     return clearTimer;
-  }, [isActive, isPaused, resetKey]);
+  }, [effectiveActive, isPaused, resetKey]);
 
   return elapsedTime;
 };

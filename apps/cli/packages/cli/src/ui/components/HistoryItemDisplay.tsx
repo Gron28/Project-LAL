@@ -59,6 +59,7 @@ import { BtwMessage } from './messages/BtwMessage.js';
 import { MemorySavedMessage } from './messages/MemorySavedMessage.js';
 import { DiffStatsDisplay } from './messages/DiffStatsDisplay.js';
 import { GoalStatusMessage } from './messages/GoalStatusMessage.js';
+import { isViewportTerminal } from '../utils/terminal-renderer.js';
 import { useSettings } from '../contexts/SettingsContext.js';
 import { useThoughtExpanded } from '../contexts/ThoughtExpandedContext.js';
 import { useMouseEvents } from '../hooks/useMouseEvents.js';
@@ -123,8 +124,7 @@ const ClickableThinkMessage: React.FC<{
   // stays dormant and native scrollback is preserved — the block still toggles
   // via Alt+T. Advertise "click" in the collapsed hint only in VP, where the
   // click actually does something.
-  const settings = useSettings();
-  const clickable = !!settings.merged.ui?.useTerminalBuffer;
+  const clickable = isViewportTerminal();
   const isActive = !isPending;
 
   useMouseEvents(

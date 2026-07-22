@@ -544,6 +544,7 @@ describe('Gemini Client (client.ts)', () => {
       getSdkMode: vi.fn().mockReturnValue(false),
       getIdeModeFeature: vi.fn().mockReturnValue(false),
       getIdeMode: vi.fn().mockReturnValue(true),
+      isInteractive: vi.fn().mockReturnValue(true),
       getDebugMode: vi.fn().mockReturnValue(false),
       getWorkspaceContext: vi.fn().mockReturnValue({
         getDirectories: vi.fn().mockReturnValue(['/test/dir']),
@@ -5413,6 +5414,22 @@ hello
         client['chat'] = mockChat as GeminiChat;
       });
 
+      it('does not start background memory agents for a one-shot session', async () => {
+        vi.spyOn(client['config'], 'isInteractive').mockReturnValue(false);
+
+        await fromAsync(
+          client.sendMessageStream(
+            [{ text: 'one shot' }],
+            new AbortController().signal,
+            'prompt-id-one-shot-memory',
+          ),
+        );
+
+        expect(mockMemoryManager.scheduleSkillReview).not.toHaveBeenCalled();
+        expect(mockMemoryManager.scheduleExtract).not.toHaveBeenCalled();
+        expect(mockMemoryManager.scheduleDream).not.toHaveBeenCalled();
+      });
+
       it('should call scheduleSkillReview with correct params on UserQuery', async () => {
         mockMemoryManager.scheduleSkillReview.mockReturnValue({
           status: 'skipped',
@@ -9772,7 +9789,7 @@ function makeMockConfigForShutdown(
     getHookSystem: vi.fn().mockReturnValue(undefined),
     getMaxSessionTurns: vi.fn().mockReturnValue(100),
     getChatRecordingService: vi.fn().mockReturnValue(undefined),
-    isInteractive: vi.fn().mockReturnValue(false),
+    isInteractive: vi.fn().mockReturnValue(true),
     getStdinReader: vi.fn().mockReturnValue(undefined),
   } as unknown as Config;
 }

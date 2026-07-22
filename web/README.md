@@ -2,6 +2,23 @@
 
 Local AI Lab is a local-first model workbench. In addition to chat, coding, training, benchmarks, and persistent agent runs, it includes a typed **Hive** runtime for evidence-first research and verified coding workflows.
 
+## Models
+
+Open `/models` to see the actual local inventory, scan roots, active backend,
+server build, and verified/native context limits. An empty inventory is shown
+separately from a failed scan, and every page links back to the diagnostic when
+models are unavailable.
+
+The same page searches Hugging Face, inspects a commit-pinned GGUF file and its
+license, and creates a durable download job only after explicit license
+acceptance. Progress, cancellation, SHA-256 verification, model selection,
+deletion, export, rescan, and context optimization are available without
+leaving the app.
+
+Production rebuilds should use `scripts/rebuild-local-ai-lab.sh`. It builds into
+an isolated candidate directory, swaps only a successful build into service,
+health-checks it, and restores the previous build if activation fails.
+
 ## Hive runtime
 
 Open `/hive` to start and inspect a workflow. Hive uses deterministic, versioned DAG templates with bounded model-selected work. The coordinator only emits `dispatch`, `retry`, `verify`, `replan`, `finish`, or `request_user`; it has no worker tools.

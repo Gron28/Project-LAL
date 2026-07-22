@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import { useConfig } from '../contexts/ConfigContext.js';
+import { terminalAnimationsEnabled } from '../utils/terminal-renderer.js';
 
 /** Host-reported runtime truth polled from the gateway's /api/sysinfo. */
 export interface GatewayStats {
@@ -25,6 +26,26 @@ export interface GatewayStats {
 
 const POLL_INTERVAL_MS = 5_000;
 const FETCH_TIMEOUT_MS = 2_500;
+
+const stableStatKeys = [
+  'vramUsedGb',
+  'vramTotalGb',
+  'vramPct',
+  'servingModel',
+  'activeContext',
+  'backend',
+  'gpuOffload',
+] as const satisfies ReadonlyArray<keyof GatewayStats>;
+
+export function stabilizeGatewayStats(
+  previous: GatewayStats | null,
+  next: GatewayStats,
+): GatewayStats {
+  if (!previous || previous.runAlive !== next.runAlive) return next;
+  if (stableStatKeys.some((key) => previous[key] !== next[key])) return next;
+  if (next.runAlive && previous.gpuPct !== next.gpuPct) return next;
+  return previous;
+}
 
 /**
  * Derive the gateway web origin from the OpenAI-compat baseUrl the CLI is
@@ -52,6 +73,7 @@ export function useGatewayStats(): GatewayStats | null {
     config.getContentGeneratorConfig() as { baseUrl?: string } | undefined
   )?.baseUrl;
   const origin = gatewayOriginFromBaseUrl(baseUrl);
+  const liveRefresh = terminalAnimationsEnabled();
 
   useEffect(() => {
     if (!origin) {
@@ -87,7 +109,7 @@ export function useGatewayStats(): GatewayStats | null {
           };
         };
         if (cancelled) return;
-        setStats({
+        const nextStats: GatewayStats = {
           gpuPct: body.gpu ?? null,
           vramUsedGb: body.vramUsedGb ?? null,
           vramTotalGb: body.vramTotalGb ?? null,
@@ -100,19 +122,25 @@ export function useGatewayStats(): GatewayStats | null {
           runAlive:
             body.runLive === true ||
             (body.runtime?.activeRuns?.length ?? 0) > 0,
-        });
+        };
+        setStats((previous) => stabilizeGatewayStats(previous, nextStats));
       } catch {
         if (!cancelled) setStats(null);
       }
     };
 
     void poll();
+    if (!liveRefresh) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const interval = setInterval(() => void poll(), POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [origin]);
+  }, [liveRefresh, origin]);
 
   return stats;
 }

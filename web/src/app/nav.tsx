@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Activity, ChevronLeft, ChevronRight, Cpu, LayoutDashboard, MessageSquare, TerminalSquare, GraduationCap, Library, Gauge, Network, Radio, X } from "lucide-react";
+import { Activity, AlertTriangle, ChevronLeft, ChevronRight, Cpu, Download, LayoutDashboard, MessageSquare, TerminalSquare, GraduationCap, Library, Gauge, Network, Radio, X } from "lucide-react";
 import { ICON_SIZE } from "@/components/ui/icon";
 import { SignalTrace } from "@/components/ui/signal-trace";
 
@@ -120,6 +120,39 @@ function ActiveRunNotice() {
   );
 }
 
+/** Inventory failures used to become an indistinguishable empty dropdown in
+ * every surface. Keep the actual state visible globally and route recovery to
+ * the dedicated diagnostics/download page. */
+function ModelInventoryNotice() {
+  const [notice, setNotice] = useState<{ state: "empty" | "failed"; detail: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const response = await fetch("/api/agent/models", { cache: "no-store" });
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) throw new Error(`HTTP ${response.status} returned non-JSON content`);
+        const body = await response.json();
+        const inventory = body?.inventory;
+        if (!response.ok || inventory?.state === "failed") {
+          if (alive) setNotice({ state: "failed", detail: inventory?.diagnostics?.[0] || body?.error || `HTTP ${response.status}` });
+        } else if (inventory?.state === "empty") {
+          if (alive) setNotice({ state: "empty", detail: "No local models were found." });
+        } else if (alive) setNotice(null);
+      } catch (error) {
+        if (alive) setNotice({ state: "failed", detail: error instanceof Error ? error.message : String(error) });
+      }
+    };
+    void check(); const timer = setInterval(check, 30_000);
+    return () => { alive = false; clearInterval(timer); };
+  }, []);
+  if (!notice) return null;
+  return <Link href="/models" className="fixed z-[59] top-11 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1rem)] px-3 py-1.5 rounded-full border border-[var(--border-loud)] bg-[var(--surface-1)] shadow-lg flex items-center gap-2 text-[10px] text-[var(--text-2)] hover:text-[var(--accent-ai)]" title={notice.detail}>
+    {notice.state === "failed" ? <AlertTriangle size={12} className="text-[var(--accent-danger)] shrink-0" /> : <Download size={12} className="text-[var(--accent-ai)] shrink-0" />}
+    <span className="truncate">{notice.state === "failed" ? "Model inventory failed" : "No models installed"}</span><span className="text-[var(--accent-ai)] shrink-0">open Models</span>
+  </Link>;
+}
+
 // Monitor's sysinfo now lives in dashboard widgets, so it's dropped from nav to
 // keep the mobile bottom bar (h-14) compact — the route itself still exists.
 const items = [
@@ -128,6 +161,7 @@ const items = [
   { href: "/code", label: "Code", Icon: TerminalSquare },
   { href: "/hive", label: "Hive", Icon: Network },
   { href: "/train", label: "Train", Icon: GraduationCap },
+  { href: "/models", label: "Models", Icon: Download },
   { href: "/monitor", label: "Monitor", Icon: Activity },
   { href: "/library", label: "Library", Icon: Library },
   { href: "/benchmark", label: "Bench", Icon: Gauge },
@@ -140,6 +174,7 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
   return (
     <>
       <ActiveRunNotice />
+      <ModelInventoryNotice />
       {/* Desktop: left icon rail (expands to labels on lg) — collapsible to reclaim
           screen width; collapsed state takes NO layout space at all, with a small
           floating button left to bring it back. */}
@@ -174,9 +209,9 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
       )}
 
       {/* Mobile: bottom tab bar (unaffected by the desktop rail's collapse state) */}
-      <nav className="flex md:hidden fixed bottom-0 left-0 right-0 h-14 bg-[var(--surface-1)] border-t border-[var(--border)] z-50 pb-[env(safe-area-inset-bottom)]">
+      <nav className="flex md:hidden fixed bottom-0 left-0 right-0 h-14 bg-[var(--surface-1)] border-t border-[var(--border)] z-50 pb-[env(safe-area-inset-bottom)] overflow-x-auto">
         {items.map(({ href, label, Icon }) => (
-          <Link key={href} href={href} className="flex-1 flex flex-col items-center justify-center gap-0.5 text-[9px] tracking-wide"
+          <Link key={href} href={href} className="flex-none min-w-14 flex flex-col items-center justify-center gap-0.5 text-[9px] tracking-wide"
             style={{ color: active(href) ? "var(--accent-ai)" : "var(--text-2)" }}>
             <Icon size={ICON_SIZE.md} /><span>{label}</span>
           </Link>

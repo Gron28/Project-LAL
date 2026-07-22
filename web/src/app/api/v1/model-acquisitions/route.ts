@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
 import { getJobRepository } from "@/lib/jobs";
-import { currentModelDownloadHostEstimate, cancelModelDownload, requestModelDownload } from "@/lib/model-downloads";
+import { currentModelDownloadHostEstimate, cancelModelDownload, recoverModelDownloadJobs, requestModelDownload } from "@/lib/model-downloads";
 import { resolveModelAcquisition, type OfflineCatalog } from "@/lib/model-acquisition";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 /** Explicit, pinned Hugging Face GGUF transfer jobs. A query never downloads;
  * the browser must submit exact revision, filename, byte count and SHA-256. */
 export function GET() {
+  recoverModelDownloadJobs();
   return NextResponse.json({ jobs: getJobRepository().list(200).filter((job) => job.kind === "model.download"), host: currentModelDownloadHostEstimate() }, { headers: { "cache-control": "no-store" } });
 }
 

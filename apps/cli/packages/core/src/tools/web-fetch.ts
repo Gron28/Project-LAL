@@ -6,7 +6,11 @@
 
 import { convert } from 'html-to-text';
 import type { Config } from '../config/config.js';
-import { fetchWithTimeout, isPrivateIp } from '../utils/fetch.js';
+import {
+  fetchWithTimeout,
+  isPrivateIp,
+  isPrivateNetworkUrl,
+} from '../utils/fetch.js';
 import { runSideQuery } from '../utils/sideQuery.js';
 import { ToolErrorType } from './tool-error.js';
 import type {
@@ -23,6 +27,7 @@ import { createDebugLogger, type DebugLogger } from '../utils/debugLogger.js';
 
 const URL_FETCH_TIMEOUT_MS = 10000;
 const MAX_CONTENT_LENGTH = 100000;
+const MAX_RESEARCH_REDIRECTS = 5;
 
 /**
  * Parameters for the WebFetch tool
@@ -99,9 +104,44 @@ class WebFetchToolInvocation extends BaseToolInvocation<
 
     try {
       this.debugLogger.debug(`[WebFetchTool] Fetching content from: ${url}`);
-      const response = await fetchWithTimeout(url, URL_FETCH_TIMEOUT_MS, {
-        Accept: acceptHeader,
-      });
+      const researchActive =
+        this.config.getGeminiClient?.()?.isResearchModeActive?.() === true;
+      let response: Response;
+      if (!researchActive) {
+        response = await fetchWithTimeout(url, URL_FETCH_TIMEOUT_MS, {
+          Accept: acceptHeader,
+        });
+      } else {
+        let currentUrl = url;
+        let redirects = 0;
+        while (true) {
+          if (await isPrivateNetworkUrl(currentUrl)) {
+            throw new Error(
+              `Research fetch blocked a private or unresolved network target: ${currentUrl}`,
+            );
+          }
+          response = await fetchWithTimeout(
+            currentUrl,
+            URL_FETCH_TIMEOUT_MS,
+            { Accept: acceptHeader },
+            'manual',
+          );
+          if (
+            response.status < 300 ||
+            response.status >= 400 ||
+            !response.headers.get('location')
+          ) {
+            break;
+          }
+          if (redirects++ >= MAX_RESEARCH_REDIRECTS) {
+            throw new Error('Research fetch exceeded the redirect limit.');
+          }
+          currentUrl = new URL(
+            response.headers.get('location')!,
+            currentUrl,
+          ).toString();
+        }
+      }
 
       if (!response.ok) {
         const errorMessage = `Request failed with status code ${response.status} ${response.statusText}`;
@@ -205,10 +245,16 @@ ${textContent}
   }
 
   /**
-   * WebFetch is a read-like tool (fetches content) but requires confirmation
-   * because it makes external network requests.
+   * An explicit research request already authorizes read-only access to public
+   * sources. Keep ordinary fetches and private/local targets behind the normal
+   * confirmation boundary.
    */
   override async getDefaultPermission(): Promise<PermissionDecision> {
+    const researchActive =
+      this.config.getGeminiClient?.()?.isResearchModeActive?.() === true;
+    if (researchActive && !(await isPrivateNetworkUrl(this.params.url))) {
+      return 'allow';
+    }
     return 'ask';
   }
 

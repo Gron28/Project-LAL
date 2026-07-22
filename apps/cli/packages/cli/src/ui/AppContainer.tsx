@@ -223,6 +223,7 @@ import {
 import { getLiveAgentPanelLayoutKey } from './components/background-view/liveAgentPanelVisibility.js';
 import { t } from '../i18n/index.js';
 import { TUI_CHAT_RECORDING_FAILURE_MESSAGE } from '../utils/chat-recording-failure.js';
+import { isViewportTerminal } from './utils/terminal-renderer.js';
 import { useWelcomeBack } from './hooks/useWelcomeBack.js';
 import { useDialogClose } from './hooks/useDialogClose.js';
 import { useInitializationAuthError } from './hooks/useInitializationAuthError.js';
@@ -545,9 +546,12 @@ export const AppContainer = (props: AppContainerProps) => {
   if (!mainAgentEventEmitterRef.current) {
     mainAgentEventEmitterRef.current = new AgentEventEmitter();
   }
-  const activeAgentEventEmitter = agentViewState.activeView === 'main'
-    ? mainAgentEventEmitterRef.current
-    : agentViewState.agents.get(agentViewState.activeView)?.interactiveAgent.getEventEmitter();
+  const activeAgentEventEmitter =
+    agentViewState.activeView === 'main'
+      ? mainAgentEventEmitterRef.current
+      : agentViewState.agents
+          .get(agentViewState.activeView)
+          ?.interactiveAgent.getEventEmitter();
   const [certaintyWave, setCertaintyWave] = useState<number[]>([]);
   useEffect(() => {
     const emitter = mainAgentEventEmitterRef.current;
@@ -1128,7 +1132,9 @@ export const AppContainer = (props: AppContainerProps) => {
   // visible refresh in VP mode comes for free from the React tree
   // re-reading `mergedHistory` / `allVirtualItems` on whatever state
   // change triggered refreshStatic (Ctrl+O, model change, etc.).
-  const useTerminalBuffer = settings.merged.ui?.useTerminalBuffer ?? false;
+  const useTerminalBuffer = isViewportTerminal(
+    settings.merged.ui?.useTerminalBuffer ?? false,
+  );
   const showScrollbar = settings.merged.ui?.showScrollbar ?? true;
   const refreshStatic = useCallback(() => {
     // While the transcript (alt-screen) owns the whole screen, suppress static

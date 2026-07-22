@@ -51,6 +51,7 @@ import { forgetCommand } from '../ui/commands/forgetCommand.js';
 import { gitCommand } from '../ui/commands/git-command.js';
 import { memoryCommand } from '../ui/commands/memoryCommand.js';
 import { modeCommand } from '../ui/commands/mode-command.js';
+import { researchCommand } from '../ui/commands/research-command.js';
 import { modelCommand } from '../ui/commands/modelCommand.js';
 import { previewCommand } from '../ui/commands/preview-command.js';
 import { rememberCommand } from '../ui/commands/rememberCommand.js';
@@ -160,6 +161,7 @@ export class BuiltinCommandLoader implements ICommandLoader {
       gitCommand,
       memoryCommand,
       modeCommand,
+      researchCommand,
       modelCommand,
       previewCommand,
       rememberCommand,

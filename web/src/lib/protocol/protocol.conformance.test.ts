@@ -11,7 +11,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { KNOWN_EVENT_KINDS } from "@project-lal/protocol";
+// Node 24 deliberately refuses native TypeScript stripping inside node_modules.
+// Exercise the canonical workspace source here; check_protocol_drift separately
+// proves that the Web and CLI runtime consumers use the package boundary.
+import { KNOWN_EVENT_KINDS } from "../../../../packages/protocol/src/index.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, "fixtures");

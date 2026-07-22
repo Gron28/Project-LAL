@@ -43,6 +43,7 @@ import {
   CoreToolScheduler,
   convertToFunctionResponse,
   extractToolFilePaths,
+  validationFailureFingerprint,
 } from './coreToolScheduler.js';
 import type { Part, PartListUnion } from '@google/genai';
 import {
@@ -12163,6 +12164,28 @@ describe('CoreToolScheduler validation retry loop detection', () => {
     const msg = getLastErrorMessage(onToolCallsUpdate);
     expect(msg).toBeDefined();
     expect(msg).not.toContain(RETRY_LOOP_STOP_DIRECTIVE);
+  });
+});
+
+describe('validationFailureFingerprint', () => {
+  it('groups byte-different oversized mutations as one failed strategy', () => {
+    expect(
+      validationFailureFingerprint(
+        'write_file',
+        'Payload too large: content is 27041 characters, which exceeds the 8000-character limit',
+      ),
+    ).toBe(
+      validationFailureFingerprint(
+        'write_file',
+        'Payload too large: content is 19400 characters, which exceeds the 8000-character limit',
+      ),
+    );
+  });
+
+  it('keeps unrelated validation failures distinct', () => {
+    expect(validationFailureFingerprint('edit', 'first failure')).not.toBe(
+      validationFailureFingerprint('edit', 'second failure'),
+    );
   });
 });
 

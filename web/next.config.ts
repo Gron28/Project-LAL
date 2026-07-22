@@ -15,6 +15,13 @@ const nextConfig: NextConfig = {
   // wasm loaders — opt them out of bundling entirely and let native `require` handle
   // them at runtime instead.
   serverExternalPackages: ["web-tree-sitter", "tree-sitter-wasms"],
+  // @project-lal/protocol (packages/protocol) ships raw TypeScript via its
+  // "exports" field instead of a compiled dist/. It's installed with
+  // install-links=true (see web/.npmrc) so it's a real copy under node_modules
+  // instead of a symlink pointing outside Turbopack's root — this just tells
+  // Turbopack to actually compile that copy rather than treat it as opaque
+  // external content.
+  transpilePackages: ["@project-lal/protocol"],
   async headers() {
     // Next's static file server has no ".ps1" mime entry and falls back to
     // application/octet-stream. Windows PowerShell's Invoke-RestMethod treats an

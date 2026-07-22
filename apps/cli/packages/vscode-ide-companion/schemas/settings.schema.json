@@ -371,6 +371,15 @@
           "type": "boolean",
           "default": false
         },
+        "terminalRenderer": {
+          "description": "Auto uses a stable managed viewport on capable terminals and a non-animated, scrollback-safe renderer elsewhere. Options: auto, viewport, static",
+          "enum": [
+            "auto",
+            "viewport",
+            "static"
+          ],
+          "default": "auto"
+        },
         "showScrollbar": {
           "description": "Show the auto-hiding scrollbar in the in-app scrollable viewport (Virtualized History). The bar appears while scrolling and fades out when idle. Disable to hide it entirely.",
           "type": "boolean",

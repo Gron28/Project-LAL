@@ -25,6 +25,7 @@ vi.mock('../utils/fetch.js', async (importOriginal) => {
     ...actual,
     fetchWithTimeout: vi.fn(),
     isPrivateIp: vi.fn(),
+    isPrivateNetworkUrl: vi.fn(),
   };
 });
 
@@ -126,6 +127,34 @@ describe('WebFetchTool', () => {
       const invocation = tool.build(params);
       const result = await invocation.execute(new AbortController().signal);
       expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_FALLBACK_FAILED);
+    });
+
+    it('blocks a research redirect to a private network target', async () => {
+      vi.mocked(fetchUtils.isPrivateNetworkUrl)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      vi.mocked(fetchUtils.fetchWithTimeout).mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location: 'http://127.0.0.1/private' }),
+      } as Response);
+      const tool = new WebFetchTool({
+        ...mockConfig,
+        getGeminiClient: () => ({ isResearchModeActive: () => true }),
+      } as unknown as Config);
+      const invocation = tool.build({
+        url: 'https://example.com/redirect',
+        prompt: 'extract evidence',
+      });
+
+      const result = await invocation.execute(new AbortController().signal);
+
+      expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_FALLBACK_FAILED);
+      expect(result.llmContent).toContain(
+        'blocked a private or unresolved network target',
+      );
+      expect(fetchUtils.fetchWithTimeout).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -329,6 +358,39 @@ describe('WebFetchTool', () => {
   });
 
   describe('getConfirmationDetails', () => {
+    it('allows public sources during an explicit research request', async () => {
+      const tool = new WebFetchTool({
+        ...mockConfig,
+        getGeminiClient: () => ({ isResearchModeActive: () => true }),
+      } as unknown as Config);
+      vi.mocked(fetchUtils.isPrivateNetworkUrl).mockResolvedValue(false);
+      const invocation = tool.build({
+        url: 'https://sqlite.org/isolation.html',
+        prompt: 'extract transaction behavior',
+      });
+
+      expect(await invocation.getDefaultPermission()).toBe('allow');
+    });
+
+    it.each([
+      'http://127.0.0.1:8770/api/models',
+      'http://localhost:8770/api/models',
+      'http://service.local/private',
+      'http://169.254.169.254/latest/meta-data',
+    ])(
+      'still asks before research fetches a private target: %s',
+      async (url) => {
+        vi.mocked(fetchUtils.isPrivateNetworkUrl).mockResolvedValue(true);
+        const tool = new WebFetchTool({
+          ...mockConfig,
+          getGeminiClient: () => ({ isResearchModeActive: () => true }),
+        } as unknown as Config);
+        const invocation = tool.build({ url, prompt: 'extract data' });
+
+        expect(await invocation.getDefaultPermission()).toBe('ask');
+      },
+    );
+
     it('should return confirmation details with the correct prompt and urls', async () => {
       const tool = new WebFetchTool(mockConfig);
       const params = {

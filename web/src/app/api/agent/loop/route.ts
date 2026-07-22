@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
-import { allModels, ensureServing, readSettings, stopServing, saveConvo, newId, SERVE_PORT, listProjects, rememberProject } from "@/lib/lab";
+import { activatePublicModel, contextProfileForModel, readSettings, resolvedContextTarget, saveConvo, newId, SERVE_PORT, listProjects, rememberProject, modelRuntimeSettings } from "@/lib/lab";
 import { runToolLoop, type ToolLoopMsg } from "@/lib/toolloop";
 import { makeAgentExecutor, makeOrchestratorExecutor, makePlannerExecutor, makeImplementerExecutor } from "@/lib/agent-tools";
 import { recordSessionCard, maybeRollupDaily } from "@/lib/memory-pipeline";
@@ -179,17 +179,17 @@ export async function POST(req: NextRequest) {
   const preset = MODES[modeId];
   const model = (b.model as string) || preset.defaultModel || s.model;
   if (!model) return new Response("no model available", { status: 409 });
+  const runtimeSettings = modelRuntimeSettings(model);
   // An explicit client value wins (matches model resolution above); otherwise the
   // mode's own default applies — this is what makes quick-edit's think:false and
   // orchestrator's think:true actually take effect for callers that don't set it.
-  const think = typeof b.think === "boolean" ? b.think : preset.think;
-  const configuredCtx = Number.isFinite(s.options.num_ctx) ? s.options.num_ctx : preset.ctx;
-  // Modes establish a proven minimum. A user-raised context is honored, and a
-  // smaller setting never silently undercuts a mode's system/tools footprint.
-  const ctx = Math.max(2048, preset.ctx, configuredCtx);
+  const think = typeof b.think === "boolean" ? b.think : runtimeSettings.thinking;
+  // Modes establish a minimum; the host profile supplies the adaptive target.
+  // A legacy saved num_ctx can no longer silently undercut the active runtime.
+  const ctx = Math.max(2048, preset.ctx, resolvedContextTarget(model));
   // -1 means "use the mode default". A positive saved setting is honored but
   // bounded to avoid a single response reserving an unworkable context window.
-  const maxTokens = s.options.num_predict > 0 ? Math.min(Math.floor(s.options.num_predict), 16384) : preset.maxTokens;
+  const maxTokens = runtimeSettings.maxOutputTokens > 0 ? Math.min(Math.floor(runtimeSettings.maxOutputTokens), 16384) : preset.maxTokens;
 
   const proj = resolveProject(b.project);
   if ("error" in proj) return new Response(proj.error, { status: 400 });
@@ -216,48 +216,24 @@ export async function POST(req: NextRequest) {
       // events. A client that reopens mid-run rebuilds its view as
       // reconstruct(saved[..base]) + replay(events).
       emit({ k: "turn", v: { base: incoming.length } });
-      emit({ k: "model_loading", v: { model, ctx } });
+      emit({ k: "model_loading", v: { model, ctx, contextProfile: contextProfileForModel(model) } });
 
       // Model serving happens INSIDE the run (it can take up to a minute for a big
       // model — the POST reply must not wait on it). A serve failure becomes a run
       // error event, not an HTTP status.
       //
-      // Serve through OUR llama-server whenever the architecture allows (works for
-      // qwen3 incl. Ollama-pulled blobs, read-only): Ollama's OpenAI shim runs at the
-      // model's default 4096 ctx, which truncates the agent's system prompt + tool
-      // results mid-session. Fall back to the shim only for archs b9835 can't load.
-      // llama-b9835's /health endpoint reports ready once the process is up and *a*
-      // computation graph is loaded — it doesn't validate that graph matches the
-      // model's real architecture; for gemma archs "ensureServing" was observed to
-      // succeed while every REAL completion then 500'd. Skip straight to the Ollama
-      // shim for gemma models instead of trusting a health check that can't see this
-      // failure mode.
-      const mi = allModels().find((m) => m.name === model);
-      let baseUrl: string;
-      if (mi?.source === "ollama" && /gemma/i.test(model)) {
-        stopServing();
-        baseUrl = "http://127.0.0.1:11434";
-      } else {
-        try {
-          await ensureServing(model, ctx);
-          baseUrl = `http://127.0.0.1:${SERVE_PORT}`;
-        } catch (e) {
-          if (mi?.source === "ollama") {
-            stopServing();
-            baseUrl = "http://127.0.0.1:11434";
-          } else {
-            throw new Error("serve failed: " + (e as Error).message);
-          }
-        }
-      }
-      emit({ k: "model_ready", v: { model, ctx, backend: baseUrl.includes(":11434") ? "ollama" : "llama.cpp" } });
+      const runtime = await activatePublicModel(model, ctx);
+      const baseUrl = runtime.backend === "ollama" ? "http://127.0.0.1:11434" : `http://127.0.0.1:${SERVE_PORT}`;
+      const runtimeModel = runtime.runtimeProfile;
+      emit({ k: "context_profile", v: runtime.contextProfile });
+      emit({ k: "model_ready", v: { model, ctx: runtime.context, backend: runtime.backend, contextProfile: runtime.contextProfile, runtimeProfile: runtimeModel } });
 
       const approve = async (call: { id: string; name: string; args: Record<string, unknown> }) => {
         if (autoApprove) return true;
         return requestApproval(meta.id, emit, call);
       };
       const fullExec = makeAgentExecutor({
-        workspaceDir: root, baseUrl, model, think,
+        workspaceDir: root, baseUrl, model: runtimeModel, think,
         onEvent: (e) => emit(e), approve, signal,
         orchestratorMode: modeId === "orchestrator",
       });
@@ -290,11 +266,11 @@ export async function POST(req: NextRequest) {
       // toolset is an explicit override elsewhere too.
       const maxResearchCalls = toolset === "planner" ? 5 : preset.maxResearchCalls;
       const finalMessages = await runToolLoop({
-        baseUrl, model, messages, tools: exec.defs, exec,
+        baseUrl, model: runtimeModel, messages, tools: exec.defs, exec,
         maxRounds: preset.maxRounds, maxTokens, think,
-        temperature: s.options.temperature, topP: s.options.top_p, topK: s.options.top_k, repeatPenalty: s.options.repeat_penalty,
+        temperature: runtimeSettings.temperature, topP: runtimeSettings.topP, topK: runtimeSettings.topK, repeatPenalty: runtimeSettings.repeatPenalty,
         minResearchCalls: preset.minResearchCalls, maxResearchCalls,
-        ctx,
+        ctx: runtime.context,
         onEvent: (e) => emit(e),
         onSnapshot: snapshot,
         approve,

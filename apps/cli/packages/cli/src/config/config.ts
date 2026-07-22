@@ -151,6 +151,7 @@ export interface CliArgs {
   yolo: boolean | undefined;
   bare: boolean | undefined;
   safeMode?: boolean | undefined;
+  safeTerminal?: boolean | undefined;
   approvalMode: string | undefined;
   telemetry: boolean | undefined;
   telemetryTarget: string | undefined;
@@ -624,6 +625,12 @@ export async function parseArguments(): Promise<CliArgs> {
       type: 'boolean',
       description:
         'Disable all customizations (context files, hooks, extensions, skills, MCP servers) for troubleshooting.',
+    })
+    .option('safe-terminal', {
+      type: 'boolean',
+      description:
+        'Disable terminal animation and cursor-driven viewport rendering for compatibility.',
+      default: false,
     })
     .option('proxy', {
       type: 'string',

@@ -35,6 +35,7 @@ import {
   buildStateReminderParts,
   composePostCompactHistory,
   countToolResponseImages,
+  POST_COMPACT_ACK,
   postProcessSummary,
   stripAnalysisBlock,
   type SubagentSnapshot,
@@ -778,14 +779,14 @@ export class ChatCompressionService {
         extraHistory = [
           {
             role: 'user',
-            parts: [{ text: postProcessSummary(summary) }, ...reminderParts],
+            parts: [
+              { text: postProcessSummary(summary, sideQueryHistory) },
+              ...reminderParts,
+            ],
           },
           {
             role: 'model',
-            parts: [
-              { text: 'Got it. Thanks for the additional context!' },
-              ...fcParts,
-            ],
+            parts: [{ text: POST_COMPACT_ACK }, ...fcParts],
           },
         ];
       }

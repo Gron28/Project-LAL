@@ -8,8 +8,8 @@ import { useEffect, useState } from "react";
 import { X, Sliders } from "lucide-react";
 
 type Options = {
-  num_ctx: number; num_predict: number; num_gpu: number | null;
-  temperature: number; top_p: number; top_k: number; repeat_penalty: number;
+  contextTokens: number; maxOutputTokens: number; gpuLayers: number | null;
+  temperature: number; topP: number; topK: number; repeatPenalty: number; thinking: boolean;
 };
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -78,17 +78,21 @@ export default function AgentSettings(p: AgentSettingsProps) {
     if (!p.open) return;
     fetch("/api/agent/models").then((r) => (r.ok ? r.json() : null)).then((j) => {
       if (!j) return;
-      if (j.options) setOpts(j.options);
+      if (j.modelSettings?.[p.model]) { setOpts(j.modelSettings[p.model]); p.onThinkChange(!!j.modelSettings[p.model].thinking); }
       if (j.system !== undefined) setSystem(j.system ?? "");
       if (typeof j.serveIdleMinutes === "number") setIdleMin(j.serveIdleMinutes);
     }).catch(() => {});
-  }, [p.open]);
+  // The individual primitive/callback dependencies are intentional; depending
+  // on the props object would refetch on every parent render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.open, p.model, p.onThinkChange]);
 
   const put = (body: Record<string, unknown>) => {
     fetch("/api/agent/models", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
       .then(() => setSavedAt(Date.now())).catch(() => {});
   };
-  const saveOpts = (patch: Partial<Options>) => { setOpts((o) => (o ? { ...o, ...patch } : o)); put({ options: patch }); };
+  const saveOpts = (patch: Partial<Options>) => { setOpts((o) => (o ? { ...o, ...patch } : o)); put({ modelSettings: { model: p.model, values: patch } }); };
+  const saveThinking = (value: boolean) => { p.onThinkChange(value); saveOpts({ thinking: value }); };
 
   if (!p.open) return null;
   return (
@@ -108,7 +112,7 @@ export default function AgentSettings(p: AgentSettingsProps) {
               </select>
             </Row>
             <Row label="Thinking" hint="Model reasons before answering (slower, usually better).">
-              <Toggle on={p.think} onChange={p.onThinkChange} />
+              <Toggle on={p.think} onChange={saveThinking} />
             </Row>
             <Row label="Auto-approve tools" hint="Run file/shell/git tools without asking. Convenient, but the agent can change files unprompted.">
               <Toggle on={p.auto} onChange={p.onAutoChange} />
@@ -120,18 +124,18 @@ export default function AgentSettings(p: AgentSettingsProps) {
 
           <Section title="Context & output">
             {opts ? <>
-              <Slider label="Context size (num_ctx)" hint="Total token window (prompt + output). Bigger = more room, more VRAM." min={2048} max={32768} step={1024} value={opts.num_ctx} onChange={(v) => saveOpts({ num_ctx: v })} />
-              <Num label="Max output (num_predict)" hint="-1 = until done. Raise to avoid truncated long code/answers." value={opts.num_predict} onChange={(v) => saveOpts({ num_predict: v })} />
-              <Num label="GPU layers (num_gpu)" hint="-1 = auto. LOWER to stop a big model crashing the GPU (offloads to CPU: slower, stable)." value={opts.num_gpu ?? -1} onChange={(v) => saveOpts({ num_gpu: v < 0 ? null : v })} />
+              <Slider label="Context size" hint="Per-model window shared with Chat and CLI." min={2048} max={262144} step={1024} value={opts.contextTokens} onChange={(v) => saveOpts({ contextTokens: v })} />
+              <Num label="Max output" hint="-1 = until done. Raise to avoid truncated long code/answers." value={opts.maxOutputTokens} onChange={(v) => saveOpts({ maxOutputTokens: v })} />
+              <Num label="GPU layers" hint="-1 = auto. Lower to offload to CPU." value={opts.gpuLayers ?? -1} onChange={(v) => saveOpts({ gpuLayers: v < 0 ? null : v })} />
             </> : <p className="text-xs text-[var(--muted)]">Loading…</p>}
           </Section>
 
           <Section title="Sampling">
             {opts && <>
               <Slider label="Temperature" hint="Higher = more creative/varied." min={0} max={2} step={0.05} value={opts.temperature} onChange={(v) => saveOpts({ temperature: v })} />
-              <Slider label="Top P" min={0} max={1} step={0.05} value={opts.top_p} onChange={(v) => saveOpts({ top_p: v })} />
-              <Num label="Top K" value={opts.top_k} onChange={(v) => saveOpts({ top_k: v })} />
-              <Slider label="Repeat penalty" hint="Higher discourages repetition." min={1} max={2} step={0.05} value={opts.repeat_penalty} onChange={(v) => saveOpts({ repeat_penalty: v })} />
+              <Slider label="Top P" min={0} max={1} step={0.05} value={opts.topP} onChange={(v) => saveOpts({ topP: v })} />
+              <Num label="Top K" value={opts.topK} onChange={(v) => saveOpts({ topK: v })} />
+              <Slider label="Repeat penalty" hint="Higher discourages repetition." min={0} max={2} step={0.05} value={opts.repeatPenalty} onChange={(v) => saveOpts({ repeatPenalty: v })} />
             </>}
           </Section>
 

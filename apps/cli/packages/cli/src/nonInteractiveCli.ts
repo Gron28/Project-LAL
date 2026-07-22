@@ -2029,8 +2029,13 @@ export async function runNonInteractive(
           const memoryTaskPromises = config
             .getGeminiClient()
             .consumePendingMemoryTaskPromises();
-          if (memoryTaskPromises.length > 0) {
-            await Promise.allSettled(memoryTaskPromises);
+          // These are explicitly background maintenance tasks. Interactive
+          // mode observes them without blocking the completed turn; a one-shot
+          // command must do the same. Waiting here made a trivial 11-second
+          // answer take another minute while extract/dream agents inspected
+          // memory folders. Cleanup aborts outstanding model work on exit.
+          for (const task of memoryTaskPromises) {
+            void task.catch(() => undefined);
           }
           finalizeOneShotMonitors();
 

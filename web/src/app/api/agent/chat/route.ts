@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { allModels, ensureServing, readSettings, getConvo, saveConvo, newId, webSearch, retrieveDocs, servingModel, stopServing, SERVE_PORT, type Convo } from "@/lib/lab";
+import { activatePublicModel, allModels, contextProfileForModel, readSettings, resolvedContextTarget, getConvo, saveConvo, newId, webSearch, retrieveDocs, servingModel, modelRuntimeSettings, SERVE_PORT, type Convo } from "@/lib/lab";
 import { startRun, type EmitFn } from "@/lib/runs";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +34,12 @@ export async function POST(req: NextRequest) {
   const incoming = ((b.messages || []) as { role: string; content: string }[]).map((m) => ({ ...m }));
   const attachments: string[] = Array.isArray(b.attachments) ? b.attachments.filter((x: unknown) => typeof x === "string") : [];
   const s = readSettings();
-  const think = typeof b.think === "boolean" ? b.think : true;
+  const requestedTextModel = typeof b.model === "string" && allModels().some((m) => m.name === b.model) ? b.model : s.model;
+  const settingsModel = attachments.length
+    ? attachments.length > VISION_FAST_THRESHOLD ? VISION_MODEL_FAST : VISION_MODEL_QUALITY
+    : requestedTextModel;
+  const runtimeSettings = modelRuntimeSettings(settingsModel);
+  const think = runtimeSettings.thinking;
   const continueIndex = Number.isInteger(b.continueIndex) ? Number(b.continueIndex) : -1;
   const continuing = continueIndex >= 0 && continueIndex === incoming.length - 1 && incoming[continueIndex]?.role === "assistant";
   if (continuing) {
@@ -110,13 +115,12 @@ export async function POST(req: NextRequest) {
 
   if (attachments.length) {
     const visionModel = attachments.length > VISION_FAST_THRESHOLD ? VISION_MODEL_FAST : VISION_MODEL_QUALITY;
+    const visionCtx = resolvedContextTarget(visionModel);
     convo.model = visionModel;
     const meta = startRun({ kind: "chat", conversationId: cid, model: visionModel }, async (emit, signal) => {
-      emit({ k: "model_loading", v: { model: visionModel, ctx: s.options.num_ctx } });
-      // GPU is single-tenant: park our own llama-server (if resident) before Ollama
-      // loads Gemma — HANDOFF bug #1 was exactly this pair of backends colliding.
+      emit({ k: "model_loading", v: { model: visionModel, ctx: visionCtx, contextProfile: contextProfileForModel(visionModel) } });
       const parked = servingModel();
-      if (parked) stopServing();
+      const runtime = await activatePublicModel(visionModel, visionCtx);
 
       const ollamaMessages = incoming.map((m, i) =>
         i === incoming.length - 1 && m.role === "user"
@@ -132,43 +136,39 @@ export async function POST(req: NextRequest) {
         const upstream = await fetch("http://127.0.0.1:11434/api/chat", {
           method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: visionModel, messages: ollamaMessages, stream: true, think,
-          options: { temperature: s.options.temperature, top_p: s.options.top_p, top_k: s.options.top_k, num_ctx: s.options.num_ctx, num_predict: s.options.num_predict },
+          model: runtime.runtimeProfile, messages: ollamaMessages, stream: true, think,
+          options: { temperature: runtimeSettings.temperature, top_p: runtimeSettings.topP, top_k: runtimeSettings.topK, num_ctx: runtime.context, num_predict: runtimeSettings.maxOutputTokens },
         }),
           signal,
         });
         if (!upstream.ok || !upstream.body) throw new Error("vision upstream error: " + upstream.status);
-        emit({ k: "model_ready", v: { model: visionModel, ctx: s.options.num_ctx, backend: "ollama" } });
-        await pumpOllama(upstream, emit, signal, acc, s.options.num_ctx);
+        emit({ k: "context_profile", v: runtime.contextProfile });
+        emit({ k: "model_ready", v: { model: visionModel, ctx: runtime.context, backend: runtime.backend, contextProfile: runtime.contextProfile, runtimeProfile: runtime.runtimeProfile } });
+        await pumpOllama(upstream, emit, signal, acc, runtime.context);
       } finally {
         // A stopped/failed generation still persists whatever streamed so far —
         // same behavior the old inline stream had.
         if (acc.full) saveReply(acc.full);
-        if (parked) { try { await ensureServing(parked); } catch { /* next text message will surface it */ } }
+        if (parked && parked !== visionModel) { try { await activatePublicModel(parked); } catch { /* next text message will surface it */ } }
       }
     });
     return NextResponse.json({ runId: meta.id, conversationId: cid }, { headers: { "x-conversation-id": cid } });
   }
 
-  const requestedModel = typeof b.model === "string" && allModels().some((m) => m.name === b.model) ? b.model : s.model;
+  const requestedModel = requestedTextModel;
   if (!requestedModel) return new Response("no model available — train or install one", { status: 409 });
   convo.model = requestedModel;
 
-  const modelInfo = allModels().find((model) => model.name === requestedModel);
-  const useOllama = modelInfo?.source === "ollama" && /gemma/i.test(requestedModel);
+  const requestedContext = resolvedContextTarget(requestedModel);
   const meta = startRun({ kind: "chat", conversationId: cid, model: requestedModel }, async (emit, signal) => {
     // Serving happens INSIDE the run — a cold model load can take a minute, and the
     // POST reply must not wait on it (the client is already attached and watching).
-    emit({ k: "model_loading", v: { model: requestedModel, ctx: s.options.num_ctx } });
-    // Gemma's Ollama manifests are not reliably executable through this pinned
-    // llama.cpp build.  Chat had missed the compatibility routing already used
-    // by Code, Hive, and vision, causing the small Gemmas to fail despite working
-    // directly in Ollama.
-    if (useOllama) stopServing();
-    else await ensureServing(requestedModel);
+    emit({ k: "model_loading", v: { model: requestedModel, ctx: requestedContext, contextProfile: contextProfileForModel(requestedModel) } });
+    const runtime = await activatePublicModel(requestedModel, requestedContext);
+    const useOllama = runtime.backend === "ollama";
 
     const payload: Record<string, unknown> = {
-      model: requestedModel,
+      model: runtime.runtimeProfile,
       messages: system ? [{ role: "system", content: system }, ...incoming] : incoming,
       stream: true,
       // Required for llama-server to include usage on a streamed response — the
@@ -179,12 +179,12 @@ export async function POST(req: NextRequest) {
       // combination), so the agent path can't have this until llama.cpp lifts it.
       logprobs: true,
       top_logprobs: 8,
-      temperature: s.options.temperature,
-      top_p: s.options.top_p,
-      top_k: s.options.top_k,
-      repeat_penalty: s.options.repeat_penalty,
+      temperature: runtimeSettings.temperature,
+      top_p: runtimeSettings.topP,
+      top_k: runtimeSettings.topK,
+      repeat_penalty: runtimeSettings.repeatPenalty,
     };
-    if (s.options.num_predict > 0) payload.max_tokens = s.options.num_predict;
+    if (runtimeSettings.maxOutputTokens > 0) payload.max_tokens = runtimeSettings.maxOutputTokens;
     if (!think) payload.chat_template_kwargs = { enable_thinking: false };
 
     const acc = newReplyAccumulator();
@@ -192,13 +192,14 @@ export async function POST(req: NextRequest) {
       if (useOllama) {
         const upstream = await fetch("http://127.0.0.1:11434/api/chat", {
           method: "POST", headers: { "content-type": "application/json" }, signal,
-          body: JSON.stringify({ model: requestedModel, messages: system ? [{ role: "system", content: system }, ...incoming] : incoming, stream: true, think,
-            options: { temperature: s.options.temperature, top_p: s.options.top_p, top_k: s.options.top_k, num_ctx: s.options.num_ctx, num_predict: s.options.num_predict },
+          body: JSON.stringify({ model: runtime.runtimeProfile, messages: system ? [{ role: "system", content: system }, ...incoming] : incoming, stream: true, think,
+            options: { temperature: runtimeSettings.temperature, top_p: runtimeSettings.topP, top_k: runtimeSettings.topK, num_ctx: runtime.context, num_predict: runtimeSettings.maxOutputTokens },
           }),
         });
         if (!upstream.ok || !upstream.body) throw new Error("Ollama upstream error: " + upstream.status);
-        emit({ k: "model_ready", v: { model: requestedModel, ctx: s.options.num_ctx, backend: "ollama" } });
-        await pumpOllama(upstream, emit, signal, acc, s.options.num_ctx);
+        emit({ k: "context_profile", v: runtime.contextProfile });
+        emit({ k: "model_ready", v: { model: requestedModel, ctx: runtime.context, backend: runtime.backend, contextProfile: runtime.contextProfile, runtimeProfile: runtime.runtimeProfile } });
+        await pumpOllama(upstream, emit, signal, acc, runtime.context);
         return;
       }
       let upstream = await fetch(`http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
@@ -219,8 +220,9 @@ export async function POST(req: NextRequest) {
         });
       }
     if (!upstream.ok || !upstream.body) throw new Error("upstream error: " + upstream.status);
-      emit({ k: "model_ready", v: { model: requestedModel, ctx: s.options.num_ctx, backend: "llama.cpp" } });
-      await pumpOpenAI(upstream, emit, acc, s.options.num_ctx);
+      emit({ k: "context_profile", v: runtime.contextProfile });
+      emit({ k: "model_ready", v: { model: requestedModel, ctx: runtime.context, backend: runtime.backend, contextProfile: runtime.contextProfile } });
+      await pumpOpenAI(upstream, emit, acc, runtime.context);
     } finally {
       if (acc.full) saveReply(acc.full);
     }

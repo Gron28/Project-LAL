@@ -107,6 +107,10 @@ import {
 } from '../utils/generateContentResponseUtilities.js';
 import type { ModifyContext } from '../tools/modifiable-tool.js';
 import {
+  formatArtifactValidation,
+  validateArtifact,
+} from '../services/artifact-validation-service.js';
+import {
   isModifiableDeclarativeTool,
   modifyWithEditor,
 } from '../tools/modifiable-tool.js';
@@ -1169,6 +1173,33 @@ function partitionToolCalls(calls: ScheduledToolCall[]): ToolBatch[] {
   }, []);
 }
 
+/** Collapse byte-different retries of the same known-bad operation into one
+ * circuit-breaker key. Local models commonly vary only the generated payload
+ * length after an oversized mutation rejection, defeating exact error-string
+ * counters while repeating the identical full-file strategy. */
+export function validationFailureFingerprint(
+  toolName: string,
+  errorMessage: string,
+): string {
+  const canonicalName = canonicalToolName(toolName);
+  if (
+    /payload too large|exceeds the \d[\d,]*-character limit/i.test(errorMessage)
+  ) {
+    return `${toolName}:strategy:file-mutation:oversized-payload`;
+  }
+  if (
+    /output.{0,24}truncat|response was truncated|tool call.{0,24}truncat/i.test(
+      errorMessage,
+    )
+  ) {
+    return `${toolName}:strategy:${canonicalName}:output-truncated`;
+  }
+  if (/path is a directory, not a file/i.test(errorMessage)) {
+    return `${toolName}:strategy:${canonicalName}:directory-as-file`;
+  }
+  return `${toolName}:${errorMessage}`;
+}
+
 export class CoreToolScheduler {
   private toolRegistry: ToolRegistry;
   private toolCalls: ToolCall[] = [];
@@ -1948,7 +1979,7 @@ export class CoreToolScheduler {
     toolName: string,
     errorMessage: string,
   ): number {
-    const errorKey = `${toolName}:${errorMessage}`;
+    const errorKey = validationFailureFingerprint(toolName, errorMessage);
     const count = (this.validationRetryCounts.get(errorKey) ?? 0) + 1;
     for (const key of this.validationRetryCounts.keys()) {
       if (key.startsWith(`${toolName}:`) && key !== errorKey) {
@@ -2074,9 +2105,7 @@ export class CoreToolScheduler {
               `${TRUNCATION_EDIT_REJECTION}${TRUNCATION_RETRY_LOOP_DIRECTIVE} Increase the response token ceiling with /tokens, then retry with a smaller write/edit.`,
             );
           }
-          const truncationError = new Error(
-            TRUNCATION_EDIT_REJECTION,
-          );
+          const truncationError = new Error(TRUNCATION_EDIT_REJECTION);
           newToolCalls.push({
             status: 'error',
             request: reqInfo,
@@ -2114,7 +2143,9 @@ export class CoreToolScheduler {
 
           const finalError =
             count >= VALIDATION_RETRY_LOOP_THRESHOLD
-              ? new Error(`${invocationOrError.message}${RETRY_LOOP_STOP_DIRECTIVE}`)
+              ? new Error(
+                  `${invocationOrError.message}${RETRY_LOOP_STOP_DIRECTIVE}`,
+                )
               : displayError;
           if (count >= VALIDATION_RETRY_LOOP_THRESHOLD) throw finalError;
 
@@ -4001,6 +4032,37 @@ export class CoreToolScheduler {
         const candidatePaths = Array.from(
           new Set([...inputPaths.map((p) => unescapePath(p)), ...resultPaths]),
         );
+
+        // A successful mutation proves only that bytes changed. Run the cheap
+        // deterministic artifact gate immediately so malformed JSON/JS/HTML,
+        // conflict markers, and broken DOM references cannot be narrated as a
+        // completed implementation. The report is part of the tool outcome the
+        // model and user see; project tests/browser acceptance remain separate.
+        if (
+          canonicalName === ToolNames.WRITE_FILE ||
+          canonicalName === ToolNames.EDIT
+        ) {
+          for (const candidatePath of candidatePaths.slice(0, 8)) {
+            try {
+              const report = validateArtifact(candidatePath);
+              const instruction =
+                report.status === 'failed'
+                  ? '\nFatal validation failed. Repair this artifact before adding features or claiming completion.'
+                  : report.status === 'partial'
+                    ? '\nMutation sanity passed; no language-specific parser ran. A project check is still required before completion.'
+                    : '\nCheap artifact validation passed. Project checks and runtime acceptance are still required before completion.';
+              content = appendAdditionalContext(
+                content,
+                `${formatArtifactValidation(report)}${instruction}`,
+              );
+            } catch (error) {
+              content = appendAdditionalContext(
+                content,
+                `[artifact_validation status=partial artifact=${JSON.stringify(candidatePath)}]\nValidator could not run: ${error instanceof Error ? error.message : String(error)}\n[/artifact_validation]\nValidation unavailable is not completion evidence.`,
+              );
+            }
+          }
+        }
 
         if (candidatePaths.length > 0) {
           const rulesRegistry = this.config.getConditionalRulesRegistry();

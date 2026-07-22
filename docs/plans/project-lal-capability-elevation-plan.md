@@ -1,9 +1,13 @@
 # Project-LAL capability elevation plan
 
-Status: proposed deep plan; subordinate to the foundation roadmap.
+Status: active long-range plan; first model-acquisition, shared-profile,
+context-truth, durable-job, lineage, and defensive-research slices implemented.
+Remaining claims are proposals and stay subordinate to the foundation roadmap.
 Created: 2026-07-19.
-Repository basis: `a2f0ea8cbccc22eba54b9aff0661f6b4b0509e63` plus this
-documentation-only plan change.
+Last reconciled with implementation: 2026-07-22. See the
+[`current-state inventory`](../status/project-lal-current-state.md) for shipped
+behavior and [`unimplemented-work audit`](project-lal-unimplemented-work.md) for
+the live gap list.
 
 This document turns the long-term Project-LAL vision into an ordered technical
 program. It is intentionally not permission to skip the active reliability,

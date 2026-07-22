@@ -657,7 +657,7 @@ describe('BackgroundAgentResumeService', () => {
     expect(registry.get(agentId)?.result).toBe('Resume completed successfully');
   });
 
-  it('stores a fallback when resumed output has no model-visible text', async () => {
+  it('fails resumed work when output has no model-visible text', async () => {
     const sessionId = 'session-resume-empty-visible';
     const agentId = 'agent-resume-empty-visible';
     const metaPath = getAgentMetaPath(tempDir, sessionId, agentId);
@@ -735,10 +735,10 @@ describe('BackgroundAgentResumeService', () => {
 
     expect(resumed).toBeDefined();
     await vi.waitFor(() => {
-      expect(registry.get(agentId)?.status).toBe('completed');
+      expect(registry.get(agentId)?.status).toBe('failed');
     });
-    expect(registry.get(agentId)?.result).toBe(
-      '(subagent produced no model-visible output)',
+    expect(registry.get(agentId)?.error).toContain(
+      'partial and unreviewed',
     );
   });
 

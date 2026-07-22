@@ -9,6 +9,8 @@ import { ICON_SIZE } from "@/components/ui/icon";
 
 type M = { name: string; source: "local" | "ollama"; gb: number };
 type ModelDownloadJob = { id: string; state: string; progress: { phase: string; completed: number; total?: number }; error?: { message: string } };
+type HuggingFaceSearchResult = { id: string; revision: string; licenseName?: string };
+type HuggingFaceFile = { path: string; sizeBytes: number; sha256: string };
 type Doc = { id: string; name: string; folder: string; chars: number; ts: number };
 type DataFile = { name: string; chars: number; kind: "raw" | "sft"; rows?: number | null; sha256?: string };
 type ConvoRow = { id: string; title: string; updatedAt: number; kind: "chat" | "code"; project?: string };
@@ -47,6 +49,9 @@ function Models() {
   const [acceptedLicense, setAcceptedLicense] = useState(false);
   const [downloadStatus, setDownloadStatus] = useState("");
   const [downloads, setDownloads] = useState<ModelDownloadJob[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<HuggingFaceSearchResult[]>([]);
+  const [candidateFiles, setCandidateFiles] = useState<HuggingFaceFile[]>([]);
   const load = () => fetch("/api/agent/models").then((r) => r.json()).then((j) => {
     setDetail(j.modelInfos || j.detail || []);
     setCurrent(j.current || "");
@@ -73,6 +78,23 @@ function Models() {
       if (response.ok) load();
     } catch { setDownloadStatus("Download request failed before transfer started."); }
   };
+  const searchHuggingFace = async () => {
+    setDownloadStatus("Searching Hugging Face metadata…"); setCandidateFiles([]);
+    try { const response = await fetch(`/api/v1/model-sources/huggingface?query=${encodeURIComponent(searchQuery)}`); const body = await response.json(); setSearchResults(body.results || []); setDownloadStatus(response.ok ? `${(body.results || []).length} repositories found.` : `Search failed: ${body.error || "unknown error"}`); }
+    catch { setDownloadStatus("Model search failed."); }
+  };
+  const inspectHuggingFace = async (candidate: HuggingFaceSearchResult) => {
+    setDownloadStatus(`Inspecting pinned ${candidate.id}…`);
+    try {
+      const response = await fetch(`/api/v1/model-sources/huggingface?inspect=1&id=${encodeURIComponent(candidate.id)}&revision=${encodeURIComponent(candidate.revision)}`); const body = await response.json();
+      if (!response.ok) { setDownloadStatus(`Inspection failed: ${body.error || "unknown error"}`); return; }
+      const files = body.model?.files || []; const first = files[0] as HuggingFaceFile | undefined;
+      setModelId(candidate.id); setRevision(candidate.revision); setLicenseName(body.model?.license?.name || candidate.licenseName || ""); setCandidateFiles(files);
+      if (first) { setFilePath(first.path); setDigest(first.sha256); setSizeBytes(String(first.sizeBytes)); }
+      setDownloadStatus(`${files.length} hash-addressed GGUF files found. Select one, review its license, then download.`);
+    } catch { setDownloadStatus("Model inspection failed."); }
+  };
+  const selectCandidateFile = (selectedPath: string) => { const selected = candidateFiles.find((file) => file.path === selectedPath); if (selected) { setFilePath(selected.path); setDigest(selected.sha256); setSizeBytes(String(selected.sizeBytes)); } };
 
   const Row = ({ m }: { m: M }) => {
     const isRenaming = renamingName === m.name;
@@ -105,8 +127,11 @@ function Models() {
         <div className={head}><span className="text-[var(--accent-ai)]">◆</span> ADD VERIFIED HUGGING FACE GGUF</div>
         <div className="p-4 grid gap-2 text-xs">
           <p className="text-[var(--muted)]">This downloads one explicitly pinned file only. Copy the repository, commit hash, exact GGUF path, SHA-256, byte size, and license from its upstream record. The model appears here only after its bytes verify.</p>
+          <div className="flex gap-2"><input className="flex-1 bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="Search Hugging Face model repositories" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") searchHuggingFace(); }} /><button className={btn} onClick={searchHuggingFace}>Search</button></div>
+          {searchResults.length > 0 && <div className="flex flex-wrap gap-1">{searchResults.map((candidate) => <button key={`${candidate.id}:${candidate.revision}`} className={btn} onClick={() => inspectHuggingFace(candidate)} title={`Commit ${candidate.revision}`}>{candidate.id}</button>)}</div>}
           <div className="grid sm:grid-cols-2 gap-2"><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="Local name (e.g. qwen3-4b)" value={modelName} onChange={(event) => setModelName(event.target.value)} /><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="Repository (org/model-GGUF)" value={modelId} onChange={(event) => setModelId(event.target.value)} /></div>
           <div className="grid sm:grid-cols-2 gap-2"><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="Pinned commit hash" value={revision} onChange={(event) => setRevision(event.target.value)} /><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="File path (model-q4.gguf)" value={filePath} onChange={(event) => setFilePath(event.target.value)} /></div>
+          {candidateFiles.length > 0 && <select className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" value={filePath} onChange={(event) => selectCandidateFile(event.target.value)}>{candidateFiles.map((file) => <option key={file.path} value={file.path}>{file.path} · {(file.sizeBytes / 1e9).toFixed(2)} GB</option>)}</select>}
           <div className="grid sm:grid-cols-2 gap-2"><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="SHA-256" value={digest} onChange={(event) => setDigest(event.target.value)} /><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="Exact byte size" inputMode="numeric" value={sizeBytes} onChange={(event) => setSizeBytes(event.target.value)} /></div>
           <div className="flex flex-wrap gap-2 items-center"><input className="flex-1 min-w-48 bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="License name" value={licenseName} onChange={(event) => setLicenseName(event.target.value)} /><label className="flex items-center gap-1 text-[var(--muted)]"><input type="checkbox" checked={acceptedLicense} onChange={(event) => setAcceptedLicense(event.target.checked)} /> I reviewed and accept it</label><button className={btn} onClick={download}>Download verified GGUF</button></div>
           {downloadStatus && <p className="text-[var(--muted)]">{downloadStatus}</p>}

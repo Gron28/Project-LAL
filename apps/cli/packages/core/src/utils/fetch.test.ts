@@ -5,7 +5,37 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { FetchError, formatFetchErrorForUser } from './fetch.js';
+import {
+  FetchError,
+  formatFetchErrorForUser,
+  isPrivateIp,
+  isPrivateNetworkUrl,
+} from './fetch.js';
+
+describe('isPrivateIp', () => {
+  it.each([
+    'http://127.0.0.1:8770/api/models',
+    'http://localhost:8770/api/models',
+    'http://service.local/private',
+    'http://169.254.169.254/latest/meta-data',
+    'http://100.64.0.1/private',
+    'http://[::1]/private',
+    'http://[fd12::1]/private',
+    'http://[::ffff:127.0.0.1]/private',
+  ])('recognizes private and local targets: %s', (url) => {
+    expect(isPrivateIp(url)).toBe(true);
+  });
+
+  it('does not classify a public documentation URL as private', () => {
+    expect(isPrivateIp('https://sqlite.org/isolation.html')).toBe(false);
+  });
+
+  it('rejects literal private targets before DNS resolution', async () => {
+    await expect(isPrivateNetworkUrl('http://127.0.0.1/private')).resolves.toBe(
+      true,
+    );
+  });
+});
 
 function makeTlsError(): Error {
   const tlsCause = new Error('unable to verify the first certificate');
