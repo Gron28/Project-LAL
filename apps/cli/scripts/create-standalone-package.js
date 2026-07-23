@@ -700,6 +700,10 @@ exec "$ROOT/node/bin/node" --expose-gc "$ROOT/lib/cli.js" "$@"
 
   const windowsShim = `@echo off
 setlocal
+rem Switch the console to UTF-8 so non-ASCII output (web search results,
+rem accented file contents, etc.) doesn't render as mojibake under the
+rem legacy OEM code page cmd.exe starts with by default.
+chcp 65001 >nul
 set "ROOT=%~dp0.."
 if "%~1"=="serve" goto serve
 "%ROOT%\\node\\node.exe" --expose-gc "%ROOT%\\lib\\cli.js" %*

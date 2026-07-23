@@ -1214,9 +1214,24 @@ export function retrieveDocs(query: string, k = 4): string {
 }
 
 // ---- web search (DuckDuckGo HTML, no API key) ----
+const HTML_NAMED_ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
+  mdash: "—", ndash: "–", hellip: "…",
+  lsquo: "‘", rsquo: "’", ldquo: "“", rdquo: "”",
+};
+function decodeEntities(s: string) {
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, ent) => {
+    if (ent[0] === "#") {
+      const code = ent[1] === "x" || ent[1] === "X"
+        ? parseInt(ent.slice(2), 16)
+        : parseInt(ent.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+    }
+    return HTML_NAMED_ENTITIES[ent.toLowerCase()] ?? m;
+  });
+}
 function stripHtml(s: string) {
-  return s.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&#x27;/g, "'")
-    .replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
+  return decodeEntities(s.replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
 }
 export async function webSearch(q: string): Promise<string> {
   try {
