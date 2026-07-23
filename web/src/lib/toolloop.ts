@@ -317,7 +317,11 @@ export async function runToolLoop(opts: {
       // Reserve only the minimum viable completion here. The actual request is
       // clamped below to the room left after the current prompt; reserving a
       // fixed 30% of the context rejected otherwise-valid tool turns early.
-      const reserveTokens = 512 + 1024;
+      // The floor is 4096 (not the old 512) so a write_file/edit call generating
+      // a whole file (e.g. a few hundred lines of HTML, ~1.5-2K tokens) never
+      // gets cut off mid-generation while there is genuinely room left in ctx.
+      const MIN_COMPLETION_TOKENS = 4096;
+      const reserveTokens = MIN_COMPLETION_TOKENS + 1024;
       if (estimatedTokens + reserveTokens >= opts.ctx) {
         // Try shrinking before failing: old tool outputs are the bulk of a long
         // transcript and the least valuable part of it.
@@ -334,7 +338,7 @@ export async function runToolLoop(opts: {
       // Fit the actual request to the remaining context after tool schemas and
       // transcript content. A fixed reservation can otherwise pass preflight
       // while the backend rejects the request as "too many tokens".
-      body.max_tokens = Math.min(maxTokens, Math.max(512, opts.ctx - estimatedTokens - 1024));
+      body.max_tokens = Math.min(maxTokens, Math.max(MIN_COMPLETION_TOKENS, opts.ctx - estimatedTokens - 1024));
     }
     // llama-server occasionally returns a transient 5xx immediately after a
     // long/truncated tool-call turn. Retrying the exact idempotent inference
