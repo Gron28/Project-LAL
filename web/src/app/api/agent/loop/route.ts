@@ -80,25 +80,25 @@ DEFAULT PIPELINE (adapt the shape to the task and say when you deviate):
 PROGRESS RULE: after each stage completes, send one short line to the user naming the stage, its outcome, and what's next.`;
 
 const MODES: Record<string, ModePreset> = {
-  default: { label: "default", maxRounds: 24, maxTokens: 8192, ctx: 16384, think: true, temperature: 0, addendum: "", maxResearchCalls: 8 },
+  default: { label: "default", maxRounds: 24, maxTokens: 40960, ctx: 65536, think: true, temperature: 0, addendum: "", maxResearchCalls: 8 },
   "quick-edit": {
-    label: "quick-edit", maxRounds: 8, maxTokens: 8192, ctx: 8192, think: false, temperature: 0,
+    label: "quick-edit", maxRounds: 8, maxTokens: 40960, ctx: 65536, think: false, temperature: 0,
     addendum: "MODE: quick-edit — make the smallest correct change. Read only what the edit requires. Prefer edit_file (a small exact search/replace) over write_file. Verify the change, then stop. Do not use spawn_agent or web_search/web_fetch in this mode — it's for fast, isolated edits only.",
   },
   planning: {
-    label: "planning", maxRounds: 16, maxTokens: 8192, ctx: 16384, think: true, temperature: 0,
+    label: "planning", maxRounds: 16, maxTokens: 40960, ctx: 65536, think: true, temperature: 0,
     addendum: "MODE: planning — explore the codebase read-only; do NOT call write_file, edit_file, or run_shell to modify anything. Your final reply must be a complete implementation plan, plus risks and how to verify the change once implemented. " + CHUNKED_PLAN_INSTRUCTION,
     maxResearchCalls: 6,
   },
   "deep-research": {
-    label: "deep-research", maxRounds: 64, maxTokens: 8192, ctx: 16384, think: true, temperature: 0.3,
+    label: "deep-research", maxRounds: 64, maxTokens: 40960, ctx: 65536, think: true, temperature: 0.3,
     // 6, not 10: a 16K window cannot survive a 10-search floor even with transcript
     // compaction (verified 2026-07-09 — context death at round 12 with no answer).
     minResearchCalls: 6,
     addendum: "MODE: deep-research — this is a genuine deep-research pass, not a quick lookup, and should take real time and many steps, the same way Gemini/GPT/Perplexity's deep-research modes do. Start by decomposing the question into as many distinct sub-questions and angles as it warrants (typically 8-15 for a substantial question) — write them out before searching. Research each one with web_search + web_fetch (a snippet alone is never enough to answer from — open the real page). As you read, generate NEW follow-up sub-questions from gaps, contradictions, or unexpected findings instead of stopping after your first pass; fan independent sub-questions out via spawn_agent when that saves rounds. Track sources as you go. Do not synthesize your final answer until you've covered the breadth you identified — a shallow 1-2 search pass is a WRONG answer in this mode, not merely an incomplete one. Your final reply cites URLs and synthesizes the findings into an answer, noting any disagreements or gaps in what you found.",
   },
   orchestrator: {
-    label: "orchestrator", maxRounds: 120, maxTokens: 8192, ctx: 16384, think: true, temperature: 0.2,
+    label: "orchestrator", maxRounds: 120, maxTokens: 40960, ctx: 65536, think: true, temperature: 0.2,
     defaultModel: "victory6-8b", addendum: ORCHESTRATOR_PROMPT,
   },
 };
@@ -187,9 +187,10 @@ export async function POST(req: NextRequest) {
   // Modes establish a minimum; the host profile supplies the adaptive target.
   // A legacy saved num_ctx can no longer silently undercut the active runtime.
   const ctx = Math.max(2048, preset.ctx, resolvedContextTarget(model));
-  // -1 means "use the mode default". A positive saved setting is honored but
-  // bounded to avoid a single response reserving an unworkable context window.
-  const maxTokens = runtimeSettings.maxOutputTokens > 0 ? Math.min(Math.floor(runtimeSettings.maxOutputTokens), 16384) : preset.maxTokens;
+  // -1 means "use the mode default". A positive saved setting is honored as-is —
+  // toolloop's own per-round budget (ctx - prompt tokens) is what actually keeps
+  // a single request from exceeding the model's context window.
+  const maxTokens = runtimeSettings.maxOutputTokens > 0 ? Math.floor(runtimeSettings.maxOutputTokens) : preset.maxTokens;
 
   const proj = resolveProject(b.project);
   if ("error" in proj) return new Response(proj.error, { status: 400 });

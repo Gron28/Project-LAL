@@ -317,10 +317,10 @@ export async function runToolLoop(opts: {
       // Reserve only the minimum viable completion here. The actual request is
       // clamped below to the room left after the current prompt; reserving a
       // fixed 30% of the context rejected otherwise-valid tool turns early.
-      // The floor is 4096 (not the old 512) so a write_file/edit call generating
-      // a whole file (e.g. a few hundred lines of HTML, ~1.5-2K tokens) never
-      // gets cut off mid-generation while there is genuinely room left in ctx.
-      const MIN_COMPLETION_TOKENS = 4096;
+      // The floor is 40960 (not the old 512) so a write_file/edit call generating
+      // a whole file never gets cut off mid-generation while there is genuinely
+      // room left in ctx — modes now serve at ctx:65536 to make room for this.
+      const MIN_COMPLETION_TOKENS = 40_960;
       const reserveTokens = MIN_COMPLETION_TOKENS + 1024;
       if (estimatedTokens + reserveTokens >= opts.ctx) {
         // Try shrinking before failing: old tool outputs are the bulk of a long
