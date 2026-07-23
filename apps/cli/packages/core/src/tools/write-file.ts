@@ -55,24 +55,6 @@ import { createDebugLogger } from '../utils/debugLogger.js';
 const debugLogger = createDebugLogger('WRITE_FILE');
 
 /**
- * Hard cap on model-authored `content` length. Local models with small
- * context windows commonly try to generate an entire file (or app) in one
- * write_file call; when that content exceeds the provider's max_tokens the
- * response truncates mid-JSON, the tool call fails, and the model retries
- * the exact same monolithic-write strategy — a loop that only escalating
- * the request further compounds (see coreToolScheduler's
- * recordRetryableToolError circuit breaker, which this rejection message
- * feeds into). Rejecting oversized content up front, before any generation
- * budget is spent on a doomed call, is cheaper and steers the model toward
- * an incremental skeleton + edit/append strategy instead.
- *
- * Does not apply to `modified_by_user` content — a human explicitly editing
- * the proposed content in the confirmation UI has already exercised
- * judgment the model's own retry loop hasn't.
- */
-export const MAX_MODEL_WRITE_CHARS = 8_000;
-
-/**
  * Parameters for the WriteFile tool
  */
 export interface WriteFileToolParams {
@@ -658,8 +640,6 @@ export class WriteFileTool
       ToolDisplayNames.WRITE_FILE,
       `Writes content to a specified file in the local filesystem. The file_path argument MUST be an absolute path. Always construct it by combining the project root with the file's relative path (e.g. project root '/path/to/project/' + relative 'foo/bar.txt' = '/path/to/project/foo/bar.txt'). If the user provides a relative path, resolve it against the project root first.
 
-\`content\` is capped at ${MAX_MODEL_WRITE_CHARS} characters. For larger files, write a small skeleton first, then use the edit tool (or repeated append-style edits) to build it up in pieces — do not attempt to generate an entire large file in one call.
-
 The user has the ability to modify \`content\`. If modified, this will be stated in the response.`,
       Kind.Edit,
       {
@@ -716,17 +696,6 @@ The user has the ability to modify \`content\`. If modified, this will be stated
     );
     if (teamMemoryError) {
       return teamMemoryError;
-    }
-
-    const contentLength = (params.content ?? '').length;
-    if (!params.modified_by_user && contentLength > MAX_MODEL_WRITE_CHARS) {
-      return (
-        `Payload too large: content is ${contentLength} characters, ` +
-        `which exceeds the ${MAX_MODEL_WRITE_CHARS}-character limit for a ` +
-        `single ${WriteFileTool.Name} call. Do not use ${WriteFileTool.Name} ` +
-        `for this. Create a small skeleton and use incremental edit/append ` +
-        `tools to build up the file in smaller pieces.`
-      );
     }
 
     return null;

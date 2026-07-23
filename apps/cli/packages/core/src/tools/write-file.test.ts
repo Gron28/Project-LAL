@@ -14,7 +14,7 @@ import {
   type Mocked,
 } from 'vitest';
 import type { WriteFileToolParams } from './write-file.js';
-import { MAX_MODEL_WRITE_CHARS, WriteFileTool } from './write-file.js';
+import { WriteFileTool } from './write-file.js';
 import { ToolErrorType } from './tool-error.js';
 import type { FileDiff, ToolEditConfirmationDetails } from './tools.js';
 import { ToolConfirmationOutcome } from './tools.js';
@@ -203,27 +203,10 @@ describe('WriteFileTool', () => {
       expect(() => tool.build(params)).toThrow(`Missing or empty "file_path"`);
     });
 
-    it('should reject model-authored content over MAX_MODEL_WRITE_CHARS', () => {
+    it('should allow arbitrarily large model-authored content', () => {
       const params = {
         file_path: path.join(rootDir, 'big.txt'),
-        content: 'x'.repeat(MAX_MODEL_WRITE_CHARS + 1),
-      };
-      expect(() => tool.build(params)).toThrow(/Payload too large/);
-    });
-
-    it('should allow content exactly at MAX_MODEL_WRITE_CHARS', () => {
-      const params = {
-        file_path: path.join(rootDir, 'ok.txt'),
-        content: 'x'.repeat(MAX_MODEL_WRITE_CHARS),
-      };
-      expect(() => tool.build(params)).not.toThrow();
-    });
-
-    it('should allow oversized content when modified_by_user is true', () => {
-      const params = {
-        file_path: path.join(rootDir, 'user-edited.txt'),
-        content: 'x'.repeat(MAX_MODEL_WRITE_CHARS + 1),
-        modified_by_user: true,
+        content: 'x'.repeat(1_000_000),
       };
       expect(() => tool.build(params)).not.toThrow();
     });
