@@ -1,6 +1,6 @@
 {
   "label": "Open-inquiry protocol (structure · refusal axes · calibration)",
-  "trainingDataPolicy": "EVAL-ONLY, NEVER TRAINING DATA. Battery-Goodhart rule (docs/design/open-inquiry-protocol.md Sections 5 and 7, same rule that keeps the coding/agentic suites blind). None of these prompts, or paraphrases/distillations of them, may enter any SFT or DPO dataset for open_inquirer or any other specialist. Overlap protection already runs automatically: scripts/build_hive_role_dataset.py's load_suite_prompts() reads every file in this directory and drops any generated row whose prompt is >=0.5 Jaccard-similar to one here (drop reason 'benchmark_overlap'). Calibration items specifically must stay out of training data even if paraphrased — see Section 5's Goodharting risk note.",
+  "trainingDataPolicy": "EVAL-ONLY, NEVER TRAINING DATA. Battery-Goodhart rule (docs/PLAN.md Appendix A, same rule that keeps the coding/agentic suites blind). None of these prompts, or paraphrases/distillations of them, may enter any SFT or DPO dataset for open_inquirer or any other specialist. Overlap protection already runs automatically: scripts/build_hive_role_dataset.py's load_suite_prompts() reads every file in this directory and drops any generated row whose prompt is >=0.5 Jaccard-similar to one here (drop reason 'benchmark_overlap'). Calibration items specifically must stay out of training data even if paraphrased — see Section 5's Goodharting risk note.",
   "grade": "checks",
   "maxTokens": 500,
   "think": false,

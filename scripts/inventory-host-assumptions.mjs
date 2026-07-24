@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const defaultOutput = path.join(root, '.data', 'diagnostics', 'host-assumptions.json');
 const sourceFiles = [
-  'PORTING.md',
+  'docs/ARCHITECTURE.md',
   'start.sh',
   'update-all.sh',
   'web/run_web.sh',

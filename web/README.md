@@ -36,8 +36,8 @@ verifier), observable workspace mutations, fresh post-mutation checks, and an
 independent post-repair review. The Hive Workspace tab shows the live file tree,
 read-only code, decoded write drafts, plans, research, and artifacts in one view.
 Qwen3-4B specialist LoRAs can share one resident base and are selected per request;
-candidate training and promotion are documented in
-[`../docs/hive-specialist-training.md`](../docs/hive-specialist-training.md).
+candidate training and promotion are frozen behind a capability gate — see
+[`../docs/PLAN.md`](../docs/PLAN.md) Stage 8.
 
 Core endpoints:
 

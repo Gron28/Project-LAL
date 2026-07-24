@@ -45,10 +45,15 @@ second system being built today.
 
 ## Documentation
 
-- [Architecture](docs/design/project-lal-architecture.md)
-- [Reliability-first roadmap](docs/plans/project-lal-foundation-roadmap.md)
-- [Single-repository migration plan](docs/plans/project-lal-repository-migration.md)
-- [Documentation map](docs/README.md)
+Two documents, and only two:
+
+- [**The plan**](docs/PLAN.md) — the only plan. Stages, exit gates, and what is
+  deliberately frozen. If work is not in here, it is not committed work.
+- [**Architecture**](docs/ARCHITECTURE.md) — what exists today: the request
+  spine, every directory's purpose, host assumptions, porting notes, and the
+  operational runbook.
+
+`CHANGELOG.md` is the append-only engineering log.
 
 ## Current local use
 

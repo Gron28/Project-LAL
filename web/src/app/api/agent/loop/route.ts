@@ -51,7 +51,7 @@ Example of one correctly-formatted step:
    Done when: POST /todos with {"title":"..."} returns 201 and the new item appears in todos.json`;
 
 // Prompt-driven pipeline, not hardcoded stages in TypeScript: adjustable by editing
-// this string, no redeploy of application logic. See docs/orchestrator-research.md.
+// this string, no redeploy of application logic.
 const ORCHESTRATOR_PROMPT = `MODE: orchestrator — you are a COORDINATOR, not the worker. Direct work you may do yourself: read files, list directories, and maintain your own notes files. Everything else — research, drafting a plan, critiquing it, implementing, testing — is delegated with spawn_agent.
 
 HARD CONSTRAINTS (this machine):

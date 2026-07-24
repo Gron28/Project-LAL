@@ -1,5 +1,5 @@
-// Session → daily → digest pipeline (ReMe-inspired, see docs/agent-memory-research.md
-// §6). Three stages, three different triggers, no cron/background process:
+// Session → daily → digest pipeline (ReMe-inspired). Three stages, three
+// different triggers, no cron/background process:
 //
 //   session: every completed /code run, no model call — a cheap markdown projection of
 //            the conversation that's already being saved (saveConvo stays canonical).

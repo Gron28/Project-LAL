@@ -1,0 +1,558 @@
+# Project-LAL — the plan
+
+**This is the only plan.** Status: authoritative, opened 2026-07-24. It replaces
+every other plan, roadmap, gap audit, findings note, and research doc in this
+repository. If something is not in this file, it is not committed work.
+
+Three documents survive alongside it, and they are not plans:
+
+- `README.md` — what Project-LAL is and how to run it.
+- `CHANGELOG.md` — the append-only engineering log.
+- `docs/ARCHITECTURE.md` — what exists today, produced by Stage 0.
+
+Everything else in `docs/` is deleted at the end of Stage 0. Decisions worth
+keeping from those documents are carried into Appendix A of this file. Git
+history retains the originals.
+
+---
+
+## The one goal
+
+> Give LAL a normal website request, and it must continue until a complete,
+> working, validated website exists on disk.
+
+Restated as the single benchmark this plan is measured by:
+
+### HTML-001
+
+Prompt: *"create a single-file interactive website"* (fixed wording, fixed
+follow-ups, defined in Stage 1).
+
+A run **passes** only when every one of these is true:
+
+1. `index.html` exists on disk.
+2. The full requested implementation is present — not a stub, not a subset.
+3. HTML and JS parse without error.
+4. The page loads with no fatal console error.
+5. Every requested control functions when exercised.
+6. The requested visualization renders.
+7. An interrupted write **resumed** rather than restarted.
+8. No previously-accepted code was regenerated.
+9. The agent validated the result before claiming completion.
+
+Tracked per run, always: completion rate, browser-load rate, functional pass
+rate, tool failures, retry count, tokens consumed, regenerated-content waste,
+wall-clock spent on discarded work.
+
+**The bar: 9 of 10 consecutive runs pass, on Windows, unattended.**
+
+Nothing in Stage 8 begins before that bar is met. Not HIVE, not training, not
+new models, not bigger context, not more agents.
+
+---
+
+## Rules that govern this plan
+
+1. **Measurement precedes repair.** Stage 1 builds the harness. Every later
+   stage is judged by its effect on HTML-001, not by whether code was written.
+2. **Diagnosis precedes fix.** Any item marked `DIAGNOSE` must produce a written
+   root cause with a reproduction before a fix is designed. No speculative fixes.
+3. **A stage is not done when the code lands.** It is done when its exit gate
+   passes. Gates are mechanical, not judgement calls.
+4. **The model proposes; the runtime decides.** "Done" from a model is never
+   evidence.
+5. **Freeze on capability.** No new feature, model, or agent capability enters
+   the product before Stage 8. Bug fixes and deletions are always allowed.
+6. **Delete before you add.** Where a stage can be satisfied by removing code,
+   removal is the preferred implementation.
+7. **Unknown stays visibly unknown.** No status value may degrade into a
+   plausible-looking default.
+
+---
+
+## Stage 0 — Know what we have, then cut
+
+**Why first:** the repo is 3,522 tracked files, of which 3,170 are an inherited
+CLI fork we did not write. Cleanup decisions made without that map are guesses.
+
+### 0.1 Full repository map → `docs/ARCHITECTURE.md`
+
+Every directory, every significant file, every major section within the large
+files. Not prose — a navigable reference. Required contents:
+
+- Top-level layout with size, tracked-file count, and one-line purpose.
+- `web/src` (25.7k LOC, 201 files): every route, lib, and component with its
+  responsibility and its callers.
+- `apps/cli` (~575k LOC): package-level map, and within it an explicit
+  classification of every top-level source directory as **LAL-authored**,
+  **inherited-and-used**, **inherited-and-dead**, or **unknown**.
+- `scripts/` (48 files): each classified as **operational**, **one-off**, or
+  **dead**, with evidence (referenced from where?).
+- Untracked working roots (`models/` `out/` `llama/` `workspace/` — 37G): what
+  generates them, what reads them, what is safe to delete.
+- The data-flow spine: CLI turn → gateway → llama-server → tool dispatch →
+  filesystem, named file by file.
+
+**Done when:** a reader who has never seen the repo can locate the code
+responsible for any observed behavior without grep.
+
+### 0.2 Dead-code and dead-script census
+
+Output: one list of every file proposed for deletion, with the evidence that
+nothing references it. No deletions in this step — the list is the deliverable.
+
+### 0.3 Documentation collapse
+
+Write Appendix A of this file (decisions preserved), then delete:
+
+```
+docs/plans/                     (all 5)
+docs/status/                    (1 — content absorbed into ARCHITECTURE.md)
+docs/design/                    (all 15)
+docs/history/                   (1)
+docs/agent-memory-research.md
+docs/cli-amnesia-findings.md
+docs/cli-gateway-hive-inventory.md
+docs/cli-looping-findings.md
+docs/cli-subagent-findings.md
+docs/cli-visibility-findings.md
+docs/hive-specialist-training.md
+docs/lal-cli-foundation-research.md
+docs/orchestration-frameworks-research.md
+docs/orchestrator-research.md
+docs/victory6-architecture-research.md
+docs/victory6-data-research.md
+docs/victory6-model-research.md
+docs/README.md                  (index for docs that no longer exist)
+web/docs/hive-evaluation-2026-07-09.md
+PORTING.md                      (content → ARCHITECTURE.md)
+```
+
+`AGENTS.md`, `web/AGENTS.md`, `web/CLAUDE.md`, `SECURITY.md` are operating
+instructions, not plans — they stay.
+
+**Exit gate 0:** `docs/` contains exactly `PLAN.md` and `ARCHITECTURE.md`.
+`git grep -l` finds no surviving reference to a deleted path. The dead-code
+census exists and is unapplied.
+
+---
+
+## Stage 1 — Build the instrument
+
+**Why here:** every finding in the Windows testing round was reported as a
+narrative. None of it is currently measurable. Until HTML-001 runs on demand
+and emits numbers, we cannot tell a fix from a coincidence.
+
+### 1.1 HTML-001 harness
+
+A single command that runs the benchmark end to end and emits one JSON record
+per run with all nine pass conditions and all eight metrics. Must run
+unattended, on Windows and Linux, against a named model and a pinned LAL build.
+
+### 1.2 Local observability — keep the signal, cut the phone-home
+
+The problem was never diagnostic visibility; it was external reporting. Two
+separate jobs, done together because they touch the same files:
+
+- **Remove:** vendor/upstream telemetry, Alibaba RUM defaults, startup registry
+  checks, upstream update checks, `qwen-logger/`, inherited analytics exporters.
+- **Keep and strengthen, all local, all on disk:** tool calls and failures,
+  model invocations, context/token usage, compaction events, file revisions,
+  state transitions, resource usage, research evidence, validation results,
+  recovery/resume events.
+
+Every HTML-001 run produces a complete local trace. A failed run must be
+explainable from its trace alone, without reproducing it.
+
+### 1.3 Baseline
+
+Run HTML-001 ten times against current `main`. Record it. This number is the
+control for everything that follows. **Do not fix anything before this exists.**
+
+### 1.4 Free variables, measured not assumed
+
+Two cheap changes that may move the baseline. Each is applied alone and
+re-measured, so its effect is attributable:
+
+- **Ollama 0.30.10 → 0.32.3.** Release notes covering the gap include
+  *"tools now ignore braces appearing inside JSON strings when identifying tool
+  call boundaries"* (0.30.12) and *"enhanced tool calling and multi-turn
+  reasoning for Gemma 4"* (0.32.1). Both plausibly touch our known Gemma 4
+  argument-drop bug. Requires root; restarts the daemon; briefly interrupts the
+  `~/Desktop/inbox` service on `:11434`. If it lands, the gemma4 argument-alias
+  workaround is deleted rather than maintained.
+- **Model choice.** Establish HTML-001 baselines for each serveable model so
+  later stages are not silently comparing across different models.
+
+**Exit gate 1:** `bench html-001 --runs 10` produces a machine-readable report.
+A deliberately broken build is correctly reported as failing. The baseline is
+recorded in `CHANGELOG.md`.
+
+---
+
+## Stage 2 — One execution kernel, one tool dispatch
+
+**Closes:** "tool routing is broken", "one authoritative execution kernel".
+
+**Why here:** this is the failure the user hit first and hardest, and it is the
+substrate every later stage sits on.
+
+### 2.1 `DIAGNOSE` — the shell-fallback bug
+
+Symptom: the model calls typed tools (`agent`, `tool_search`, `web_search`,
+`web_fetch`) and LAL sometimes executes them through the raw Windows shell,
+producing `'agent' is not recognized as a command`.
+
+**Ruled out 2026-07-24:** an allowlist name mismatch in the gateway. The gateway
+filters tools against `LAL_TERMINAL_TOOLS`
+(`web/src/app/api/llm/v1/chat/completions/route.ts:10`) and silently drops
+non-members at line 94 — but `agent`, `tool_search`, `web_search`, and
+`web_fetch` are all present and match `apps/cli/packages/core/src/tools/tool-names.ts`
+exactly. The cause is elsewhere.
+
+Remaining hypotheses, to be tested against a captured trace, not reasoned about:
+
+- The model emits tool-shaped **text** that a parser converts to a shell command.
+- The model chooses `run_shell_command` on its own because a tool it was told
+  about in the system prompt is absent from the actual payload (the prompt and
+  the allowlist are separately maintained — verify they agree).
+- A Windows-only path in the dispatch chain that Linux never exercises.
+- Tools loaded lazily through `tool_search` are dropped by the same line-94
+  filter when their schemas arrive, leaving the model to improvise.
+
+**Deliverable:** a written root cause plus a failing test that reproduces it.
+
+### 2.2 One tool registry
+
+A single declaration per tool — name, schema, handler, availability — consumed
+by CLI, gateway, and web. No second list. No prompt text that names a tool the
+registry does not export.
+
+### 2.3 Native dispatch only
+
+A typed tool name resolves to its handler or produces an explicit, typed
+"tool unavailable" error naming the tool. **A typed tool name never reaches a
+shell.** The silent `return []` at route.ts:94 becomes a logged, surfaced drop.
+
+### 2.4 The kernel
+
+One component owns: workflow state, tool dispatch, model scheduling, resource
+leases, event emission, retry policy, cancellation, compaction persistence,
+recovery, validation, and completion. Research, subagents, HIVE, coding, and
+file operations become **callers** of it, not parallel implementations of it.
+
+Today `web/src/lib/tools.ts` (495 LOC), `agent-tools.ts` (580), and
+`toolloop.ts` (672) each hold part of this, and the CLI holds another. That is
+the duplication to collapse.
+
+### 2.5 Subagents are context isolation, not concurrency
+
+This box runs roughly one model at a time. The scheduler must reflect that
+whatever the model believes. Do not remove the model's parallel-planning
+instinct — bound the scheduler underneath it. Also fixes: research must not open
+real Firefox windows; fetch is headless.
+
+**Exit gate 2:** no typed tool name can reach a shell (test-enforced). One
+registry is the only source of tool identity (import-boundary check). HTML-001
+tool-failure count drops measurably against the Stage 1 baseline.
+
+---
+
+## Stage 3 — Work is durable
+
+**Closes:** "file writing must be transactional and resumable", "exact-string
+editing is too fragile".
+
+**Why here:** the most expensive observed failure. A truncated response discards
+accepted work and forces regeneration, which burns the context that caused the
+truncation. Raising limits only moves the wall — 40,960 max_tokens and 65,536
+ctx were already raised and the symptom persisted on lal.30.
+
+### 3.1 Resumable transactional writer
+
+Begin a draft. Persist completed chunks as they land. Record the last
+successfully written position. After an interruption, resume from exactly that
+position. The previous valid file is untouched throughout. Only after the
+completed draft validates is the original atomically replaced.
+
+**No already-accepted generated content is ever regenerated.** That is the
+acceptance criterion, and HTML-001 condition 8 measures it.
+
+### 3.2 `DIAGNOSE` — the residual truncation path
+
+The 8,000-char model-authored caps were removed and the token floors raised, yet
+Windows lal.30 still showed the symptom. Either the fix had not reached that
+client, or a second truncation path exists. Find which. Do not assume the
+earlier fix covers it.
+
+### 3.3 Revision-aware editing
+
+Replace anchor-based literal-text matching with edits addressed by line range,
+symbol, DOM node, or content hash. Every mutation verifies that unrelated
+content was not removed, and rolls back automatically on a damaging patch.
+Observed damage to prevent: deleted unrelated controls, duplicated CSS rules,
+re-read loops hunting for a valid anchor.
+
+**Exit gate 3:** a run killed mid-write resumes and completes with byte-identical
+prior content. A drifted-whitespace edit succeeds. A patch that removes unrelated
+content is rejected and rolled back. HTML-001 regeneration-waste approaches zero.
+
+---
+
+## Stage 4 — The loop knows when to stop
+
+**Closes:** "research must be cancellable and adaptive", "failure circuit
+breakers", "session turn limits".
+
+### 4.1 Circuit breakers
+
+After 2–3 identical failures for the same reason: classify and change strategy.
+Never blind-retry. Required classifications:
+
+| Failure | Response |
+|---|---|
+| Search provider broken | Stop, report infrastructure problem, offer to continue without research |
+| HTTP 403 | Try an alternate source |
+| Truncated write | Resume via the artifact writer (Stage 3) |
+| Missing edit anchor | Reread, regenerate a revision-aware patch (Stage 3) |
+
+A repeated failing action must never consume dozens of turns or hundreds of
+thousands of tokens.
+
+### 4.2 Evidence-based research completion
+
+Replace the fixed quota (currently six searches, four opened sources) with an
+evidence test: were the questions answered, is there credible independent
+evidence, does material uncertainty remain. **"Stop" from the user stops it
+immediately** — the observed failure was the controller continuing to force
+quota after an explicit stop.
+
+### 4.3 Session continuity
+
+Visible CLI controls for: max session turns, unlimited-turn mode,
+continue-latest vs. resume-a-specific-session, remaining turn budget, and an
+explicit reason the session stopped (turns / context / cancellation / error).
+Resuming preserves exact project state — no new chat, no redeploy.
+
+**Exit gate 4:** a forced-failing provider stops within 3 attempts and reports.
+"Stop" during research halts within one turn. A session resumed after a turn
+limit continues with full state.
+
+---
+
+## Stage 5 — State survives compaction
+
+**Closes:** "context compaction must not erase working state".
+
+Observed: after compaction the model still knew what it was doing, but the
+file-editing subsystem had forgotten the file was already read. Conversation
+history and runtime working state are different things and must be stored
+differently.
+
+Survives compaction, mandatory: current objective and task, decisions and
+constraints, current plan revision, files already inspected, file revision
+hashes, active artifact drafts, completed tool actions, validation results, and
+failed actions that must not be repeated.
+
+**Exit gate 5:** a forced compaction mid-HTML-001 does not cause a re-read, a
+regeneration, or a repeat of a known-failed action.
+
+---
+
+## Stage 6 — The runtime decides completion
+
+**Closes:** "completion must be decided by acceptance tests, not model
+confidence".
+
+For website work, before any completion claim, LAL automatically: parses the
+HTML/JS, opens the page, inspects console errors, confirms required DOM elements
+exist, exercises important controls, captures visual evidence, repairs defects
+found, and repeats validation until clean or a bounded give-up with an honest
+report.
+
+Generalized: **every workflow type declares acceptance criteria the runtime can
+check.** A model's completion claim is a proposal that enters validation. It is
+never the terminal state.
+
+**Exit gate 6:** an intentionally broken generated site is caught, repaired, and
+re-validated without user intervention — and if it cannot be repaired, LAL says
+so plainly rather than claiming success.
+
+---
+
+## Stage 7 — It is our product
+
+**Closes:** the "ON STRUCTURE WORK" cleanup. Deliberately after the functional
+work, because deleting code you depend on is only safe once HTML-001 can prove
+you did not break anything.
+
+### 7.1 Apply the Stage 0.2 census
+
+Delete the dead code and dead scripts. HTML-001 must still pass at Stage 6
+levels after each deletion batch.
+
+### 7.2 Remove the inherited surface
+
+Cloud providers, enterprise channels, public docs site, desktop app, mobile MCP,
+general SDKs, computer-use driver, broad locale machinery, upstream GitHub
+automation, the `lab-agent` transitional path, upstream package names, badges,
+release routes, and installation paths. Establish one dependency story and one
+release path. The full build still references absent `packages/webui` and
+`packages/web-shell` workspaces — resolve or remove.
+
+### 7.3 Name ownership
+
+Remove **Qwen** and **Gemini** from code, UI, and product identity — 2,402
+`qwen`, 1,194 `google`, 397 `gemini` occurrences and 59 file paths today. The
+product may still *run* Qwen models; that is fine and unrelated. Attribution
+lives in `NOTICE-LAL.md`, not baked into the product's identity. Left as-is it
+reads as a cheap clone.
+
+### 7.4 CLI usability defects
+
+- The chat region collapses to a ~40px strip between header and footer. Lean the
+  header/footer, or fold the header into the scrolling chat area. Keep the logo.
+- **Text cannot be selected or copied in the CLI.** Separate bug from the layout
+  squeeze, and called out as crucial.
+- The web UI's look does not match CLI branding — one paint pass, both surfaces.
+
+**Exit gate 7:** a fresh clone builds and runs with documented steps. No
+inherited brand name appears in code, UI, or release artifacts. HTML-001 still
+passes at the Stage 6 rate. Text is selectable in the CLI.
+
+---
+
+## Stage 8 — Gated capability restoration
+
+**Precondition, absolute: HTML-001 passes 9 of 10 consecutive unattended runs on
+Windows.** Until that is recorded in `CHANGELOG.md`, this stage does not exist.
+
+Each item below is restored only through its own gate — and only if it still
+matters when we get here. Ordering within the stage is decided then, not now.
+
+| Capability | Gate |
+|---|---|
+| HIVE workflows | Lifecycle, process ownership, evidence, approvals, recovery, and remote tool dispatch pass end to end |
+| Benchmarking | Immutable suite/model/runtime/hardware identity, repeats, raw evidence, comparison without a fake universal score, retention |
+| Training | Isolated reproducible environments, dataset lineage, bounded storage, checkpoints, evaluation, and one demonstrated useful promotion |
+| Lens | Model availability, idle-stop, and cleanup proven with an installed model |
+| Storage quotas | Registry-backed quotas, retention, cleanup tests, disk-pressure behavior across all mutable roots |
+| Cross-device parity | One conversation identity and event stream for CLI, web, and phone |
+| Authorization boundary | Destructive model/filesystem/Git/training/HIVE/download actions gated; network placement is not authorization |
+
+### Research parked here, not lost (from 2026-07-24)
+
+- **Unsloth for AMD.** Would replace the bespoke HQQ streaming trainer, chunked
+  CE, CPU-embedding offload, and drop-at-1024 logic in
+  `scripts/finetune_hqq.py`, all of which exist solely because bitsandbytes had
+  no RDNA2 kernels. Risk: their support matrix lists RDNA2 as *gfx1030 only,
+  Linux only*, and this box is **gfx1032** (RX 6650 XT). We already run training
+  under `HSA_OVERRIDE_GFX_VERSION=10.3.0`, so it may work; the realistic failure
+  is a silently miscompiled Triton kernel, not a crash. Test: throwaway venv
+  (never `.venv` — their installer brings its own ROCm and PyTorch), 50-step
+  QLoRA, compare the loss curve against a matched `finetune_hqq.py` run.
+- **Heretic (automated abliteration).** Optimizes refusals *and* KL divergence
+  from the original — the same two-axis shape as the open-inquiry protocol's
+  never-average-these rule. Correct composition: abliterate the base, *then* LoRA
+  the specialist on top, so training can re-teach the transform-don't-terminate
+  boundary the ablation removes. Reverse order strips the trained behavior.
+- **Outstanding now, not deferred:** `models/qwen35-9b-fable-heretic-q4.gguf` is
+  already serving traffic via `web/.data/context-profiles.json` without ever
+  passing the `open-inquiry` suite. Measuring an already-live model is not
+  capability expansion. Do it during Stage 1 alongside the other baselines.
+
+---
+
+## Appendix A — decisions preserved from deleted documents
+
+Carried forward so deletion loses nothing load-bearing.
+
+**Architecture and product**
+- Topology: tool execution stays on the client; model inference and
+  authenticated egress come from the owner host. The last synchronized profile
+  remains usable while disconnected.
+- One durable profile per model — context, max output, GPU layers, temperature,
+  top-p, top-k, repeat penalty, thinking — consumed by web chat, web code, the
+  gateway, and running CLI clients.
+- Requested, verified, active, and model-native context are four distinct
+  values. A requested setting is never reported as active before the matching
+  runtime is alive.
+- Changing the saved default does not load it. `Load now` is separate. A running
+  CLI follows a changed host default only while still following the previous
+  one; an explicit `/model` is a session override.
+- Every prompt that can influence LAL's behavior is owned and inspectable, not
+  inherited invisibly.
+
+**Verified hardware facts** *(do not re-derive)*
+- Host GPU: AMD Navi 23 / **gfx1032**, RX 6650 XT, 8GB. `torch 2.5.1+rocm6.2`.
+  Training and serving run under `HSA_OVERRIDE_GFX_VERSION=10.3.0`.
+- Qwen 3.5 9B passed real 60,046- and 100,051-token prompts with correct needle
+  recall using 256 batch/micro-batch, flash attention, quantized K/V cache, one
+  sequence. A different 131K configuration reset the Vulkan device at 13,824
+  tokens and is **not** verified.
+- `~/Desktop/inbox` shares this GPU through Ollama on `:11434` and can orphan
+  VRAM invisibly. Check real VRAM at
+  `/sys/class/drm/card*/device/mem_info_vram_used`.
+- Deploy via `scripts/rebuild-local-ai-lab.sh`, which restarts
+  **project-lal.service**. `localailab.service` is a dead legacy unit name.
+- Windows updates require a version bump plus `scripts/release-lal-cli.sh`; a
+  `git push` alone ships nothing.
+
+**Training lessons** *(binding if Stage 8 ever reaches training)*
+- SFT without think blocks lobotomizes Qwen3 reasoning; token throughput is the
+  tell. Format-match training data to the suite's think mode.
+- Sub-3B models need short, distilled, complexity-matched traces — never
+  verbatim long teacher rationales.
+- Over-refusal and harmful compliance are separate axes and are never averaged.
+- Novelty and feasibility are separate dimensions.
+- Visible reasoning is a discipline mechanism, not introspection. It is never
+  evidence of what a model actually computed.
+- The blind-test model (snake) is never trained on and never entered into a
+  suite. Battery suites Goodhart; keep at least one held-out reality check.
+- victory6-8b remains the peak of the victory track. victory7 regressed 5/7
+  suites; victory9 failed the ≥-everywhere promotion bar. Do not resume scaling
+  the mix.
+
+**Deliberately out of scope** — public launch, marketplace, community
+automation, new training campaigns, large dataset commits, desktop and IDE
+products, SDK maintenance, enterprise channels, computer-use automation, and any
+cosmetic redesign that hides missing system truth.
+
+---
+
+## Appendix B — issue closure map
+
+Every item from the 2026-07-23 Windows testing round and the structure-work
+notes, mapped to where it is closed. Nothing is dropped.
+
+| Source finding | Stage |
+|---|---|
+| 1. Tool routing broken / shell fallback | 2.1, 2.2, 2.3 |
+| 2. Research cancellable and adaptive | 4.2 |
+| 3. Failure circuit breakers | 4.1 |
+| 4. Transactional resumable file writing | 3.1 |
+| 5. Exact-string editing too fragile | 3.3 |
+| 6. Compaction erases working state | 5 |
+| 7. Session turn limits interrupt work | 4.3 |
+| 8. Completion by acceptance test | 6 |
+| 9. HTML-001 reliability benchmark | 1.1, 1.3 |
+| 10. Strip vendor telemetry, keep local | 1.2 |
+| 11. One authoritative execution kernel | 2.4 |
+| 12. Reliability consolidation is priority | the whole plan |
+| Raw 1. Research opens real Firefox windows | 2.5 |
+| Raw 2. Subagents = context, not concurrency | 2.5 |
+| Raw 3. Writes still truncated at 100K ctx | 3.2 |
+| Raw 4. Basic agentic reliability | 6 |
+| Raw 5a. Chat region squeezed to 40px | 7.4 |
+| Raw 5b. Cannot select/copy text in CLI | 7.4 |
+| Raw 5c. Web UI doesn't match CLI branding | 7.4 |
+| Structure: understand the whole repo first | 0.1 |
+| Structure: strip the qwen-code cadaver | 7.2 |
+| Structure: remove Qwen/Gemini names | 7.3 |
+| Structure: strip telemetry and cruft | 1.2, 7.1 |
+| Structure: one-off plans and notes are a mess | 0.3 |
+
+**Unresolved from the source material:** the polished "ADDITIONAL CRITICAL
+FINDINGS" list pasted in-session does not appear verbatim in either saved copy
+of `~/Downloads/LAL notes(1).txt`. Both versions were reconciled into the table
+above, so no content is lost, but the discrepancy was never explained.

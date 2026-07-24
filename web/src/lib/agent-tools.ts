@@ -519,7 +519,7 @@ export function makeAgentExecutor(opts: {
 // Orchestrator mode's system prompt tells the model to delegate everything via spawn_agent
 // rather than do direct work — tested live and the model ignored it entirely (0 spawn_agent
 // calls, 16 direct grep calls in an 18-round session). Prompting alone doesn't work
-// (AG2/CrewAI precedent, see docs/orchestration-frameworks-research.md): the fix is removing
+// (AG2/CrewAI precedent — coordinators delegate only when they cannot act): the fix is removing
 // the option, not asking nicer. Keep list/read/write for the coordinator's own note-keeping
 // (_orchestrator/*.md per its system prompt) but cut every tool that lets it do the actual
 // task directly — grep, run_shell, edit_file, web_*, run_python, describe_image all funnel

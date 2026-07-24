@@ -1,6 +1,5 @@
-// Extract-and-dedupe fact loop (Mem0-mechanism-inspired — see
-// docs/agent-memory-research.md §2 — not its Postgres/Neo4j infra, just the
-// extract → add/update/skip decision loop). Targets the orchestrator's
+// Extract-and-dedupe fact loop (Mem0-mechanism-inspired — not its
+// Postgres/Neo4j infra, just the extract → add/update/skip decision loop). Targets the orchestrator's
 // `_orchestrator/findings.md` specifically: of its three files, only findings.md is at
 // real risk of unbounded growth across a long overnight run (repeatedly appended to by
 // many spawn_agent calls) — plan.md is a single mutable document, log.md's growth is

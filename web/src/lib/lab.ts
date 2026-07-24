@@ -1687,7 +1687,7 @@ export function listExperiments(): ExperimentRecord[] {
 
 type SpecialistTrainingRole = "coordinator_planner" | "coder_repairer" | "verifier";
 const SPECIALIST_ROLES = new Set<SpecialistTrainingRole>(["coordinator_planner", "coder_repairer", "verifier"]);
-// The shared-base hot-swap design (docs/hive-specialist-training.md) assumes every role's
+// The shared-base hot-swap design assumes every role's
 // adapter sits on ONE loaded base for cheap per-request switching — that only holds within
 // a base. Training a role on a different base (e.g. mistralai/Ministral-3-8B-Instruct-2512,
 // verified compatible 2026-07-12 after stream_quantize_load gained multimodal-wrapper
