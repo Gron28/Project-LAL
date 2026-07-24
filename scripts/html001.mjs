@@ -358,6 +358,29 @@ const opts = {
   token: readToken(),
 };
 
+// --validate-only <dir>: run just the browser acceptance test against an
+// index.html that already exists. This is how the harness itself is verified —
+// point it at a deliberately broken page and confirm it reports failure
+// (PLAN exit gate 1). No model, no GPU, no token.
+const validateOnly = arg('validate-only', null);
+if (typeof validateOnly === 'string') {
+  const file = path.resolve(validateOnly.endsWith('.html') ? validateOnly : path.join(validateOnly, 'index.html'));
+  if (!fs.existsSync(file)) { console.error(`no such file: ${file}`); process.exit(2); }
+  const page = await validatePage(file, false);
+  const failed = (page.probes || []).filter(p => !p.pass).map(p => p.name);
+  const ok = !page.error && !page.probeCrash
+    && (page.pageErrors || []).length === 0 && (page.consoleErrors || []).length === 0
+    && (page.probes || []).length > 0 && failed.length === 0;
+  console.log(JSON.stringify({
+    file, ok,
+    probesRun: (page.probes || []).length, probesFailed: failed,
+    pageErrors: page.pageErrors ?? [], consoleErrors: page.consoleErrors ?? [],
+    externalRequests: page.externalRequests ?? [],
+    probeCrash: page.probeCrash ?? null, error: page.error ?? null,
+  }, null, 2));
+  process.exit(ok ? 0 : 1);
+}
+
 if (!opts.token) {
   console.error('No LAL token. Set LAL_API_KEY, or run ./start.sh --show-cli-token and export it.');
   process.exit(2);

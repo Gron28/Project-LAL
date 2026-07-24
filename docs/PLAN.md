@@ -149,7 +149,20 @@ A single command that runs the benchmark end to end and emits one JSON record
 per run with all nine pass conditions and all eight metrics. Must run
 unattended, on Windows and Linux, against a named model and a pinned LAL build.
 
+**Built 2026-07-24** as `scripts/html001.mjs` (`npm run bench:html001`).
+Verified against five fixtures: a correct page passes; a page that throws, one
+missing a control, one with an undrawn canvas, and one fetching a remote asset
+each fail through a different mechanism. Eight conditions are measured; 7 is
+`null` until Stage 3 exists.
+
 ### 1.2 Local observability — keep the signal, cut the phone-home
+
+**Scope reduced 2026-07-24.** `lal -p --output-format stream-json` already emits
+a clean machine-readable trace: `usage` token counts, `num_turns`, wall and API
+durations, per-tool `is_error`, `permission_denials`, and a **sha256 per write**
+via `artifact_validation`. Conditions 8 and 9 are measurable today. What remains
+is the removal half, plus compaction events, file-revision history across turns,
+and recovery/resume events (which Stage 3 and Stage 5 generate).
 
 The problem was never diagnostic visibility; it was external reporting. Two
 separate jobs, done together because they touch the same files:
@@ -327,7 +340,21 @@ evidence, does material uncertainty remain. **"Stop" from the user stops it
 immediately** — the observed failure was the controller continuing to force
 quota after an explicit stop.
 
-### 4.3 Session continuity
+### 4.3 Headless has no approval policy
+
+Found 2026-07-24 while building the harness. `lal -p "write a file"` **cannot
+write the file**: `write_file` requires an approval that non-interactive mode
+has no mechanism to grant, so the agent reports "I cannot write the file because
+`write_file` requires explicit permission which cannot be granted in
+non-interactive mode" and stops. Every headless run is read-only unless the
+caller happens to know to pass `--approval-mode=auto-edit`.
+
+That default is defensible for a shell one-liner and wrong for an agent that is
+supposed to build a website. Decide the policy explicitly: a headless run needs
+a stated, discoverable approval posture, and refusing silently by default is not
+it. At minimum the refusal message must name the flag that fixes it.
+
+### 4.4 Session continuity
 
 Visible CLI controls for: max session turns, unlimited-turn mode,
 continue-latest vs. resume-a-specific-session, remaining turn budget, and an
@@ -335,6 +362,7 @@ explicit reason the session stopped (turns / context / cancellation / error).
 Resuming preserves exact project state — no new chat, no redeploy.
 
 **Exit gate 4:** a forced-failing provider stops within 3 attempts and reports.
+A headless run states its approval posture rather than silently refusing.
 "Stop" during research halts within one turn. A session resumed after a turn
 limit continues with full state.
 
@@ -533,7 +561,7 @@ notes, mapped to where it is closed. Nothing is dropped.
 | 4. Transactional resumable file writing | 3.1 |
 | 5. Exact-string editing too fragile | 3.3 |
 | 6. Compaction erases working state | 5 |
-| 7. Session turn limits interrupt work | 4.3 |
+| 7. Session turn limits interrupt work | 4.4 |
 | 8. Completion by acceptance test | 6 |
 | 9. HTML-001 reliability benchmark | 1.1, 1.3 |
 | 10. Strip vendor telemetry, keep local | 1.2 |
