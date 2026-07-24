@@ -291,12 +291,72 @@ completed draft validates is the original atomically replaced.
 **No already-accepted generated content is ever regenerated.** That is the
 acceptance criterion, and HTML-001 condition 8 measures it.
 
-### 3.2 `DIAGNOSE` — the residual truncation path
+### 3.2 The residual truncation path — **diagnosed 2026-07-24**
 
-The 8,000-char model-authored caps were removed and the token floors raised, yet
-Windows lal.30 still showed the symptom. Either the fix had not reached that
-client, or a second truncation path exists. Find which. Do not assume the
-earlier fix covers it.
+The 8,000-char caps were removed and the token floors raised, yet Windows lal.30
+still showed the symptom. There is indeed a second truncation path, and it has
+nothing to do with token limits. The first HTML-001 baseline reproduced it twice
+in ten runs **on Linux, on a 100-line page, at ~600 characters** — so it is
+neither a Windows problem nor a big-file problem.
+
+**The chain, proven end to end:**
+
+1. `llama-server` stops mid-generation while the model is emitting the
+   `write_file` arguments.
+2. The host's gateway sees the upstream socket close:
+   `⨯ Error: failed to pipe response … UND_ERR_SOCKET: other side closed`
+   (`project-lal.service`, 17:57:23 and 18:01:49).
+3. The CLI surfaces `[API Error: terminated]` and the turn ends with no file.
+4. `out/llama-server.log` shows the generation stopping mid-decode, followed by
+   a new `===== launch =====` banner **in the same second** as each failure.
+
+**Ruled out:** no amdgpu ring reset, no segfault, no OOM kill in the kernel log
+at either timestamp. The 10-minute idle reaper is far too slow to be involved.
+
+**The defect, in `web/src/lib/lab.ts`:** `ensureServing()` guards a fast path on
+
+```js
+srv.model === model && requestedLoras === loadedLoras && srv.ctx >= ctx &&
+srv.proc && srv.proc.exitCode === null && (await health())
+```
+
+and when *any* clause fails it calls `tryServe`, whose first two statements are
+`srv.proc?.kill("SIGKILL")` and `pkill -9 -f "llama-server.*--port 8099"`.
+
+**There is no in-flight guard anywhere on that path.** A restart decision made
+for any reason executes an unconditional `kill -9` on a server that may be
+streaming someone's half-written file. `health()` compounds it — a bare `fetch`
+with no timeout whose `catch` turns *every* error into `false`, so one dropped
+probe is enough to authorize the kill.
+
+**Still unproven:** which clause failed on those two runs. That is the remaining
+`DIAGNOSE` work, and it is narrow — instrument the four clauses and re-run the
+baseline.
+
+**The fix, independent of which clause it was:**
+
+1. Reference-count in-flight generations; never kill a server with a live
+   stream. Drain, or refuse the restart and surface why.
+2. `health()` gets a timeout and needs consecutive failures before "dead".
+   One probe must never authorize `kill -9`.
+3. Separate "a different model was requested" from "the server looks unwell" —
+   they deserve different responses.
+4. `pkill -9 -f` matches on a port pattern and will kill any llama-server on
+   that port, owned or not. Kill the tracked child, not a pattern.
+
+**Recovery already exists and is unfinished.** LAL stashed both interrupted
+writes rather than discarding them:
+
+```
+[lal] The interrupted "write_file" call had 579 chars already generated —
+      saved to ~/.lal/tmp/<hash>/recovered-tool-calls/…-write_file.json
+```
+
+Both files are still on disk. This partly contradicts the original report that
+partial code is deleted — it is preserved, but **nothing ever reads it back**.
+Stage 3.1 is therefore less "build a resumable writer" than "finish the one that
+is half-built": consume the stash, resume from it, and make condition 7
+measurable.
 
 ### 3.3 Revision-aware editing
 

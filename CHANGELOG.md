@@ -1,5 +1,34 @@
 # Changelog / engineering log
 
+## 2026-07-24 — One plan, one map, and the first HTML-001 baseline
+
+Documentation collapsed from 38 plans/notes/designs into `docs/PLAN.md` (the
+only plan) and `docs/ARCHITECTURE.md` (what exists). Decisions preserved in
+PLAN Appendix A; all 25 Windows-testing findings mapped to a stage in
+Appendix B.
+
+Deletion census (PLAN 0.2): of ~575k LOC in `apps/cli`, provably dead code is
+~1,200 lines. Reduction is a product decision, not a cleanup. Three earlier
+"deletion candidate" labels — `serve/`, `i18n/`, `acp-integration/` — were
+disproved by the esbuild metafile; all three are actively bundled.
+
+HTML-001 harness added (`npm run bench:html001`). First baseline on this host:
+
+    model qwen35-9b   8/10 pass   avg 97s, 122k tokens, 7 turns
+    regenerated writes 0/10       condition 7 unmeasured (needs Stage 3)
+
+Both failures are the same defect, and it is the Windows truncation bug
+reproduced on Linux at ~600 characters: llama-server stops mid-`write_file`,
+the gateway logs `failed to pipe response … UND_ERR_SOCKET`, and the run ends
+with no file. No GPU reset, no segfault, no OOM — `ensureServing()` has an
+unconditional `SIGKILL` + `pkill -9` restart path with no in-flight guard, and
+a `health()` probe with no timeout whose catch turns any error into "dead".
+See PLAN 3.2. The interrupted content *is* stashed to
+`~/.lal/tmp/<hash>/recovered-tool-calls/` — nothing reads it back yet.
+
+Also found: headless `lal -p` cannot write files at all without
+`--approval-mode=auto-edit` (PLAN 4.3).
+
 A running log of what got built, what broke, and what was learned — kept honest on
 purpose, including the runs that didn't work. Newest first.
 
