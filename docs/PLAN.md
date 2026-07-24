@@ -329,9 +329,32 @@ streaming someone's half-written file. `health()` compounds it — a bare `fetch
 with no timeout whose `catch` turns *every* error into `false`, so one dropped
 probe is enough to authorize the kill.
 
-**Still unproven:** which clause failed on those two runs. That is the remaining
-`DIAGNOSE` work, and it is narrow — instrument the four clauses and re-run the
-baseline.
+**Fixed and re-measured 2026-07-24.**
+
+| | before | after |
+|---|---|---|
+| HTML-001 | 8/10 | **10/10** |
+| llama-server relaunches mid-run | 2 | **0** |
+| `UND_ERR_SOCKET` in the host log | 2 | **0** |
+
+Read that with care. Ten clean runs against a 20% failure rate happens by chance
+about one time in nine, so the pass count alone is suggestive, not conclusive.
+The relaunch count is the stronger signal: the mechanism that destroyed those
+files did not occur at all.
+
+**Which clause failed is still unproven**, and the result narrows it in an
+unexpected direction: the guard's refusal path **never fired** — nothing was
+logged, because no restart was ever attempted. A drain-or-refuse guard can only
+help once something decides to restart. So the change that mattered is most
+likely the `health()` fix: previously one slow probe during heavy decode
+*decided* the server was dead; now three consecutive failures are required, so
+the decision is never reached. That is consistent with the timing (~24s into the
+heaviest generation, when `/health` is slowest to answer) and with the absence
+of any crash evidence.
+
+Not proven, and worth confirming cheaply before trusting it: instrument the five
+clauses and log which one trips. Until then the guard stays as defence in depth
+for the callers that *do* restart deliberately.
 
 **The fix, independent of which clause it was:**
 

@@ -293,21 +293,116 @@ export function allModels(): ModelInfo[] {
 }
 
 // ---- llama-server singleton (persists across requests in one Node process) ----
-type Srv = { proc: ChildProcess | null; model: string | null; ollamaModel: string | null; ollamaCtx?: number; ollamaOffload?: string | null; lastUsedAt?: number; loras: ServingLora[]; ctx: number; offload?: string | null };
+type Srv = { proc: ChildProcess | null; model: string | null; ollamaModel: string | null; ollamaCtx?: number; ollamaOffload?: string | null; lastUsedAt?: number; loras: ServingLora[]; ctx: number; offload?: string | null; inflight?: number };
 const g = globalThis as unknown as { __lab_srv?: Srv; __lab_idle_reaper?: ReturnType<typeof setInterval> };
 if (!g.__lab_srv) g.__lab_srv = { proc: null, model: null, ollamaModel: null, loras: [], ctx: 0 };
 const srv = g.__lab_srv;
 if (!Array.isArray(srv.loras)) srv.loras = [];
 if (!Number.isFinite(srv.ctx)) srv.ctx = 0;
+// A restart or module reload leaves no stream alive; never inherit a stale count.
+if (!Number.isFinite(srv.inflight)) srv.inflight = 0;
 
-async function health(): Promise<boolean> {
-  try { return (await fetch(`http://127.0.0.1:${SERVE_PORT}/health`)).ok; } catch { return false; }
+// A single unhealthy probe must never authorize a kill. The bare fetch here
+// used to have no timeout and a catch that turned EVERY error into "dead" —
+// one dropped probe was enough to send SIGKILL to a server that was mid-way
+// through streaming somebody's file (2026-07-24 diagnosis, PLAN 3.2).
+// How long a restart waits for live generations to finish before refusing.
+// Generous on purpose: a slow local model emitting a whole HTML file can hold
+// the stream for a minute, and killing it is strictly worse than waiting.
+const RESTART_DRAIN_MS = 120_000;
+const HEALTH_TIMEOUT_MS = 2_000;
+const HEALTH_FAILURES_BEFORE_DEAD = 3;
+
+async function healthProbe(): Promise<boolean> {
+  try {
+    const r = await fetch(`http://127.0.0.1:${SERVE_PORT}/health`,
+                          { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
+    return r.ok;
+  } catch { return false; }
 }
+
+/** True only after consecutive failures — a transient blip is not death. */
+async function health(): Promise<boolean> {
+  for (let attempt = 0; attempt < HEALTH_FAILURES_BEFORE_DEAD; attempt++) {
+    if (await healthProbe()) return true;
+    if (attempt < HEALTH_FAILURES_BEFORE_DEAD - 1) await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
+// ---- in-flight generation guard ----
+// The GPU is a singleton and several unrelated callers (the CLI gateway, web
+// chat, deliberate, the vision model swap in agent-tools, lens teardown) each
+// decide independently whether the server needs restarting. Before this guard
+// existed, any of those decisions executed an unconditional `kill -9` on a
+// server that could be streaming — the model's half-written file died with it,
+// which is exactly the "file writing gets stopped mid-generation" report.
+//
+// Callers that stream from llama-server MUST wrap the stream in
+// `beginGeneration()` … `release()` so a restart can drain instead of kill.
+export function generationsInFlight(): number { return srv.inflight ?? 0; }
+export function beginGeneration(): () => void {
+  srv.inflight = (srv.inflight ?? 0) + 1;
+  touchServing();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    srv.inflight = Math.max(0, (srv.inflight ?? 1) - 1);
+    touchServing();
+  };
+}
+
+/** Wait for live streams to finish. Returns false if they outlast the wait. */
+async function drainGenerations(waitMs: number): Promise<boolean> {
+  const deadline = Date.now() + waitMs;
+  while (generationsInFlight() > 0) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return true;
+}
+
 export function servingModel() { return srv.model ?? srv.ollamaModel; }
-export function stopServing() {
-  try { srv.proc?.kill("SIGKILL"); } catch {}
-  try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
+
+/**
+ * Free the GPU for another backend, waiting for live generations rather than
+ * killing them. Returns false if something is still streaming after `waitMs`,
+ * leaving the server up — the caller must handle that instead of proceeding.
+ */
+export async function parkServing(waitMs = RESTART_DRAIN_MS): Promise<boolean> {
+  if (!(await drainGenerations(waitMs))) return false;
+  return stopServing(false);
+}
+
+/**
+ * Stop the served model.
+ *
+ * `force` is for deliberate owner actions (deleting or renaming a model, an
+ * explicit unload) where the caller has already accepted that any running
+ * generation dies. Everything else should leave it false and handle `false`:
+ * killing a live stream is how partial files get lost.
+ */
+export function stopServing(force = true): boolean {
+  if (!force && generationsInFlight() > 0) return false;
+  killServerProcess();
   srv.proc = null; srv.model = null; srv.loras = []; srv.ctx = 0; srv.offload = null;
+  return true;
+}
+
+/**
+ * Kill the llama-server we own. The pattern-based `pkill` is a last resort for
+ * orphans left by a previous Node process — it matches on the port alone, so
+ * running it while we hold a healthy tracked child is how an unrelated
+ * in-flight request got killed. Only sweep when we have no child to kill.
+ */
+function killServerProcess() {
+  const tracked = srv.proc;
+  if (tracked) {
+    try { tracked.kill("SIGKILL"); } catch {}
+    return;
+  }
+  try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
 }
 
 export function markOllamaServing(model: string, context: number, offload: string | null) {
@@ -659,6 +754,25 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
   await unloadOllamaAll();
   clearOllamaServing();
   if (srv.model === model && requestedLoras === loadedLoras && srv.ctx >= ctx && srv.proc && srv.proc.exitCode === null && (await health())) return;
+
+  // Past this line we are going to kill and relaunch the server. If anything is
+  // still streaming, that kill destroys a generation in progress — on
+  // 2026-07-24 that was two of ten HTML-001 runs losing a half-written
+  // index.html to `UND_ERR_SOCKET: other side closed`. Let live work finish
+  // first, and if it will not, refuse loudly instead of killing silently.
+  //
+  // The one exception is a server that is already gone: there is no stream left
+  // to protect, and blocking the relaunch would strand every waiting caller.
+  const serverAlreadyDead = !srv.proc || srv.proc.exitCode !== null;
+  if (!serverAlreadyDead && generationsInFlight() > 0) {
+    const drained = await drainGenerations(RESTART_DRAIN_MS);
+    if (!drained) {
+      throw new Error(
+        `GPU is busy: ${generationsInFlight()} generation(s) still streaming after ` +
+        `${Math.round(RESTART_DRAIN_MS / 1000)}s. Refusing to restart the model server ` +
+        `mid-stream — retry once the current turn finishes.`);
+    }
+  }
   // The lens tool needs the whole card to itself, same as training (see runLensScript).
   if (lensState.running) throw new Error("GPU is busy: a lens run is in progress. Try again after it finishes.");
   // A trainer may be running OUTSIDE this app (CLI runs write the same out/ logs but
@@ -679,8 +793,7 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
   const ctxArg = String(ctx);
 
   const tryServe = async (ngl: number, waitMs: number): Promise<boolean> => {
-    try { srv.proc?.kill("SIGKILL"); } catch {}
-    try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
+    killServerProcess();
     srv.proc = null; srv.model = null; srv.loras = []; srv.ctx = 0;
     await new Promise((r) => setTimeout(r, 400));
     const env: NodeJS.ProcessEnv = { ...process.env, LD_LIBRARY_PATH: LLAMA_DIR };
@@ -1580,7 +1693,11 @@ export async function runLensScript(model: string, messages: { role: string; con
   lensState.model = model;
   const parked = servingModel();
   try {
-    if (parked) stopServing();
+    // Lens wants the whole card, but a terminal may still be mid-generation.
+    // Drain rather than kill (PLAN 3.2).
+    if (parked && !(await parkServing())) {
+      throw new Error("GPU is busy: a generation is still streaming. Try the lens run again once it finishes.");
+    }
     await unloadOllamaAll();
 
     const args = ["--model", modelPath, "--messages", JSON.stringify(messages), ...(opts.topK ? ["--top_k", String(opts.topK)] : [])];

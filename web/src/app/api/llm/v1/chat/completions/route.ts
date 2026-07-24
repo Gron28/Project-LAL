@@ -1,4 +1,4 @@
-import { activatePublicModel, allModels, contextProfileForModel, isPublicModelName, modelRuntimeSettings, SERVE_PORT, touchServing } from "@/lib/lab";
+import { activatePublicModel, allModels, beginGeneration, contextProfileForModel, isPublicModelName, modelRuntimeSettings, SERVE_PORT, touchServing } from "@/lib/lab";
 import { appendHostObservationForClientDevice } from "@/lib/runs";
 import { acquireCliGpuLease, cliAuthenticatedDeviceId, cliAuthorized, recordCliAccess, streamWithRelease, unauthorizedResponse } from "@/lib/lal-cli";
 
@@ -227,19 +227,27 @@ export async function POST(request: Request) {
           },
         }
       : managedPayload;
+    // Mark the GPU as generating for as long as this stream lives. Without it
+    // any unrelated caller deciding the server needs a restart kills this
+    // request mid-token — which is how a half-written index.html used to be
+    // lost to `UND_ERR_SOCKET` (PLAN 3.2). The GPU lease above serializes CLI
+    // turns; this additionally protects them from web chat, deliberate, the
+    // vision model swap, and lens teardown.
+    const endGeneration = beginGeneration();
+    const releaseAll = () => { endGeneration(); release(); };
     const upstream = await fetch(`${isOllama ? "http://127.0.0.1:11434" : `http://127.0.0.1:${SERVE_PORT}`}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: request.headers.get("accept") ?? "application/json" },
       body: JSON.stringify({ ...upstreamPayload, model: upstreamModel }),
       signal: request.signal,
-    });
+    }).catch((e) => { endGeneration(); throw e; });
     if (!upstream.body) {
-      release();
+      releaseAll();
       return new Response(null, { status: upstream.status, headers: upstream.headers });
     }
     const headers = new Headers(upstream.headers);
     headers.set("cache-control", "no-store");
-    return new Response(streamWithRelease(upstream.body, release, {
+    return new Response(streamWithRelease(upstream.body, releaseAll, {
       onChunk: (chunk) => observeStream(chunk),
       onClose: () => { observeStream(undefined, true); publishUsage(); },
     }), { status: upstream.status, headers });

@@ -26,6 +26,20 @@ a `health()` probe with no timeout whose catch turns any error into "dead".
 See PLAN 3.2. The interrupted content *is* stashed to
 `~/.lal/tmp/<hash>/recovered-tool-calls/` — nothing reads it back yet.
 
+Fixed and re-measured the same day: **10/10**, with zero mid-run llama-server
+relaunches and zero UND_ERR_SOCKET errors (before: 8/10, two of each). The fix
+is an in-flight generation refcount so a restart drains instead of killing, a
+`health()` that needs three consecutive failures and a 2s timeout before it may
+declare death, and a `pkill -9 -f` that no longer runs while we hold a tracked
+child. The three callers that reached for kill -9 directly — the vision model
+swap, the sub-agent model override, and lens teardown — now park politely.
+
+Honest reading: ten clean runs against a 20% failure rate happens by luck about
+one time in nine, so the relaunch count is the real evidence, not the pass rate.
+The drain guard's refusal path never fired, which points at the health()
+change as the one that mattered. Which fast-path clause was tripping is still
+unproven — see PLAN 3.2.
+
 Also found: headless `lal -p` cannot write files at all without
 `--approval-mode=auto-edit` (PLAN 4.3).
 

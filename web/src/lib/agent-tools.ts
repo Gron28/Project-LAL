@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { makeExecutor, TOOL_DEFS, type Executor, type ToolDef } from "./tools";
 import { runToolLoop, type ApproveFn, type ToolLoopEvent, type ToolLoopMsg } from "./toolloop";
 import { managedPrompt } from "./lal-prompts";
-import { webSearch, servingModel, stopServing, ensureServing, allModels, SERVE_PORT, runsAreLive, startTrain, stopTrain, trainStatus, listTrainRuns, listDataFiles, listSuites, listBench, TRAIN_BASES } from "./lab";
+import { webSearch, servingModel, parkServing, ensureServing, allModels, SERVE_PORT, runsAreLive, startTrain, stopTrain, trainStatus, listTrainRuns, listDataFiles, listSuites, listBench, TRAIN_BASES } from "./lab";
 import { projectMemoryDir } from "./memory-paths";
 import { searchMemory } from "./memory-pipeline";
 import { recordFinding } from "./fact-store";
@@ -216,7 +216,11 @@ async function describeImage(root: string, rel: string, question?: string): Prom
   if (fs.statSync(p).size > 12 * 1024 * 1024) return "error: image too large (>12MB)";
   const b64 = fs.readFileSync(p).toString("base64");
   const parked = servingModel();
-  if (parked) stopServing();
+  // Park, never kill: a generation may still be streaming to a terminal, and
+  // SIGKILLing it destroys that turn's half-written file (PLAN 3.2).
+  if (parked && !(await parkServing())) {
+    return "error: vision is unavailable right now — the GPU is still streaming another generation. Retry in a moment.";
+  }
   try {
     const r = await fetch("http://127.0.0.1:11434/api/chat", {
       method: "POST", headers: { "content-type": "application/json" },
@@ -239,8 +243,9 @@ async function describeImage(root: string, rel: string, question?: string): Prom
 // Runs `fn` against `model`, parking whatever's currently served and restoring it
 // after — same park/restore shape as describeImage above, generalized for
 // spawn_agent's optional model override. The caller (spawn_agent) is blocked on
-// this call, so it's safe for the swap to kill/reload the single shared
-// llama-server: no other request can race it mid-swap.
+// this call. That does NOT make the swap safe on its own — a terminal request
+// can be streaming through the gateway at the same time — so the park below
+// drains live generations instead of killing them.
 async function withModelServed<T>(model: string, fn: (baseUrl: string) => Promise<T>): Promise<T> {
   const parked = servingModel();
   const mi = allModels().find((m) => m.name === model);
@@ -249,7 +254,10 @@ async function withModelServed<T>(model: string, fn: (baseUrl: string) => Promis
     await ensureServing(model, 16384);
     baseUrl = `http://127.0.0.1:${SERVE_PORT}`;
   } catch (e) {
-    if (mi?.source === "ollama") { stopServing(); baseUrl = "http://127.0.0.1:11434"; }
+    if (mi?.source === "ollama") {
+      if (!(await parkServing())) throw new Error("GPU is busy: a generation is still streaming; cannot switch to the Ollama backend right now.");
+      baseUrl = "http://127.0.0.1:11434";
+    }
     else throw e;
   }
   try {
