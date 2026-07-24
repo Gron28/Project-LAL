@@ -189,6 +189,10 @@ holds the editor panes, file tree, git panel, dir picker.
 | `scripts/lal-runtime-policy.mjs` | — | Forces `LAL_MANAGED=1`; disables inherited RUM and update checks |
 | `NOTICE-LAL.md`, `README-LAL.md` | — | Derivation notice |
 
+> **Read §11 before deleting anything here.** The "keep?" columns below were an
+> initial reading; the census in §11 measured what actually ships and corrected
+> several of them.
+
 ### 5.2 Inherited — `packages/core/src` (~235k LOC)
 
 | Dir | Files | LOC | Keep? |
@@ -418,9 +422,104 @@ touching any process.
    confirmation. "Commit and keep going" is not push authorization.
 5. **Broken CLI build** — `packages/webui` and `packages/web-shell` are
    referenced but absent.
-6. **Only two documents are authoritative** — `docs/PLAN.md` and this file.
+7. **There is almost no dead code in the CLI** — see §11. Reduction is a
+   product-scope decision, not a cleanup. Do not expect deletions to be free.
+8. **Only two documents are authoritative** — `docs/PLAN.md` and this file.
    38 plans, notes, designs, and research documents were deleted on 2026-07-24;
    their load-bearing decisions live in PLAN Appendix A and in sections 8–10
    here. Code comments that cited them were rewritten to be self-contained in
    the same commit. Do not reintroduce a third planning document — put the
    decision in PLAN.md or it is not a decision.
+
+---
+
+## 11. Deletion census
+
+PLAN Stage 0.2. Measured 2026-07-24. **Nothing here has been deleted** — this is
+the evidence, and the decisions it enables.
+
+### 11.1 Method, and what it can and cannot prove
+
+Three passes, each with a known blind spot:
+
+| Method | Result | Blind spot |
+|---|---|---|
+| Inbound-reference grep | Per-file citation counts | A script invoked by a human has zero inbound references and is still alive |
+| Static import closure from `packages/cli/src/cli.ts` | 1,543 / 1,692 files reachable | Barrel `index.ts` re-exports pull entire trees in on one import — **overstates use** |
+| esbuild metafile (`DEV=true node esbuild.config.js`) | 1,471 / 1,667 files enter the bundle | Tree-shaking removes *symbols*, not file entries — **also overstates use**. Externalized and dynamically imported packages never appear at all — **understates use** |
+
+The third pass caught the second pass lying, and a manual check caught the third
+pass lying: `packages/channels/*` is absent from the bundle yet is loaded at
+runtime through `import('@qwen-code/channel-telegram')` in
+`packages/cli/src/commands/channel/channel-registry.ts:10-15`. Absence from the
+bundle is not evidence of death.
+
+### 11.2 The finding
+
+**There is almost no provably dead code in `apps/cli`.** Of ~575k LOC, the only
+things nothing can reach are a handful of vitest configs and bare package
+`index.ts` re-export stubs — all of which are legitimately needed.
+
+This inverts how PLAN Stage 7 should be approached. "Strip the qwen-code
+cadaver" is **not** a dead-code cleanup that can be done safely and invisibly.
+Every candidate below is live, reachable code implementing a feature we don't
+want. Removing it means cutting import edges and accepting the loss of a
+feature — a product decision each time, with a real regression risk that only
+HTML-001 can bound. That is why Stage 7 sits after Stage 6, not before.
+
+### 11.3 Category A — provably unreachable
+
+| Unit | LOC | Evidence |
+|---|---|---|
+| `scripts/import_{coderforge,gsm8k,hermes,mbpp,openr1_math,swenext}.py` | ~1,200 | Zero inbound references from any live code, script, or config |
+| `packages/{cli,core}/index.ts` re-export stubs | 20 | Not in bundle, not imported |
+
+That is the entire list. It is much shorter than expected.
+
+### 11.4 Category B — reachable, out of product scope
+
+Deliberate cuts. Each row lists everything that must go together; deleting the
+package alone leaves a broken import.
+
+| Feature | Delete together | LOC | Notes |
+|---|---|---|---|
+| Messaging channels (Telegram, WeChat, DingTalk, WeCom, Feishu, QQBot) | `packages/channels/*` + `packages/cli/src/commands/channel/` | ~16,000 | Dynamically imported. May already be broken — the workspace `dist/` outputs the dynamic imports resolve to are not built. |
+| Third-party SDK | `packages/sdk-typescript/src/{mcp,daemon-mcp,query,transport,types,utils}` | ~10,400 | Not in the bundle. **Keep `src/daemon`** — 21 files, 650KB, actively bundled. |
+| Insight reports | `packages/cli/src/services/insight/` + `packages/web-templates/src/insight/` | ~2,400 | |
+| HTML conversation export | `packages/cli/src/ui/utils/export/` + `packages/web-templates/src/export-html/` | ~3,000 | Distinct from LAL's own `/export` |
+| Voice input | `packages/cli/src/ui/voice/` + `packages/audio-capture` | ~1,600 | `@qwen-code/audio-capture` is an esbuild external — a native runtime dep |
+| Zed / ACP integration | `packages/cli/src/acp-integration/` + `packages/acp-bridge` | ~38,500 | Both bundled and live. Large, and the biggest single win. |
+| Locale machinery | `packages/cli/src/i18n/` | ~21,100 | **Bundled, 1.25MB of input.** Note `bundlePaths.ts` couples i18n asset lookup to the chunk dir name. |
+| Vendor telemetry | `packages/core/src/telemetry/` incl. `qwen-logger/` | ~10,800 | PLAN 1.2 keeps local observability and removes only external reporting — this is a **partial** cut, not a directory delete |
+| Cloud providers | `packages/core/src/core/openaiContentGenerator/provider/{dashscope,deepseek,mimo,minimax,mistral,modelscope,zai}.ts` | ~1,900 | **Keep `default.ts`** — it is how LAL reaches its own gateway |
+| LSP / IDE / extensions | `packages/core/src/{lsp,ide,extension}/` | ~15,400 | Audit individually; `extension/` may carry skills machinery |
+
+### 11.5 Needs a decision, not a census
+
+`packages/cli/src/serve/` — 130 files, **59,168 LOC, 2MB of bundle input**, and
+126 of its files are actively bundled. It is qwen-serve: an OAuth device flow, a
+daemon, and enterprise channel serving. LAL does not use any of that, but it is
+the single largest body of live code in the repository and cutting it is a
+project, not a deletion. Decide explicitly in Stage 7; do not let it drift.
+
+### 11.6 Scripts — manual invocation means references prove nothing
+
+| Classification | Scripts |
+|---|---|
+| **Operational, keep** | `rebuild-local-ai-lab.sh`, `release-lal-cli.sh`, `install-*.sh`, `update-lal-release-manifest.mjs`, `check_protocol_drift.mjs`, the three smokes, `lal-doctor.mjs`, `inventory-host-assumptions.mjs` |
+| **Training, dormant** — frozen behind PLAN Stage 8, not dead | the `finetune_*`, `build_*`, `gen_*`, `check_*`, `lens.py`, `verify_sft.py`, `compare_adapters.py`, `fakebin/rocminfo` |
+| **Delete** | the six unreferenced `import_*.py` in §11.3 |
+
+`lal-doctor.mjs` and `check_hqq.py` have zero inbound references and are alive —
+they are run by hand. This is exactly why reference counting alone is not a
+census.
+
+### 11.7 Build health, observed while measuring
+
+- `npm run bundle` **succeeds** — `node esbuild.config.js` completed clean and
+  regenerated `dist/`. The bundle path is healthy.
+- The declared workspace list resolves: all 14 exist on disk.
+- Still broken, as previously recorded: `packages/webui`, `packages/web-shell`,
+  and `packages/sdk-python` are referenced by scripts but absent.
+- The metafile is written **only** under `DEV=true`. To regenerate this census:
+  `cd apps/cli && DEV=true node esbuild.config.js` then read `dist/esbuild.json`.
