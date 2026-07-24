@@ -1,5 +1,42 @@
 # Changelog / engineering log
 
+## 2026-07-24 (later still) — Three fixes, handed back for measurement
+
+No benchmark run: after the previous entry showed six runs could not resolve the
+effects being chased, measurement moved to the operator and the budget went to
+implementation.
+
+**A reused `tool_call.id` was deleting tool calls.** `normalizeModelToolCallIds`
+keyed same-turn replay detection on the provider's raw id. llama-server b9835
+emits one id for every call it ever makes, so the first call in a turn claimed it
+and every sibling was silently dropped — no error, no response, one debug line.
+The model asked for three reads, got one answer, and re-asked. A meaningful part
+of the "looping" in this system is the runtime discarding the model's work.
+Detection now keys on id + name + args; a sibling whose id is taken gets a fresh
+id rather than a `__qwen_dup_N` collision that reattaches results to the wrong
+call. `getToolCallDedupIdentity` stays keyed on `providerCallId` deliberately —
+wire replay and semantic repeat are two jobs for two layers, and collapsing them
+is what made the reverted gateway rewrite catastrophic.
+
+**Headless had no approval policy (PLAN 4.3).** `lal -p "write a file"` could not
+write the file: non-interactive DEFAULT denied edit and write_file along with
+shell, so every headless run was read-only unless the caller knew to pass
+`--approval-mode=auto-edit`. Decided with the user: a run given work and stating
+no posture gets workspace writes; shell stays withheld behind
+`--approval-mode=yolo`. The posture is printed rather than inferred. An explicit
+`--approval-mode=default` is still honoured, and a bare non-TTY `lal` with no
+prompt is untouched.
+
+**Tools the session will refuse are no longer offered (PLAN 2.3).** The deny list
+was consulted only at call time, so the model was advertised
+`run_shell_command`, spent a turn calling it, and was refused — 7 of 13 tool
+failures in the six runs measured earlier. `client.setTools` now filters
+declarations through the permission manager. Also: the gateway's silent
+`return []` for tools outside `LAL_TERMINAL_TOOLS` now logs the dropped names.
+
+Unmeasured predictions on the record: the 7 shell denials go to 0, and parallel
+batches stop losing calls. Both are cheap to falsify.
+
 ## 2026-07-24 (later) — Loop control enforces, and the real loop suppressor is found
 
 `coreToolScheduler.ts`: the circuit breaker now **withdraws** a tool for the

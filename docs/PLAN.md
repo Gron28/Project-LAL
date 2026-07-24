@@ -33,16 +33,20 @@ before step 1, proven by measurement on 2026-07-24 (§2.1b).**
    suppresses the repeat one layer upstream first. Do not read the improved
    token numbers as evidence for this change; they are variance (§2.1c).
 
-2. **Repair `tool_call.id` — and expect `turn.ts` to be the thing that breaks.**
-   §2.1c is the finding that changes how to do this. The suppressor that saved
-   us is `getToolCallDedupIdentity` in `apps/cli/packages/core/src/core/turn.ts`,
-   and it is keyed on `providerCallId`. Unique ids make every identity distinct,
-   so it stops suppressing anything at all — that, not the id rewrite itself, is
-   the 1.55M-token mechanism of §2.1b. Step 1's scheduler guard is the
-   id-independent replacement for it. Before touching the gateway, write a test
-   that feeds unique `providerCallId`s through `turn.ts` and asserts the
-   scheduler guard catches the repeat that `turn.ts` no longer does. That test
-   is the gate on step 2, and it needs no GPU.
+2. ~~**Repair `tool_call.id`.**~~ **DONE — and it needed no gateway change.**
+   The damage was in `toolCallIdUtils.ts`, not on the wire.
+   `normalizeModelToolCallIds` keyed same-turn replay detection on the raw id
+   alone, so with one constant id the first call in a turn claimed it and every
+   sibling hit `if (rawIdsInCurrentTurn.has(rawId)) continue;` and was **silently
+   deleted** — no error, no tool response, one debug line. The model asked for
+   three reads, was answered for one, and re-asked. Much of what has been read as
+   "the model loops" is the runtime discarding its work. Replay detection now
+   keys on id + name + args; a sibling whose id was already claimed is minted a
+   fresh id instead of a `__qwen_dup_N` collision.
+   `getToolCallDedupIdentity` was left keyed on `providerCallId` on purpose, so
+   each layer has one job: `turn.ts` suppresses wire replay, the step-1 scheduler
+   guard suppresses semantic repeats id-independently. Keying both on the same
+   thing is what made the §2.1b gateway rewrite catastrophic.
 
 3. **Re-run and compare** against
    `web/.data/bench/html001-after-inflight-guard-2026-07-24.json` (10/10),
@@ -51,13 +55,14 @@ before step 1, proven by measurement on 2026-07-24 (§2.1b).**
    Use ≥10 runs: at 6, run-to-run variance is larger than every effect measured
    so far (§2.1c).
 
-4. **The largest remaining measured waste is not looping.** 7 of 13 tool
-   failures across the six runs are `run_shell_command` permission denials — the
-   model spending turns discovering it may not start an HTTP server or look for
-   a browser. The breaker cannot help: the model makes 1–3 denied attempts per
-   run and stops, staying under `REPEATED_FAILURE_LIMIT`. The fix is to stop
-   offering the tool it cannot use, which is Stage 2.2/2.3 work (one registry;
-   no prompt naming a tool the registry does not export), not breaker tuning.
+4. ~~**The largest remaining measured waste is not looping.**~~ **DONE.** 7 of
+   13 tool failures were `run_shell_command` permission denials — turns spent
+   discovering the session would not let it start an HTTP server or find a
+   browser. Fixed at both ends: headless runs given work now default to
+   `AUTO_EDIT` and **announce the posture** (PLAN 4.3 — `lal -p "write a file"`
+   previously could not write the file), and `client.setTools` no longer
+   advertises a tool the permission manager will refuse. Prediction on the
+   record, unmeasured: those 7 go to 0.
 
 5. Then pick up Stage 3.1 (consume the write stash), 4.2 (research control),
    Stage 5, Stage 6.
@@ -397,6 +402,20 @@ established by unit test rather than by benchmark, which is the honest status.
 Evidence the guard will have work to do: four `Duplicate provider tool call id`
 suppressions occurred across runs 2, 4 and 5 of the after-set. Every one of them
 becomes an executed call the moment ids are unique.
+
+### 2.1d What shipped after 2.1c, unmeasured
+
+Three fixes, no benchmark run — measurement was deliberately handed back to the
+operator after 2.1c showed six runs could not resolve any of these effects.
+
+1. **The same-turn call deletion** (step 2 above). The most consequential of the
+   three: a parallel batch lost every call after the first under a constant
+   provider id.
+2. **Headless approval posture** (4.3) and **withholding unusable tools** (2.3).
+3. **The gateway's silent tool drop** now logs which names it dropped, so a
+   disagreement between `LAL_TERMINAL_TOOLS` and the client's advertised list
+   names itself instead of leaving the model to improvise — still the leading
+   hypothesis for the Windows `'agent' is not recognized as a command` report.
 
 ### 2.2 One tool registry
 
