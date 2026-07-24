@@ -8,6 +8,7 @@
 import { createUserContent } from '@google/genai';
 import type {
   Content,
+  FunctionDeclaration,
   GenerateContentConfig,
   GenerateContentResponse,
   PartListUnion,
@@ -635,6 +636,51 @@ export class GeminiClient {
     this.forceFullIdeContext = true;
   }
 
+  /**
+   * Drop tools the session has already decided it will refuse (PLAN 2.3, 4.3).
+   *
+   * A deny rule is a fact known before the turn starts, but nothing used to act
+   * on it until the model had already spent a turn calling the tool. Measured on
+   * HTML-001 2026-07-24: 7 of 13 tool failures across six runs were the model
+   * discovering `run_shell_command` was denied — trying to start an HTTP server,
+   * trying to locate a browser — one wasted round trip each, and in the worst
+   * run three of them. Advertising a capability the runtime will not honour is
+   * the defect; the circuit breaker downstream can only make it cheaper.
+   *
+   * Deliberately advisory-free: the tool simply is not offered, so there is
+   * nothing for the model to be told to stop doing.
+   */
+  private async withoutUnusableTools(
+    declarations: FunctionDeclaration[],
+  ): Promise<FunctionDeclaration[]> {
+    const pm = this.config.getPermissionManager?.();
+    if (!pm) return declarations;
+    const kept: FunctionDeclaration[] = [];
+    const withheld: string[] = [];
+    for (const declaration of declarations) {
+      const name = declaration.name;
+      if (!name) {
+        kept.push(declaration);
+        continue;
+      }
+      // A tool is withheld only when it can NEVER be approved in this session.
+      // An interactive session can always prompt the user, so this narrows to
+      // hard deny rules, which is exactly what isToolEnabled reports.
+      if (await pm.isToolEnabled(name)) {
+        kept.push(declaration);
+      } else {
+        withheld.push(name);
+      }
+    }
+    if (withheld.length > 0) {
+      recordStartupEvent('lal_tools_withheld', {
+        toolCount: withheld.length,
+        tools: withheld.sort().join(','),
+      });
+    }
+    return kept;
+  }
+
   async setTools(): Promise<void> {
     if (!this.isInitialized()) {
       return;
@@ -643,7 +689,9 @@ export class GeminiClient {
     const toolRegistry = this.config.getToolRegistry();
     await toolRegistry.warmAll();
     const deferredTools = this.resolveDeferredToolsForReminder();
-    const toolDeclarations = toolRegistry.getFunctionDeclarations();
+    const toolDeclarations = await this.withoutUnusableTools(
+      toolRegistry.getFunctionDeclarations(),
+    );
     const tools: Tool[] = [{ functionDeclarations: toolDeclarations }];
     this.getChat().setTools(tools);
     this.queueAddedMcpToolsReminder(deferredTools ?? []);
