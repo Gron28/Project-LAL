@@ -209,6 +209,17 @@ function analyzeTrace(events) {
     toolFailures: failures.length,
     toolFailureNames: [...new Set(failures.map(f =>
       toolUses.find(t => t.id === f.tool_use_id)?.name ?? '?'))],
+    // The message, not just the name — a circuit breaker has to classify a
+    // failure before it can change strategy, and "run_shell_command failed"
+    // does not say whether to retry, try another source, or stop.
+    toolFailureDetail: failures.map(f => {
+      const use = toolUses.find(t => t.id === f.tool_use_id);
+      return {
+        name: use?.name ?? '?',
+        input: JSON.stringify(use?.input ?? {}).slice(0, 200),
+        error: String(f.content ?? '').replace(/\s+/g, ' ').slice(0, 300),
+      };
+    }),
     retries,
     writes,
     regeneratedWrites: regenerated,
@@ -333,6 +344,7 @@ async function runOnce(i, opts) {
       consoleErrors: page.consoleErrors ?? [],
       externalRequests: page.externalRequests ?? [],
       toolFailureNames: t.toolFailureNames,
+      toolFailureDetail: t.toolFailureDetail,
       permissionDenials: t.permissionDenials,
       writes: t.writes.map(w => ({ tool: w.tool, path: w.path ? path.basename(w.path) : null, hash: w.hash, bytes: w.bytes, failed: w.failed })),
       validationError: page.error ?? null,

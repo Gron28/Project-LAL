@@ -259,12 +259,26 @@ export async function handleCancellationError(config: Config): Promise<never> {
 export async function handleMaxTurnsExceededError(
   config: Config,
 ): Promise<never> {
+  // Name the actual limit. "Reached max session turns" with no number left
+  // people guessing whether they had hit a default they never set — the CLI
+  // default is -1 (unlimited), so a cap here always came from somewhere
+  // specific and the user deserves to be told where to look.
+  const limit = config.getMaxSessionTurns?.();
+  const limitClause =
+    typeof limit === 'number' && limit > 0
+      ? `Reached the configured limit of ${limit} session turns.`
+      : 'Reached the configured max session turns for this session.';
   const baseMessage =
-    'Reached max session turns for this session. Increase the number of turns by specifying maxSessionTurns in settings.json.';
+    `${limitClause} Raise it with model.maxSessionTurns in settings.json, or --max-session-turns for one run.`;
+  // A turn cap is a symptom as often as a cause: a tool failing the same way
+  // every round consumes turns without making progress, and reporting only
+  // "raise the limit" sends people to change the wrong thing.
+  const stallHint =
+    '\nIf the run was repeating itself rather than progressing, raising the cap will not help. Check the trace for a tool that failed repeatedly for the same reason.';
   const jsonSchemaActive = config.getJsonSchema?.() !== undefined;
   const message = jsonSchemaActive
-    ? `${baseMessage}\nNote: --json-schema is active. If the model never called structured_output, verify it isn't denied by permissions.deny / --exclude-tools and that the schema is satisfiable.`
-    : baseMessage;
+    ? `${baseMessage}${stallHint}\nNote: --json-schema is active. If the model never called structured_output, verify it isn't denied by permissions.deny / --exclude-tools and that the schema is satisfiable.`
+    : `${baseMessage}${stallHint}`;
   const maxTurnsError = new FatalTurnLimitedError(message);
 
   if (config.getOutputFormat() === OutputFormat.JSON) {

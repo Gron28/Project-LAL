@@ -1200,6 +1200,13 @@ export function validationFailureFingerprint(
   return `${toolName}:${errorMessage}`;
 }
 
+/**
+ * After this many failures of the same tool for the same reason, stop treating
+ * the next attempt as worth making. Two is too eager (a genuine transient
+ * deserves one retry); five is too many turns of waste.
+ */
+const REPEATED_FAILURE_LIMIT = 3;
+
 export class CoreToolScheduler {
   private toolRegistry: ToolRegistry;
   private toolCalls: ToolCall[] = [];
@@ -1213,6 +1220,43 @@ export class CoreToolScheduler {
   private isFinalizingToolCalls = false;
   private isScheduling = false;
   private validationRetryCounts = new Map<string, number>();
+  // Circuit breaker (PLAN 4.1). Counts failures per (tool, error kind) for the
+  // life of the session. A tool that keeps failing for the SAME reason is not
+  // going to start working: the fix is to classify the cause and change
+  // strategy, not to retry. Measured on HTML-001 before this existed: one run
+  // burned 402k tokens on 16 consecutive run_shell_command permission denials,
+  // each a slightly reworded command that could never have been permitted.
+  private repeatedFailureCounts = new Map<string, number>();
+
+  /**
+   * Build a tool-failure message that changes with repetition instead of
+   * repeating itself (PLAN 4.1, "classify the failure and change strategy
+   * instead of blind retry").
+   *
+   * The first occurrences explain the cause and name the alternative. Once the
+   * same (tool, kind) pair has failed REPEATED_FAILURE_LIMIT times, the message
+   * becomes terminal: the tool is declared unusable for the rest of the session
+   * so the model stops spending turns rediscovering the same wall.
+   */
+  private classifiedFailureMessage(
+    toolName: string,
+    kind: string,
+    cause: string,
+    guidance: string,
+  ): string {
+    const key = `${toolName}:${kind}`;
+    const count = (this.repeatedFailureCounts.get(key) ?? 0) + 1;
+    this.repeatedFailureCounts.set(key, count);
+    if (count < REPEATED_FAILURE_LIMIT) {
+      return `${cause}\n\n${guidance}`;
+    }
+    return (
+      `${cause}\n\n"${toolName}" has now failed ${count} times in this session for the same reason. ` +
+      `It is unavailable — stop calling it. ${guidance}\n\n` +
+      `If the task genuinely cannot be completed without it, say so and stop, rather than continuing to retry.`
+    );
+  }
+
   // Exact-repeat guard for deterministic workspace mutations (Kind.Edit:
   // edit/write_file/notebook_edit). An identical (tool, args) mutation re-run
   // can never produce new information — small local models get stuck
@@ -2582,7 +2626,12 @@ export class CoreToolScheduler {
               this.config.getInputFormat() !== InputFormat.STREAM_JSON;
 
             if (isNonInteractiveDeny) {
-              const errorMessage = `LAL requires permission to use "${reqInfo.name}", but that permission was declined (non-interactive mode cannot prompt for confirmation).`;
+              const errorMessage = this.classifiedFailureMessage(
+                reqInfo.name,
+                'permission-denied',
+                `LAL requires permission to use "${reqInfo.name}", but that permission was declined: this session is non-interactive and the active approval mode does not cover this tool.`,
+                `Do not retry "${reqInfo.name}" with different arguments — the denial is a policy decision about the tool, not about what you asked it to do. Achieve the goal with a permitted tool instead (read_file, glob, grep_search, list_directory all remain available), or state plainly that the task needs a session started with a wider --approval-mode.`,
+              );
               this.setStatusInternal(
                 reqInfo.callId,
                 'error',
