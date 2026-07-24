@@ -24,26 +24,42 @@ State as of 2026-07-24, end of day. Stages 0 and 1 are complete; 3.2, 4.1
 **Do these in order. The order is not a preference — step 2 is actively harmful
 before step 1, proven by measurement on 2026-07-24 (§2.1b).**
 
-1. **Make the circuit breaker enforce, not advise.** `coreToolScheduler.ts`
-   already classifies repeated failures per `(tool, error kind)` and rewrites
-   the message at `REPEATED_FAILURE_LIMIT`. The model ignores it and keeps
-   calling. Change it to **short-circuit the call without executing** once the
-   limit is hit, and to refuse the tool for the rest of the session. Then add
-   the missing sibling: an **exact-repeat guard for non-mutating tools** — the
-   same `run_shell_command` was issued 8 times in one run. Measure with
-   `npm run bench:html001 -- --runs 6`; the target is tool failures and retries
-   both near zero, and no run above ~150k tokens.
+1. ~~**Make the circuit breaker enforce, not advise.**~~ **DONE (code), but the
+   benchmark did not exercise it — see §2.1c.** The breaker now withdraws a tool
+   for the session and `_schedule` answers further calls without dispatching,
+   and an exact-repeat guard now covers the non-mutating surface (read, search,
+   fetch, execute, agent), keyed on `(mutationEpoch, tool, args)`. Measured
+   6/6 pass, but **neither guard fired once in six runs**, because `turn.ts`
+   suppresses the repeat one layer upstream first. Do not read the improved
+   token numbers as evidence for this change; they are variance (§2.1c).
 
-2. **Only then repair `tool_call.id`.** The gateway patch is written up in
-   §2.1b and was reverted; re-derive it rather than resurrecting it blindly.
-   It is correct in mechanism and catastrophic without step 1, because the
-   constant id is currently deduplicating the model's loops for us.
+2. **Repair `tool_call.id` — and expect `turn.ts` to be the thing that breaks.**
+   §2.1c is the finding that changes how to do this. The suppressor that saved
+   us is `getToolCallDedupIdentity` in `apps/cli/packages/core/src/core/turn.ts`,
+   and it is keyed on `providerCallId`. Unique ids make every identity distinct,
+   so it stops suppressing anything at all — that, not the id rewrite itself, is
+   the 1.55M-token mechanism of §2.1b. Step 1's scheduler guard is the
+   id-independent replacement for it. Before touching the gateway, write a test
+   that feeds unique `providerCallId`s through `turn.ts` and asserts the
+   scheduler guard catches the repeat that `turn.ts` no longer does. That test
+   is the gate on step 2, and it needs no GPU.
 
-3. **Re-run the baseline and compare** against
-   `web/.data/bench/html001-after-inflight-guard-2026-07-24.json` (10/10) and
-   `…-after-circuit-breaker-2026-07-24.json` (6/6).
+3. **Re-run and compare** against
+   `web/.data/bench/html001-after-inflight-guard-2026-07-24.json` (10/10),
+   `…-after-circuit-breaker-2026-07-24.json` (6/6), and
+   `…-after-enforced-breaker-2026-07-24.json` (6/6, step 1 landed).
+   Use ≥10 runs: at 6, run-to-run variance is larger than every effect measured
+   so far (§2.1c).
 
-4. Then pick up Stage 3.1 (consume the write stash), 4.2 (research control),
+4. **The largest remaining measured waste is not looping.** 7 of 13 tool
+   failures across the six runs are `run_shell_command` permission denials — the
+   model spending turns discovering it may not start an HTTP server or look for
+   a browser. The breaker cannot help: the model makes 1–3 denied attempts per
+   run and stops, staying under `REPEATED_FAILURE_LIMIT`. The fix is to stop
+   offering the tool it cannot use, which is Stage 2.2/2.3 work (one registry;
+   no prompt naming a tool the registry does not export), not breaker tuning.
+
+5. Then pick up Stage 3.1 (consume the write stash), 4.2 (research control),
    Stage 5, Stage 6.
 
 **Do not** start Stage 7 (de-branding, CLI reduction) or Stage 8 (HIVE,
@@ -328,6 +344,59 @@ Two consequences for the plan:
 2. **Advisory messages do not stop a small model.** The circuit breaker added in
    4.1 did classify these and told the model to stop; it kept going. Enforcement
    has to block execution, not reword the error.
+
+### 2.1c Loop control landed, and the benchmark refused to credit it
+
+**Measured 2026-07-24, six runs, `…-after-enforced-breaker-2026-07-24.json`.**
+
+Step 1 shipped: the circuit breaker withdraws a tool for the session instead of
+rewording the error, and an exact-repeat guard now covers the non-mutating
+surface. Both are unit-tested. The benchmark says:
+
+| | before (6 runs) | after (6 runs) |
+|---|---|---|
+| passes | 6/6 | 6/6 |
+| tokens, median | 133k | **114k** |
+| tokens, mean | 263k | **126k** |
+| tokens, worst run | **948k** | 192k |
+| turns, worst run | **33** | 12 |
+| tool failures | 14 | 13 |
+| retries | 7 | 7 |
+| runs over 150k | 1 | **2** |
+
+**None of that improvement is attributable to the change.** Neither guard fired
+once: zero occurrences of either refusal message across all six runs. The mean
+collapsed because the baseline's one 948k cascade did not recur, and that
+cascade was seeded by the crossed `tool_call.id` (a `write_file` answered with
+`'url' must be a valid URL`), which step 1 does not touch. Six runs is too few
+to see it again. Failures and retries are flat, and the "no run above 150k"
+target got *worse*, not better — 192k and 158k. **Step 1's exit gate is not met
+by measurement; it is met by argument.** The argument is below, and it is strong
+enough to proceed on, but it is not a number.
+
+**Why nothing fired — and why this is the useful finding.**
+`apps/cli/packages/core/src/core/turn.ts:223` already implements the same guard,
+one layer upstream, and independently reached the same design: identity is
+`providerCallId + name + args` (`getToolCallDedupIdentity`), and it is reset
+after a mutation so the model may re-inspect what it changed
+(`resetSemanticToolCallDedupAfterMutation`) — that is precisely the
+`mutationEpoch` in the scheduler guard. Repeats are suppressed there before
+scheduling, so the scheduler never sees them.
+
+That upstream guard is keyed on **`providerCallId`**. It functions today only
+because llama.cpp reuses one id forever. Give every call a unique id and every
+identity becomes distinct, so it suppresses *nothing* — the guard does not
+degrade, it silently switches off. **That, not the id rewrite itself, is the
+mechanism behind §2.1b's 509s / 1.55M tokens.** §2.1b named the constant id as an
+accidental loop suppressor; this locates the actual suppressor, in our own code.
+
+So step 1's real product is a repeat guard that is independent of the provider's
+id, ready to take over the moment the id is repaired. Its correctness is
+established by unit test rather than by benchmark, which is the honest status.
+
+Evidence the guard will have work to do: four `Duplicate provider tool call id`
+suppressions occurred across runs 2, 4 and 5 of the after-set. Every one of them
+becomes an executed call the moment ids are unique.
 
 ### 2.2 One tool registry
 

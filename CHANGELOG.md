@@ -1,5 +1,41 @@
 # Changelog / engineering log
 
+## 2026-07-24 (later) — Loop control enforces, and the real loop suppressor is found
+
+`coreToolScheduler.ts`: the circuit breaker now **withdraws** a tool for the
+session at `REPEATED_FAILURE_LIMIT` instead of rewording the error, and
+`_schedule` answers further calls itself — before validation, confirmation or
+dispatch, so a withdrawn tool costs zero side effects and zero GPU. Added the
+missing sibling of the `Kind.Edit` exact-repeat guard: identical
+read / search / fetch / execute / agent calls are refused, keyed on
+`(mutationEpoch, tool, args)`, where the epoch advances on every dispatched
+workspace mutation so `edit → test → edit → test` still runs both tests while
+`test → test` does not. 3 regression tests; 4,494 pass in `core` + `tools`.
+
+Measured, 6 runs: 6/6 pass, median tokens 133k → 114k, mean 263k → 126k, worst
+run 948k → 192k, worst turn count 33 → 12. **None of that is attributable to
+this change.** Neither guard fired once in six runs. The mean collapsed because
+the baseline's single 948k cascade did not recur, and that cascade was seeded by
+the crossed `tool_call.id`, untouched here. Tool failures 14 → 13 and retries
+7 → 7 are flat, and the "no run above 150k" target regressed (2 runs vs 1).
+
+Nothing fired because `turn.ts:223` already implements the same guard upstream,
+having independently reached the same design — identity of
+`providerCallId + name + args`, reset after a mutation. Repeats die there before
+reaching the scheduler. **It is keyed on `providerCallId`, so it works only
+because llama.cpp reuses one id forever; unique ids make every identity distinct
+and switch it off silently.** That, not the id rewrite, is the mechanism behind
+the 509s / 1.55M-token blowup recorded earlier today. The new scheduler guard is
+the id-independent replacement, and the gate on repairing ids is now a GPU-free
+test: feed unique `providerCallId`s through `turn.ts`, assert the scheduler
+catches what `turn.ts` no longer does. See PLAN 2.1c.
+
+Also measured: the largest remaining waste is not looping. 7 of 13 tool failures
+are `run_shell_command` permission denials — turns spent discovering it cannot
+start an HTTP server or find a browser. The breaker cannot reach it; the model
+makes 1-3 attempts and stops, under the limit of 3. That is Stage 2.2/2.3 work:
+stop offering a tool the session will never permit.
+
 ## 2026-07-24 — One plan, one map, and the first HTML-001 baseline
 
 Documentation collapsed from 38 plans/notes/designs into `docs/PLAN.md` (the
