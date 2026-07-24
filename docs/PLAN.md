@@ -235,6 +235,53 @@ Remaining hypotheses, to be tested against a captured trace, not reasoned about:
 
 **Deliverable:** a written root cause plus a failing test that reproduces it.
 
+### 2.1a Root cause found — llama.cpp emits a constant `tool_call.id`
+
+**Verified 2026-07-24.** Every tool call llama-server b9835 produces carries the
+same id, `ZsSt4SkIFMRz0HtqT7MTlimNvzlKM896`. Proven by calling llama-server
+directly with two freshly-named tools and getting the identical id a benchmark
+run had produced hours earlier in an unrelated process.
+
+Downstream, the terminal client renames collisions to `…__qwen_dup_2/3/4`, and
+once ids are being rewritten, results attach to the wrong call. Both of these
+were observed in one HTML-001 run, and neither error belongs to the tool that
+reported it:
+
+- `edit` failing with *"permission to use **run_shell_command** was declined"*
+- `write_file` failing with *"the **'url'** must be a valid URL"*
+
+That crossing of tool identity is the most plausible mechanism yet for the
+Windows report of `'agent' is not recognized as a command`.
+
+### 2.1b The obvious fix backfired — and why that matters
+
+The gateway owns the wire format, so it looked like a contained fix: rewrite
+every `tool_call.id` to a unique value on the way through. Implemented, verified
+mechanically (65 calls, 65 unique ids, zero `__qwen_dup`), and it made the
+system **dramatically worse**:
+
+| | before | with id repair |
+|---|---|---|
+| wall | ~110s | **509s** |
+| tokens | ~130k | **1,553,115** |
+| tool failures | 1 | **37** |
+| retries | 0 | **30** |
+
+Reverted. The trace explains it: the model repeats itself hard — the same shell
+command 8 times, another 6, another 5. With a constant id those repeats
+**collided and the client deduped them** (`Duplicate provider tool call id … was
+ignored and not executed again`). The upstream bug was accidentally acting as a
+loop suppressor. Give every call a unique id and every repeat executes.
+
+Two consequences for the plan:
+
+1. **There is a looping defect underneath, and it has always been there** —
+   masked, not absent. Fixing ids without first fixing loop control is strictly
+   harmful. Order: loop control → id repair → verify.
+2. **Advisory messages do not stop a small model.** The circuit breaker added in
+   4.1 did classify these and told the model to stop; it kept going. Enforcement
+   has to block execution, not reword the error.
+
 ### 2.2 One tool registry
 
 A single declaration per tool — name, schema, handler, availability — consumed
