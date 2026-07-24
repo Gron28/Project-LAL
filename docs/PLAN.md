@@ -16,6 +16,53 @@ history retains the originals.
 
 ---
 
+## Start here — next session, in this order
+
+State as of 2026-07-24, end of day. Stages 0 and 1 are complete; 3.2, 4.1
+(partly) and 4.4 are done. The working tree is clean and HTML-001 passes.
+
+**Do these in order. The order is not a preference — step 2 is actively harmful
+before step 1, proven by measurement on 2026-07-24 (§2.1b).**
+
+1. **Make the circuit breaker enforce, not advise.** `coreToolScheduler.ts`
+   already classifies repeated failures per `(tool, error kind)` and rewrites
+   the message at `REPEATED_FAILURE_LIMIT`. The model ignores it and keeps
+   calling. Change it to **short-circuit the call without executing** once the
+   limit is hit, and to refuse the tool for the rest of the session. Then add
+   the missing sibling: an **exact-repeat guard for non-mutating tools** — the
+   same `run_shell_command` was issued 8 times in one run. Measure with
+   `npm run bench:html001 -- --runs 6`; the target is tool failures and retries
+   both near zero, and no run above ~150k tokens.
+
+2. **Only then repair `tool_call.id`.** The gateway patch is written up in
+   §2.1b and was reverted; re-derive it rather than resurrecting it blindly.
+   It is correct in mechanism and catastrophic without step 1, because the
+   constant id is currently deduplicating the model's loops for us.
+
+3. **Re-run the baseline and compare** against
+   `web/.data/bench/html001-after-inflight-guard-2026-07-24.json` (10/10) and
+   `…-after-circuit-breaker-2026-07-24.json` (6/6).
+
+4. Then pick up Stage 3.1 (consume the write stash), 4.2 (research control),
+   Stage 5, Stage 6.
+
+**Do not** start Stage 7 (de-branding, CLI reduction) or Stage 8 (HIVE,
+training, benchmarking) — see the gates on each.
+
+### How to measure anything
+
+```bash
+export LAL_API_KEY=$(./start.sh --show-cli-token | tail -1)
+npm run bench:html001 -- --runs 10 --out /tmp/run.json    # full benchmark
+node scripts/html001.mjs --validate-only <dir>            # page check only, no GPU
+```
+
+Deploy the host with `scripts/rebuild-local-ai-lab.sh`. The CLI is served from
+`apps/cli/dist`, so a CLI source change needs
+`cd apps/cli && node esbuild.config.js` before `lal` picks it up.
+
+---
+
 ## The one goal
 
 > Give LAL a normal website request, and it must continue until a complete,

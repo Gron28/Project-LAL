@@ -40,8 +40,24 @@ The drain guard's refusal path never fired, which points at the health()
 change as the one that mattered. Which fast-path clause was tripping is still
 unproven — see PLAN 3.2.
 
+Circuit breaker added (PLAN 4.1): repeated failures are counted per (tool,
+error kind); at the limit the tool is declared unusable instead of the model
+rewording the same denied command. Tool failures per run 4 -> ~1 median, 6/6
+pass. The turn-cap message now names the real limit and says a cap is often a
+symptom of a stalled loop (PLAN 4.4).
+
+Root cause found for the tool-routing bug (PLAN 2.1a): llama.cpp b9835 returns
+the SAME tool_call id for every call ever emitted. Tool identities then cross —
+`edit` reporting a run_shell_command permission denial, `write_file` reporting a
+URL validation error. The obvious gateway fix (rewrite ids uniquely) was
+implemented, measured, and REVERTED: 509s/1.55M tokens/37 failures against
+110s/130k/1. The constant id had been silently deduplicating the model's
+repeated calls, so unique ids unmasked a pre-existing loop. Fix order is loop
+control first, id repair second (PLAN 2.1b).
+
 Also found: headless `lal -p` cannot write files at all without
-`--approval-mode=auto-edit` (PLAN 4.3).
+`--approval-mode=auto-edit`, and auto-edit permits edits but not shell — so the
+agent can write a file and never verify it (PLAN 4.3).
 
 A running log of what got built, what broke, and what was learned — kept honest on
 purpose, including the runs that didn't work. Newest first.
