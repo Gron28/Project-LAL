@@ -79,7 +79,7 @@ function compactToolSchema(value: unknown): unknown {
   return compact;
 }
 
-function compactTools(value: unknown): unknown {
+function compactTools(value: unknown, dropped?: string[]): unknown {
   if (!Array.isArray(value)) return value;
   return value.flatMap((tool) => {
     if (!tool || typeof tool !== "object") return tool;
@@ -91,7 +91,15 @@ function compactTools(value: unknown): unknown {
     // This is the product boundary, not merely a client preference: old
     // managed settings cannot quietly reintroduce agent teams, generic
     // clarification dialogs, MCP, or workflow tools into a small-model turn.
-    if (!LAL_TERMINAL_TOOLS.has(name)) return [];
+    // PLAN 2.3: a drop is never silent. The client advertised this tool and the
+    // model may have been told about it in the system prompt, so dropping it
+    // here without a word leaves the model to improvise — the leading
+    // hypothesis for the Windows `'agent' is not recognized as a command`
+    // report. The caller logs whatever lands in `dropped`.
+    if (!LAL_TERMINAL_TOOLS.has(name)) {
+      dropped?.push(name);
+      return [];
+    }
     return {
       ...entry,
       function: {
@@ -206,10 +214,11 @@ export async function POST(request: Request) {
       chat_template_kwargs: { ...priorTemplate, enable_thinking: managedSettings.thinking },
       ...(isOllama ? { think: managedSettings.thinking } : {}),
     };
+    const droppedTools: string[] = [];
     const upstreamPayload = payload.stream === true
       ? {
           ...managedPayload,
-          ...(hasTools ? { tools: compactTools(payload.tools) } : {}),
+          ...(hasTools ? { tools: compactTools(payload.tools, droppedTools) } : {}),
           // Ollama's OpenAI compatibility layer does not reliably accept or
           // return logprobs; only ask llama.cpp for the J-space signal.
           // llama.cpp's OAI layer 400s on `logprobs` + tools + stream, but its
@@ -227,6 +236,14 @@ export async function POST(request: Request) {
           },
         }
       : managedPayload;
+    if (droppedTools.length > 0) {
+      // PLAN 2.3. If this fires, the client and this allowlist disagree about
+      // what the model can do, and the model is being asked to work with a
+      // capability list nobody told it about.
+      console.warn(
+        `[lal-gateway] dropped ${droppedTools.length} tool(s) not in LAL_TERMINAL_TOOLS: ${[...new Set(droppedTools)].sort().join(", ")}`,
+      );
+    }
     // Mark the GPU as generating for as long as this stream lives. Without it
     // any unrelated caller deciding the server needs a restart kills this
     // request mid-token — which is how a half-written index.html used to be
