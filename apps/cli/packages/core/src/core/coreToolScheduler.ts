@@ -1207,6 +1207,31 @@ export function validationFailureFingerprint(
  */
 const REPEATED_FAILURE_LIMIT = 3;
 
+/**
+ * Kinds whose identical re-run cannot produce information the previous run did
+ * not, and so are covered by the exact-repeat guard (`executedCallSigs`).
+ *
+ * `Kind.Other` is excluded on purpose: it holds control-flow tools (todo_write,
+ * ask_user_question, exit_plan_mode) whose repeat semantics are not ours to
+ * judge. `Kind.Edit` / `Delete` / `Move` have their own guard
+ * (`executedMutationSigs`).
+ *
+ * Built lazily rather than as a module constant: `tools.ts` imports back into
+ * this module, so `Kind` is still undefined while this module's top level runs.
+ */
+let repeatGuardedKinds: ReadonlySet<Kind> | undefined;
+function isRepeatGuardedKind(kind: Kind | undefined): boolean {
+  if (kind === undefined) return false;
+  repeatGuardedKinds ??= new Set<Kind>([
+    Kind.Read,
+    Kind.Search,
+    Kind.Fetch,
+    Kind.Execute,
+    Kind.Agent,
+  ]);
+  return repeatGuardedKinds.has(kind);
+}
+
 export class CoreToolScheduler {
   private toolRegistry: ToolRegistry;
   private toolCalls: ToolCall[] = [];
@@ -1227,6 +1252,16 @@ export class CoreToolScheduler {
   // burned 402k tokens on 16 consecutive run_shell_command permission denials,
   // each a slightly reworded command that could never have been permitted.
   private repeatedFailureCounts = new Map<string, number>();
+  // Tools the circuit breaker has taken out of service for the rest of the
+  // session, canonical name → guidance to repeat on every further attempt.
+  //
+  // The breaker used to only *reword* the error at the limit and hope the model
+  // complied. It does not: measured on HTML-001 2026-07-24, a run that hit the
+  // terminal "it is unavailable — stop calling it" message went on to call the
+  // same tool five more times, ending at 948k tokens and 33 turns against a
+  // 106-139k / 8-10 turn norm. Advice is not enforcement. An entry here makes
+  // `_schedule` answer the call itself, without dispatching it.
+  private refusedTools = new Map<string, string>();
 
   /**
    * Build a tool-failure message that changes with repetition instead of
@@ -1234,9 +1269,12 @@ export class CoreToolScheduler {
    * instead of blind retry").
    *
    * The first occurrences explain the cause and name the alternative. Once the
-   * same (tool, kind) pair has failed REPEATED_FAILURE_LIMIT times, the message
-   * becomes terminal: the tool is declared unusable for the rest of the session
-   * so the model stops spending turns rediscovering the same wall.
+   * same (tool, kind) pair has failed REPEATED_FAILURE_LIMIT times the tool is
+   * withdrawn for the rest of the session — see `refusedTools`. Kinds passed
+   * here are policy-level facts about the tool (a declined permission is about
+   * the tool, not the arguments), so withdrawing the whole tool is right;
+   * argument-level mistakes are counted separately by
+   * `recordRetryableToolError`, which is scoped per error fingerprint.
    */
   private classifiedFailureMessage(
     toolName: string,
@@ -1250,9 +1288,10 @@ export class CoreToolScheduler {
     if (count < REPEATED_FAILURE_LIMIT) {
       return `${cause}\n\n${guidance}`;
     }
+    this.refusedTools.set(canonicalToolName(toolName), guidance);
     return (
       `${cause}\n\n"${toolName}" has now failed ${count} times in this session for the same reason. ` +
-      `It is unavailable — stop calling it. ${guidance}\n\n` +
+      `It has been withdrawn: further calls to it will be refused without running. ${guidance}\n\n` +
       `If the task genuinely cannot be completed without it, say so and stop, rather than continuing to retry.`
     );
   }
@@ -1269,6 +1308,26 @@ export class CoreToolScheduler {
   // kill switch ends the whole turn.
   private executedMutationSigs = new Set<string>();
   private mutationSigsPromptId: string | undefined;
+
+  // Exact-repeat guard, sibling of the mutation one above, for the tools that
+  // do NOT mutate the workspace: reads, searches, fetches, shell commands and
+  // subagent launches. Same failure, different half of the tool surface — one
+  // HTML-001 run issued the identical `run_shell_command` eight times, another
+  // six, another five (PLAN 2.1b). Those repeats were being silently swallowed
+  // by llama.cpp's constant tool_call.id colliding in the dedupe layer; the
+  // moment that upstream bug is repaired every one of them executes, so this
+  // guard has to exist before the id repair lands.
+  //
+  // A repeat is only meaningless if the world has not changed underneath it, so
+  // signatures are stamped with `mutationEpoch`, which advances every time a
+  // workspace mutation is dispatched. `edit → npm test → edit → npm test` is
+  // two different epochs and both run; `npm test → npm test` with nothing in
+  // between is refused. The epoch deliberately does NOT advance on Kind.Execute
+  // — otherwise a shell command would clear its own repeat, which is the exact
+  // loop being closed. Cost: a genuine poll-until-ready shell loop gets refused
+  // and has to vary its command. That is the trade, and it is worth it.
+  private executedCallSigs = new Set<string>();
+  private mutationEpoch = 0;
   private autoModeFallbackCallIds = new Set<string>();
   // Tool span lifecycle now spans validating → awaiting_approval → executing
   // → terminal, so we hold the span across method boundaries by callId.
@@ -2137,6 +2196,31 @@ export class CoreToolScheduler {
           continue;
         }
 
+        // Circuit breaker, enforcing half. The tool has already failed
+        // REPEATED_FAILURE_LIMIT times this session for the same policy reason;
+        // answer the call here instead of walking it through validation,
+        // confirmation and dispatch to arrive at the identical wall again. This
+        // is deliberately before the truncation and invocation checks so a
+        // withdrawn tool costs zero side effects and zero GPU.
+        const refusalGuidance = this.refusedTools.get(canonicalName);
+        if (refusalGuidance !== undefined) {
+          newToolCalls.push({
+            status: 'error',
+            request: reqInfo,
+            tool: toolInstance,
+            response: createErrorResponse(
+              reqInfo,
+              new Error(
+                `"${reqInfo.name}" was withdrawn earlier in this session after failing ${REPEATED_FAILURE_LIMIT} times for the same reason. This call was NOT run and no further call to it will be. ${refusalGuidance}\n\n` +
+                  `Do not call "${reqInfo.name}" again. Either finish the task with the tools that do work, or state plainly what you cannot do and stop.`,
+              ),
+              ToolErrorType.EXECUTION_DENIED,
+            ),
+            durationMs: 0,
+          });
+          continue;
+        }
+
         // Reject file-modifying calls when truncated to prevent
         // writing incomplete content, even if params failed schema validation.
         if (reqInfo.wasOutputTruncated && toolInstance.kind === Kind.Edit) {
@@ -2215,12 +2299,14 @@ export class CoreToolScheduler {
         // so answer with a corrective error the model can act on instead of
         // silently executing a no-op (or letting the rut run into the
         // 5-identical-calls kill switch).
+        const argsJson = JSON.stringify(reqInfo.args ?? {});
+        if (reqInfo.prompt_id !== this.mutationSigsPromptId) {
+          this.mutationSigsPromptId = reqInfo.prompt_id;
+          this.executedMutationSigs.clear();
+          this.executedCallSigs.clear();
+        }
         if (toolInstance.kind === Kind.Edit) {
-          if (reqInfo.prompt_id !== this.mutationSigsPromptId) {
-            this.mutationSigsPromptId = reqInfo.prompt_id;
-            this.executedMutationSigs.clear();
-          }
-          const mutationSig = `${canonicalName}:${JSON.stringify(reqInfo.args ?? {})}`;
+          const mutationSig = `${canonicalName}:${argsJson}`;
           if (this.executedMutationSigs.has(mutationSig)) {
             newToolCalls.push({
               status: 'error',
@@ -2230,6 +2316,27 @@ export class CoreToolScheduler {
                 reqInfo,
                 new Error(
                   `You already made this exact ${reqInfo.name} call in this task — the file already reflects it (or it deterministically failed), so repeating it cannot change anything. The call was NOT run again. Read the file to see its actual current state, then take a different action: a different edit, or rewrite the file with write_file.`,
+                ),
+                ToolErrorType.EXECUTION_FAILED,
+              ),
+              durationMs: 0,
+            });
+            continue;
+          }
+        } else if (isRepeatGuardedKind(toolInstance.kind)) {
+          // Same rule for the non-mutating surface. Scoped to the current
+          // mutation epoch, so this only fires when nothing has changed since
+          // the identical call was dispatched.
+          const callSig = `${this.mutationEpoch}:${canonicalName}:${argsJson}`;
+          if (this.executedCallSigs.has(callSig)) {
+            newToolCalls.push({
+              status: 'error',
+              request: reqInfo,
+              tool: toolInstance,
+              response: createErrorResponse(
+                reqInfo,
+                new Error(
+                  `You already made this exact ${reqInfo.name} call in this task, with identical arguments, and nothing has changed on disk since. Running it again would return exactly what it returned before, so it was NOT run. Scroll back and use that earlier result. If it did not tell you what you needed, the answer is a different call — different arguments, or a different tool — not the same one again.`,
                 ),
                 ToolErrorType.EXECUTION_FAILED,
               ),
@@ -3391,16 +3498,27 @@ export class CoreToolScheduler {
     const scheduledCall = toolCall;
     const { callId, name: toolName } = scheduledCall.request;
 
-    // Record dispatched mutations for the exact-repeat guard in _schedule.
+    // Record dispatched calls for the two exact-repeat guards in _schedule.
     // Recorded here (not at schedule time) so calls the user denies or
     // cancels never count as "already made".
+    const dispatchedKind = scheduledCall.tool?.kind;
+    if (scheduledCall.request.prompt_id === this.mutationSigsPromptId) {
+      const sig = `${canonicalToolName(toolName)}:${JSON.stringify(scheduledCall.request.args ?? {})}`;
+      if (dispatchedKind === Kind.Edit) {
+        this.executedMutationSigs.add(sig);
+      } else if (isRepeatGuardedKind(dispatchedKind)) {
+        this.executedCallSigs.add(`${this.mutationEpoch}:${sig}`);
+      }
+    }
+    // Advance the epoch after recording, so a mutation does not clear its own
+    // signature, and every read/search/fetch/shell result captured before it is
+    // treated as stale and may legitimately be taken again.
     if (
-      scheduledCall.tool?.kind === Kind.Edit &&
-      scheduledCall.request.prompt_id === this.mutationSigsPromptId
+      dispatchedKind === Kind.Edit ||
+      dispatchedKind === Kind.Delete ||
+      dispatchedKind === Kind.Move
     ) {
-      this.executedMutationSigs.add(
-        `${canonicalToolName(toolName)}:${JSON.stringify(scheduledCall.request.args ?? {})}`,
-      );
+      this.mutationEpoch += 1;
     }
 
     // The tool span is opened in `_schedule` so it covers validating →
