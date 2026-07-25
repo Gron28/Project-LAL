@@ -58,6 +58,11 @@ import {
 } from './turn.js';
 
 // Services
+import {
+  formatAcceptanceReports,
+  hasFatal,
+  validateArtifacts,
+} from '../services/acceptance/index.js';
 import { LoopDetectionService } from '../services/loopDetectionService.js';
 import { CommitAttributionService } from '../services/commitAttribution.js';
 import {
@@ -160,6 +165,14 @@ import { type File, type IdeContext } from '../ide/types.js';
 import { PermissionMode, type StopHookOutput } from '../hooks/types.js';
 
 const MAX_TURNS = 100;
+/**
+ * PLAN 6 — how many times the runtime hands validation failures back before it
+ * stops and reports honestly. Two, because the third attempt on the same defect
+ * has never been the one that fixed it, and each attempt is a full model turn.
+ */
+const MAX_ACCEPTANCE_REPAIR_ATTEMPTS = 2;
+/** Tools whose target path is an artifact the runtime should validate. */
+const MUTATING_FILE_TOOLS = new Set(['write_file', 'edit', 'replace']);
 const MAX_RECENT_TOOL_NAMES_FOR_MEMORY = 20;
 
 export enum SendMessageType {
@@ -243,6 +256,20 @@ export class GeminiClient {
   private readonly surfacedRelevantAutoMemoryPaths = new Set<string>();
   private shutdownRequested = false;
   private researchTrace: ResearchTrace | undefined;
+
+  /**
+   * PLAN 6 — acceptance validation state.
+   *
+   * `producedArtifacts` holds the paths a file-mutating tool was asked to write
+   * during THIS request — reset on each new user query, so a later request is not
+   * judged on files an earlier one wrote and already had validated.
+   * `acceptanceRepairAttempts` bounds the repair loop per prompt;
+   * `acceptanceValidatedPrompts` records prompts whose verdict has already been
+   * delivered so a follow-up turn does not re-announce it.
+   */
+  private readonly producedArtifacts = new Set<string>();
+  private readonly acceptanceRepairAttempts = new Map<string, number>();
+  private readonly acceptanceValidatedPrompts = new Set<string>();
 
   /**
    * True while the current user request is an explicit external-research
@@ -2072,6 +2099,9 @@ export class GeminiClient {
       const carriedStop = stopRequested;
       this.researchTrace = createResearchTrace(prompt_id, enabled);
       this.researchTrace.stopRequested = carriedStop;
+      // PLAN 6 — a new request gets a fresh artifact set. Without this, every
+      // later request re-validates and re-announces files an earlier one wrote.
+      this.producedArtifacts.clear();
       if (enabled) {
         const requestArray = Array.isArray(request) ? request : [request];
         request = [...requestArray, { text: RESEARCH_CONTROLLER_INSTRUCTION }];
@@ -2559,6 +2589,21 @@ export class GeminiClient {
               event.value.args,
             );
           }
+          // PLAN 6 — remember every artifact this session claims to have
+          // produced, so completion can be validated against the files on disk
+          // rather than against the model's account of them. Recorded at request
+          // time and validated at completion, so a write that failed still gets
+          // its target inspected — a missing file is the most important finding.
+          if (
+            event.type === GeminiEventType.ToolCallRequest &&
+            MUTATING_FILE_TOOLS.has(event.value.name)
+          ) {
+            const args = event.value.args as Record<string, unknown>;
+            const target = args?.['file_path'] ?? args?.['path'];
+            if (typeof target === 'string' && target.trim()) {
+              this.producedArtifacts.add(target);
+            }
+          }
           if (messageDisplay && event.type === GeminiEventType.Content) {
             messageDisplay.addChunk(event.value);
           }
@@ -2865,6 +2910,58 @@ export class GeminiClient {
             type: GeminiEventType.HookSystemMessage,
             value: `Research coverage and synthesis gates passed: ${coverage.queryCount} successful distinct searches, ${coverage.sourceCount} successfully opened sources, and a substantive evidence-linked final answer.`,
           };
+        }
+      }
+
+      // PLAN 6 — the runtime decides completion.
+      //
+      // The model has stopped calling tools, which is its completion claim. That
+      // claim is a proposal: validate the artifacts it produced and, if they are
+      // broken, hand the defects back and let it repair them. Bounded, because an
+      // unbounded repair loop is the failure mode this whole plan exists to
+      // remove; when the budget is spent the runtime says so plainly instead of
+      // pretending the work is done (exit gate 6).
+      if (
+        !turn.pendingToolCalls.length &&
+        signal &&
+        !signal.aborted &&
+        this.producedArtifacts.size > 0 &&
+        !this.acceptanceValidatedPrompts.has(prompt_id)
+      ) {
+        const reports = await validateArtifacts([...this.producedArtifacts]);
+        if (reports.length > 0) {
+          const attempts = this.acceptanceRepairAttempts.get(prompt_id) ?? 0;
+          if (hasFatal(reports)) {
+            const message = formatAcceptanceReports(reports);
+            if (attempts < MAX_ACCEPTANCE_REPAIR_ATTEMPTS && boundedTurns > 1) {
+              this.acceptanceRepairAttempts.set(prompt_id, attempts + 1);
+              yield { type: GeminiEventType.HookSystemMessage, value: message };
+              yield { type: GeminiEventType.Retry, isContinuation: true };
+              const repairTurn = yield* this.sendMessageStream(
+                [{ text: message }],
+                signal,
+                prompt_id,
+                { type: SendMessageType.Hook },
+                boundedTurns - 1,
+              );
+              normalCompletion = true;
+              return repairTurn;
+            }
+            // Bounded give-up with an honest report — never a success claim.
+            this.acceptanceValidatedPrompts.add(prompt_id);
+            yield {
+              type: GeminiEventType.HookSystemMessage,
+              value:
+                `Validation still fails after ${attempts} repair attempt(s). The work is ` +
+                `NOT complete and must not be reported as complete.\n\n${message}`,
+            };
+          } else {
+            this.acceptanceValidatedPrompts.add(prompt_id);
+            yield {
+              type: GeminiEventType.HookSystemMessage,
+              value: formatAcceptanceReports(reports),
+            };
+          }
         }
       }
 

@@ -490,8 +490,6 @@ describe('readFileSizeAdaptive', () => {
   });
 });
 
-import { buildFileRestorationBlocks } from './postCompactAttachments.js';
-
 describe('buildFileRestorationBlocks', () => {
   let tmpDir: string;
   beforeEach(() => {
