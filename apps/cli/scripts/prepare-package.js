@@ -67,10 +67,6 @@ function verifyBundleArtifacts(rootDir, distDir, { requireWebShell = true } = {}
   const requiredPaths = [
     path.join(distDir, 'cli.js'),
     path.join(distDir, 'vendor'),
-    path.join(distDir, 'bundled', 'qc-helper'),
-    ...(requireWebShell
-      ? [path.join(distDir, 'bundled', 'qc-helper', 'docs')]
-      : []),
     // The Web Shell ships with the published package ("Web Shell out of the
     // box"). Gate on it here so a build that skipped the web-shell workspace
     // (e.g. `npm ci --ignore-scripts` bypassing the root `prepare`) fails

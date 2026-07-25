@@ -34,8 +34,9 @@ if (!existsSync(join(root, 'node_modules'))) {
 execSync('npm run generate', { stdio: 'inherit', cwd: root });
 
 // --cli-only: skip packages not needed by the CLI bundle
-// (webui, web-shell, vscode-ide-companion are for IDE/web use only)
-const cliOnly = process.argv.includes('--cli-only');
+// `--cli-only` is still accepted (npm run build passes it) but is now a no-op:
+// the only workspaces it used to exclude were the four absent ones removed
+// below, so every build is a CLI build.
 
 // Build in dependency order:
 // 1. core (foundation package, includes test-utils)
@@ -46,9 +47,6 @@ const cliOnly = process.argv.includes('--cli-only');
 // 6. acp-bridge (depends on core - used by cli)
 // 7. sdk (build-time devDep on acp-bridge for shared constants, used by cli channel worker)
 // 8. cli (depends on core, acp-bridge, web-templates, channel packages, sdk)
-// 9. webui (shared UI components - used by vscode companion)
-// 10. web-shell (depends on webui and sdk)
-// 11. vscode-ide-companion (depends on webui)
 const buildOrder = [
   'packages/core',
   'packages/web-templates',
@@ -64,15 +62,15 @@ const buildOrder = [
   'packages/acp-bridge',
   'packages/sdk-typescript',
   'packages/cli',
-  ...(cliOnly
-    ? []
-    : [
-        'packages/webui',
-        'packages/web-shell',
-        'packages/vscode-ide-companion',
-        'packages/chrome-extension',
-      ]),
 ];
+// Removed 2026-07-25: packages/webui, packages/web-shell,
+// packages/chrome-extension and packages/vscode-ide-companion were listed here
+// behind a `!cliOnly` guard, and none of them exist. Nothing built them because
+// every build in this repo passes --cli-only, so a full `npm run build` would
+// have failed on the first missing workspace. vscode-ide-companion survives as
+// a single generated settings.schema.json with no package.json — an output, not
+// a workspace. (PLAN 7.2: "the full build still references absent
+// packages/webui and packages/web-shell workspaces — resolve or remove".)
 
 for (const workspace of buildOrder) {
   const command =

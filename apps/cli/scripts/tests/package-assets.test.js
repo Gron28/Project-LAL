@@ -686,9 +686,7 @@ describe('package asset scripts', () => {
   function createBundleArtifacts(rootDir) {
     writeFile(rootDir, 'dist/cli.js', '');
     mkdirSync(path.join(rootDir, 'dist', 'vendor'), { recursive: true });
-    mkdirSync(path.join(rootDir, 'dist', 'bundled', 'qc-helper', 'docs'), {
-      recursive: true,
-    });
+    mkdirSync(path.join(rootDir, 'dist', 'bundled'), { recursive: true });
     // Web Shell release gate (prepare-package.js verifyBundleArtifacts): the
     // published package must ship the UI, so the fixture provides it too.
     writeFile(rootDir, 'dist/web-shell/index.html', '<!doctype html>');

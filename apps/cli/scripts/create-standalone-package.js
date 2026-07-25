@@ -61,7 +61,6 @@ const DIST_REQUIRED_PATHS = [
   'cli-entry.js',
   'chunks',
   'vendor',
-  'bundled/qc-helper',
 ];
 const DIST_ALLOWED_ENTRIES = new Set([
   'cli.js',

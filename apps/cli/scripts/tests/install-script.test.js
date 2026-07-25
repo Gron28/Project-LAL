@@ -635,7 +635,6 @@ describe('standalone release packaging', () => {
 
     const packageScript = readScript('scripts/create-standalone-package.js');
     expect(packageScript).toContain('Copyright 2025 Qwen Team');
-    expect(packageScript).toContain("'bundled/qc-helper/docs'");
     expect(packageScript).toContain('DIST_ALLOWED_ENTRIES');
     expect(packageScript).toContain('Unexpected dist asset');
     expect(packageScript).toContain('topLevelDistEntryForPath(outDir)');
@@ -4211,9 +4210,7 @@ function ensureMinimalDist({
 
   mkdirSync(path.join(distPath, 'chunks'), { recursive: true });
   mkdirSync(path.join(distPath, 'vendor'), { recursive: true });
-  mkdirSync(path.join(distPath, 'bundled/qc-helper/docs'), {
-    recursive: true,
-  });
+  mkdirSync(path.join(distPath, 'bundled'), { recursive: true });
   writeFileSync(path.join(distPath, 'cli.js'), 'console.log("qwen");\n');
   if (includeCliEntry) {
     writeFileSync(path.join(distPath, 'cli-entry.js'), 'import "./cli.js";\n');
