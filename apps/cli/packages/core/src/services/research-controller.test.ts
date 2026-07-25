@@ -20,6 +20,10 @@ import {
   routeResearchToolCall,
   RESEARCH_CONTROLLER_INSTRUCTION,
   RESEARCH_MAX_SYNTHESIS_NUDGES,
+  isResearchStopRequest,
+  researchStopReport,
+  sourceOrigin,
+  synthesisCitesFetchedSources,
 } from './research-controller.js';
 
 describe('research controller', () => {
@@ -114,8 +118,11 @@ describe('research controller', () => {
   it('produces an observable continuation when coverage is shallow', () => {
     const trace = createResearchTrace('p', true);
     expect(researchContinuation(trace)).toContain(
-      '0/6 successful distinct searches',
+      'only 0 of 3 distinct sub-questions',
     );
+    // The message must not read as a quota — that framing is what produced
+    // four fetches of the same site (PLAN 4.2).
+    expect(researchContinuation(trace)).toContain('This is not a call quota');
     expect(researchContinuation(trace)).toContain(
       'tool_search only discovers tool names',
     );
@@ -249,5 +256,145 @@ describe('researchProviderLooksBroken', () => {
     );
     expect(report).toContain('infrastructure problem');
     expect(report).toContain('unverified');
+  });
+});
+
+/**
+ * PLAN 4.2 — evidence, not quota.
+ *
+ * Helper writes a successful call pair straight into the trace so each case
+ * states only the evidence it is about.
+ */
+function succeed(
+  trace: ReturnType<typeof createResearchTrace>,
+  { queries = [], sources = [] }: { queries?: string[]; sources?: string[] },
+) {
+  queries.forEach((q, i) => {
+    recordResearchCall(trace, `q${i}`, 'web_search', { query: q });
+    recordResearchResults(trace, [
+      { functionResponse: { id: `q${i}`, response: { ok: true } } },
+    ]);
+  });
+  sources.forEach((url, i) => {
+    recordResearchCall(trace, `s${i}`, 'web_fetch', { url });
+    recordResearchResults(trace, [
+      { functionResponse: { id: `s${i}`, response: { ok: true } } },
+    ]);
+  });
+}
+
+describe('research evidence gate (PLAN 4.2)', () => {
+  const threeQueries = ['alpha', 'beta', 'gamma'];
+
+  it('passes on independent evidence with far fewer calls than the old quota', () => {
+    const trace = createResearchTrace('p', true);
+    succeed(trace, {
+      queries: threeQueries,
+      sources: ['https://a.example.com/x', 'https://docs.other.org/y'],
+    });
+    const coverage = researchCoverage(trace);
+    expect(coverage.passed).toBe(true);
+    expect(coverage.originCount).toBe(2);
+    // The old gate demanded 6 searches and 4 sources for this same evidence.
+    expect(coverage.sourceCount).toBe(2);
+  });
+
+  it('rejects four sources that are all the same site — the old gate passed this', () => {
+    const trace = createResearchTrace('p', true);
+    succeed(trace, {
+      queries: threeQueries,
+      sources: [
+        'https://example.com/a',
+        'https://www.example.com/b',
+        'https://blog.example.com/c',
+        'https://example.com/d',
+      ],
+    });
+    const coverage = researchCoverage(trace);
+    expect(coverage.sourceCount).toBe(4);
+    expect(coverage.originCount).toBe(1);
+    expect(coverage.independenceMet).toBe(false);
+    // ...but it does pass, via the plateau: three consecutive fetches added no
+    // new origin, so demanding more is spending turns for nothing.
+    expect(coverage.plateaued).toBe(true);
+    expect(coverage.passed).toBe(true);
+    expect(coverage.reason).toBe('plateau');
+  });
+
+  it('does not treat one site with two pages as either independent or plateaued', () => {
+    const trace = createResearchTrace('p', true);
+    succeed(trace, {
+      queries: threeQueries,
+      sources: ['https://example.com/a', 'https://example.com/b'],
+    });
+    const coverage = researchCoverage(trace);
+    expect(coverage.passed).toBe(false);
+    expect(coverage.redundantTail).toBe(1);
+  });
+
+  it('never plateaus at zero evidence — that is a broken provider, not a plateau', () => {
+    const trace = createResearchTrace('p', true);
+    succeed(trace, { queries: threeQueries });
+    expect(researchCoverage(trace).plateaued).toBe(false);
+    expect(researchCoverage(trace).passed).toBe(false);
+  });
+
+  it('counts subdomains as one origin and unparseable urls as their own', () => {
+    expect(sourceOrigin('https://www.example.com/a')).toBe('example.com');
+    expect(sourceOrigin('https://docs.example.com/b')).toBe('example.com');
+    expect(sourceOrigin('https://example.co/b')).toBe('example.co');
+    expect(sourceOrigin('not a url')).toBe('not a url');
+  });
+
+  it('requires the synthesis to cite origins that were actually opened', () => {
+    const trace = createResearchTrace('p', true);
+    succeed(trace, {
+      queries: threeQueries,
+      sources: ['https://a.example.com/x', 'https://docs.other.org/y'],
+    });
+    // A plausible URL the model produced from memory is not a citation.
+    expect(
+      synthesisCitesFetchedSources('See https://wikipedia.org/foo', trace).ok,
+    ).toBe(false);
+    expect(
+      synthesisCitesFetchedSources(
+        'Per https://a.example.com/x and https://docs.other.org/y ...',
+        trace,
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('imposes no citation requirement when nothing was ever fetched', () => {
+    const trace = createResearchTrace('p', true);
+    expect(synthesisCitesFetchedSources('anything', trace).ok).toBe(true);
+  });
+});
+
+describe('research stop request (PLAN 4.2)', () => {
+  it('recognises a bare stop', () => {
+    for (const text of ['stop', 'Stop.', 'halt', 'cancel', 'enough', 'nevermind']) {
+      expect(isResearchStopRequest(text)).toBe(true);
+    }
+  });
+
+  it('recognises an explicit stop aimed at the research', () => {
+    expect(isResearchStopRequest('stop researching this')).toBe(true);
+    expect(isResearchStopRequest("that's enough research")).toBe(true);
+    expect(isResearchStopRequest('cancel the search please')).toBe(true);
+  });
+
+  it('does not fire on ordinary requests that merely contain the word', () => {
+    expect(isResearchStopRequest('stop using the cache when you read files')).toBe(false);
+    expect(isResearchStopRequest('research the best way to stop a docker container')).toBe(false);
+    expect(isResearchStopRequest('')).toBe(false);
+  });
+
+  it('reports what was gathered and forbids further calls', () => {
+    const trace = createResearchTrace('p', true);
+    succeed(trace, { queries: ['alpha'], sources: ['https://a.example.com/x'] });
+    const report = researchStopReport(trace);
+    expect(report).toContain("user's request");
+    expect(report).toContain('abandoned, not satisfied');
+    expect(report).toContain('Do not make another search or fetch call');
   });
 });

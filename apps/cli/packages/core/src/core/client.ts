@@ -63,6 +63,7 @@ import { CommitAttributionService } from '../services/commitAttribution.js';
 import {
   createResearchTrace,
   isExplicitWebResearchRequest,
+  isResearchStopRequest,
   isResearchSynthesis,
   recordResearchCall,
   recordResearchResults,
@@ -72,7 +73,9 @@ import {
   researchCoverage,
   researchProviderLooksBroken,
   researchBrokenProviderReport,
+  researchStopReport,
   researchSynthesisContinuation,
+  synthesisCitesFetchedSources,
   RESEARCH_CONTROLLER_INSTRUCTION,
   RESEARCH_MAX_NUDGES,
   RESEARCH_MAX_SYNTHESIS_NUDGES,
@@ -2053,10 +2056,21 @@ export class GeminiClient {
       const activeCodeMode = (
         this.config as Config & { getActiveCodeMode?: () => string | undefined }
       ).getActiveCodeMode?.();
+      // PLAN 4.2 — an explicit stop ends research at the next turn boundary, and
+      // must not be able to start a new one. Checked before `enabled`, because
+      // "stop researching" contains the word "research" and would otherwise
+      // arm the controller it was trying to switch off.
+      const stopRequested = isResearchStopRequest(promptText);
+      if (stopRequested && this.researchTrace?.enabled) {
+        this.researchTrace.stopRequested = true;
+      }
       const enabled =
-        activeCodeMode === 'deep-research' ||
-        isExplicitWebResearchRequest(promptText);
+        !stopRequested &&
+        (activeCodeMode === 'deep-research' ||
+          isExplicitWebResearchRequest(promptText));
+      const carriedStop = stopRequested;
       this.researchTrace = createResearchTrace(prompt_id, enabled);
+      this.researchTrace.stopRequested = carriedStop;
       if (enabled) {
         const requestArray = Array.isArray(request) ? request : [request];
         request = [...requestArray, { text: RESEARCH_CONTROLLER_INSTRUCTION }];
@@ -2766,6 +2780,16 @@ export class GeminiClient {
         !signal.aborted
       ) {
         const coverage = researchCoverage(researchTrace);
+        // A stop outranks the gate, the nudge budget, and the provider check.
+        if (researchTrace.stopRequested) {
+          yield {
+            type: GeminiEventType.HookSystemMessage,
+            value: researchStopReport(researchTrace),
+          };
+          researchTrace.enabled = false;
+          normalCompletion = true;
+          return turn;
+        }
         if (!coverage.passed) {
           // Before spending a nudge, check whether the tools work at all. A
           // broken provider cannot be fixed by asking the model again, and each
@@ -2801,7 +2825,14 @@ export class GeminiClient {
             type: GeminiEventType.HookSystemMessage,
             value: `Research incomplete after ${researchTrace.nudges} continuation attempts: ${coverage.queryCount} successful distinct searches and ${coverage.sourceCount} successfully opened sources (${coverage.attemptedQueryCount} searches and ${coverage.attemptedSourceCount} fetches attempted). Any synthesis shown above is unverified; inspect the failed calls or retry when web access is available.`,
           };
-        } else if (!isResearchSynthesis(visibleResponseText)) {
+        } else if (
+          !isResearchSynthesis(visibleResponseText) ||
+          // A URL proves nothing about where it came from; a model can produce
+          // one from memory, and a fabricated citation is worse than none because
+          // it reads as verified. The synthesis has to name origins this run
+          // actually opened.
+          !synthesisCitesFetchedSources(visibleResponseText, researchTrace).ok
+        ) {
           const continuation = researchSynthesisContinuation(researchTrace);
           if (
             researchTrace.synthesisNudges < RESEARCH_MAX_SYNTHESIS_NUDGES &&
