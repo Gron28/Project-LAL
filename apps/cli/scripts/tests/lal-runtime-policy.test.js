@@ -1,5 +1,9 @@
+// Was written against node:test, but this directory is collected by vitest,
+// which does not recognise node:test suites — so the whole file reported "No
+// test suite found" and these assertions never ran. Converted to vitest so the
+// egress deny-by-default policy is actually enforced by the suite.
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { test } from 'vitest';
 import {
   applyLalManagedRuntimePolicy,
   defaultLalStartupEgress,
