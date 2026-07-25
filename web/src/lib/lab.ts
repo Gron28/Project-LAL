@@ -253,11 +253,20 @@ export const MANAGED_MODEL_PROFILE_SUFFIX = "-lal-cli-ctx";
  * scale with context, so KV growth is unusually cheap here. Measured on an
  * RX 6650 XT (8 GB) with the desktop running:
  *
- *   ctx      total    CPU/GPU    generation
+ *   ctx      total    CPU/GPU    generation   (ollama 0.30.10)
  *   16,384   8.7 GB   23%/77%    14.0 tok/s
  *   32,768   8.8 GB   24%/76%    -
  *   65,536   9.0 GB   29%/71%    11.5 tok/s
  *   102,400  9.1 GB   32%/68%    10.2 tok/s
+ *
+ * Re-measured on ollama 0.32.3 the same day (weights unchanged - the pull returned
+ * the identical manifest, so this is a runtime win, not a model one):
+ *
+ *   16,384   7.9 GB   12%/88%    14.9 tok/s
+ *   102,400  8.3 GB   23%/77%    11.4 tok/s
+ *
+ * 100k on 0.32.3 costs what 16k cost on 0.30.10. That is what justifies keeping
+ * this at 102,400 rather than the 65,536 middle.
  *
  * So 6.25x the context costs 0.4 GB and ~27% of generation speed. That trade was
  * requested explicitly; 65,536 is the cheaper middle if speed regresses too far

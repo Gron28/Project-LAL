@@ -1,5 +1,51 @@
 # Changelog / engineering log
 
+## 2026-07-25 (later) — Gemma 12B: 100k context, and the runtime upgrade paid for it
+
+Two changes stacked, measured on the same box the same day: the managed Ollama
+context raised 16,384 -> 102,400, and the Ollama runtime upgraded 0.30.10 -> 0.32.3.
+
+**The weights did not change.** `ollama pull gemma4:12b` returned the identical
+manifest (ID 4eb23ef187e2 before and after), so the hoped-for "much faster Gemma
+12B" does not exist under that tag today. Every measured gain below belongs to the
+runtime, not to new weights. Worth recording precisely, because attributing a
+runtime win to a model upgrade would have set up the next decision to fail.
+
+  gemma4:12b, RX 6650 XT 8 GB, desktop running, 64-token generation:
+
+              ollama 0.30.10        ollama 0.32.3
+  16k   tok/s 14.0                  14.9
+        split 23%/77% CPU/GPU       12%/88%
+        size  8.7 GB                7.9 GB
+  100k  tok/s 10.2-10.8             11.4
+        split 32%/68% CPU/GPU       23%/77%
+        size  9.1 GB                8.3 GB
+
+The cleanest way to state the result: **100k context on 0.32.3 costs exactly what
+16k cost on 0.30.10** — 23%/77% either way. The runtime upgrade paid for the entire
+context increase in GPU-residency terms, and returned ~0.8 GB of footprint at both
+context sizes. Generation is ~7% faster at both. The context penalty itself barely
+moved (27% -> 24%), which is the honest read: the runtime got more of the model onto
+the GPU, it did not make long context cheap.
+
+Net against the original state, 16k on 0.30.10 at 14.0 tok/s: 6.25x the context for
+19% of generation speed.
+
+Also fixed, the hard way: the Ollama installer DELETES /usr/local/lib/ollama before
+extracting the new one. The first upgrade attempt died at 92.4% of the download
+("Recv failure: Connection reset by peer"), leaving the box with cuda_v12/cuda_v13
+and no ROCm backend, and no /opt/rocm to fall back on. It kept working only because
+the running server held the deleted files open — a `systemctl restart ollama` would
+have returned Ollama CPU-only, answering every request several times slower, on a
+box whose entire purpose is GPU inference. `set -e` aborting before the restart is
+the only reason that did not happen. scripts/upgrade-ollama-and-gemma.sh now
+retries the download, PROVES a rocm/hip backend exists before restarting, and
+asserts "GPU" in `ollama ps` afterwards so a silent CPU downgrade fails loudly.
+
+Still unmeasured: prompt-eval time on a genuinely long prompt. All timings here use
+a short prompt and therefore measure generation only. With ~23% of the model on
+CPU, filling 100k tokens costs real time before the first token appears.
+
 ## 2026-07-25 — web_search was dead on Windows: a BOM in an HTTP header (lal.34)
 
 Root-caused from the operator's forensic export of a failed research run: 31 of 38
