@@ -1,5 +1,57 @@
 # Changelog / engineering log
 
+## 2026-07-25 — web_search was dead on Windows: a BOM in an HTTP header (lal.34)
+
+Root-caused from the operator's forensic export of a failed research run: 31 of 38
+tool calls failed, every web_search among them, with
+
+    Cannot convert argument to a ByteString because the character at index 0
+    has a value of 8745 which is greater than 255
+
+8745 is U+2229 — byte 0xEF, the first byte of a UTF-8 BOM, decoded through code
+page 437 by the Windows console before Node saw it. install.ps1 wrote
+~/.lal/device-name and ~/.lal/platform with [Text.Encoding]::UTF8, which EMITS a
+BOM; lal.cmd read them into LAL_DEVICE_NAME / LAL_PLATFORM; web-search.ts
+forwarded them as headers; fetch throws on any code unit > 255 BEFORE sending.
+
+So web_search never left the machine. That is why the request logging added the
+day before recorded nothing, and why the backend tested healthy by curl while
+being unusable from the client. Proof it was those exact writes: the host's device
+records show mojibake on `name` and `platform` — the only two fields written with
+UTF8 — while `device-id`, written as ASCII, is clean. The exported system prompt
+opens with `ï»¿You are LAL` for the same reason.
+
+With search dead the model fell back to GUESSING recipe URLs one at a time, which
+produced the visible symptoms: 402s from paywalled sites, 404s from invented
+paths, and Food Network returning a Warner Bros. corporate page.
+
+Fixed:
+1. Every outgoing header is sanitised — the mis-decoded BOM stripped as a unit in
+   both legacy renderings (cp437 "∩»¿", cp1252 "ï»¿"), restricted to Latin-1,
+   CR/LF removed. This is what rescues already-provisioned machines. Note U+FEFF
+   alone would not have caused the crash: String.trim() strips it.
+2. install.ps1 writes all four files BOM-less; the idiom was already in the file
+   for settings.json.
+3. web_fetch treats an empty body as a failure. food.com, reddit and youtube each
+   returned HTTP 200 with no extractable text and were reported as successful
+   empty fetches, then counted toward research coverage.
+4. The gateway allowlist is prefix-aware. The computer-use driver advertises
+   computer_use__page / computer_use__launch_app while the allowlist named the
+   bare verbs, so every browser tool tool_search loaded was dropped at the filter
+   — while system.md tells the model to load and use exactly those tools. PLAN
+   2.1's fourth hypothesis, confirmed, and the reason the agent cannot browse.
+
+Also fixed a regression shipped in lal.31/lal.32 without being noticed: the
+Windows bash preference overrode an explicitly-PowerShell ComSpec. Three
+shell.test.ts failures were in the tree at release time because targeted tests
+were run instead of the suite. Now 9,246 pass across 280 files before release.
+
+Two checks were found to be passing while their defect was live, and both were
+tightened: the header test asserted "does not contain U+2229" and passed against
+the residue "»¿AT-DESIGN"; the allowlist drift check asked whether a name existed
+anywhere rather than whether it matched the ADVERTISED form. Both now assert the
+real property, and the drift check was verified by deliberately breaking it.
+
 ## 2026-07-24 (evening) — Tier 2 and Tier 4: nine field-reported defects, released as lal.31
 
 Driven by the operator's field report from Windows: "tool calling in general"

@@ -417,6 +417,26 @@ operator after 2.1c showed six runs could not resolve any of these effects.
    names itself instead of leaving the model to improvise — still the leading
    hypothesis for the Windows `'agent' is not recognized as a command` report.
 
+### 2.1e The Windows tool failures, root-caused 2026-07-25
+
+The shell-fallback symptom in 2.1 finally has a mechanism, and it is not routing.
+
+`web_search` threw client-side before sending, on every call, because a UTF-8 BOM
+written by `install.ps1` reached an HTTP header (see CHANGELOG 2026-07-25). With
+search unavailable the model guessed source URLs one at a time — which is what
+"tool calling in general is broken" looked like from the outside.
+
+Separately, and answering **hypothesis 4 of §2.1**: tools loaded lazily through
+`tool_search` *were* being dropped by the gateway filter. The computer-use driver
+advertises `computer_use__<verb>`; the allowlist named the bare verb. Every
+browser/page tool was therefore deleted at the filter while `system.md`
+instructed the model to load and use them. That is also the answer to "the agent
+cannot navigate the web".
+
+Both are fixed in lal.34. What remains unproven from §2.1 is only the Windows
+`'agent' is not recognized as a command` report itself; the gateway now logs every
+dropped tool name, so the next occurrence should name its own cause.
+
 ### 2.2 One tool registry
 
 A single declaration per tool — name, schema, handler, availability — consumed
