@@ -8,7 +8,7 @@ import { render } from 'ink-testing-library';
 import { act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Footer } from './Footer.js';
-import { ApprovalMode } from '@qwen-code/qwen-code-core';
+import { ApprovalMode } from '@lal/core';
 import * as useTerminalSize from '../hooks/useTerminalSize.js';
 import * as useStatusLineModule from '../hooks/useStatusLine.js';
 import { type UIState, UIStateContext } from '../contexts/UIStateContext.js';
@@ -24,9 +24,9 @@ const useTerminalSizeMock = vi.mocked(useTerminalSize.useTerminalSize);
 vi.mock('../hooks/useStatusLine.js');
 const useStatusLineMock = vi.mocked(useStatusLineModule.useStatusLine);
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
   const registry = {
     list: vi.fn(() => []),
     subscribe: vi.fn(() => () => {}),

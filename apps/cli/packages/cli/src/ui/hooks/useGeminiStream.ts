@@ -69,7 +69,7 @@ import {
   resetSemanticToolCallDedupAfterMutation,
   AutonomousLoopTickResolver,
   refreshMemoryAfterManagedWrite,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { type Part, type PartListUnion, FinishReason } from '@google/genai';
 import type {
   HistoryItem,
@@ -3835,10 +3835,10 @@ export const useGeminiStream = (
   // otherwise a stale TeamManager could keep pushing into
   // the active queue ref after team recreation/remount.
   useEffect(() => {
-    let boundManager: import('@qwen-code/qwen-code-core').TeamManager | null =
+    let boundManager: import('@lal/core').TeamManager | null =
       null;
     const handleManagerChange = (
-      manager: import('@qwen-code/qwen-code-core').TeamManager | null,
+      manager: import('@lal/core').TeamManager | null,
     ) => {
       if (boundManager && boundManager !== manager) {
         boundManager.setLeaderMessageCallback(null);

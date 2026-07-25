@@ -12,7 +12,7 @@ import {
   CompressionStatus,
   SYSTEM_REMINDER_OPEN,
   SYSTEM_REMINDER_CLOSE,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 // ---------------------------------------------------------------------------
 // Helpers

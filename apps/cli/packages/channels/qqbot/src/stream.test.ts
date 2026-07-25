@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { QQChannel as QQChannelClass } from './QQChannel.js';
-import type { ToolCallEvent } from '@qwen-code/channel-base';
+import type { ToolCallEvent } from '@lal/channel-base';
 
 const { mockSendQQMessage, mockFetchAccessToken } = vi.hoisted(() => ({
   mockSendQQMessage: vi.fn(),
@@ -32,7 +32,7 @@ vi.mock('./login.js', () => ({
   qrCodeLogin: vi.fn(),
 }));
 
-vi.mock('@qwen-code/channel-base', () => ({
+vi.mock('@lal/channel-base', () => ({
   ChannelBase: class {
     protected config: Record<string, unknown> = {};
     protected bridge: Record<string, unknown> = {};
@@ -108,7 +108,7 @@ function makeChannel(overrides: Record<string, unknown> = {}): QQChannelClass {
       appSecret: 'test-secret',
       ...overrides,
     },
-    {} as unknown as import('@qwen-code/channel-base').ChannelAgentBridge,
+    {} as unknown as import('@lal/channel-base').ChannelAgentBridge,
   );
   const chp = ch as unknown as Record<string, unknown>;
   chp['accessToken'] = 'test-token';

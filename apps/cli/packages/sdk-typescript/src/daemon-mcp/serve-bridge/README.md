@@ -45,7 +45,7 @@ qwen-serve-mcp
     "qwen-serve-bridge": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "-p", "@qwen-code/sdk", "qwen-serve-mcp"],
+      "args": ["-y", "-p", "@lal/sdk", "qwen-serve-mcp"],
       "env": {
         "QWEN_DAEMON_URL": "http://127.0.0.1:4170",
         "QWEN_DAEMON_TOKEN": "<your-token>"
@@ -58,7 +58,7 @@ qwen-serve-mcp
 ### 方式二：全局安装后使用
 
 ```bash
-npm install -g @qwen-code/sdk
+npm install -g @lal/sdk
 ```
 
 ```json
@@ -105,7 +105,7 @@ npm install -g @qwen-code/sdk
 ### 编程式使用
 
 ```typescript
-import { createServeBridgeMcpServer } from '@qwen-code/sdk';
+import { createServeBridgeMcpServer } from '@lal/sdk';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 const server = createServeBridgeMcpServer({

@@ -29,7 +29,7 @@
  * ## Usage (in adapter test file)
  *
  * ```ts
- * import { runAdapterConformanceSuite } from '@qwen-code/sdk/daemon';
+ * import { runAdapterConformanceSuite } from '@lal/sdk/daemon';
  * import { reduceForTui, renderTuiState } from './my-tui-adapter';
  *
  * const result = runAdapterConformanceSuite({

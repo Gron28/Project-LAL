@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import type { DialogEntry } from '../../hooks/useBackgroundTaskView.js';
 import { getPillLabel, hasPendingApproval } from './BackgroundTasksPill.js';
-import type { BackgroundApproval } from '@qwen-code/qwen-code-core';
+import type { BackgroundApproval } from '@lal/core';
 
 function approval(callId: string): BackgroundApproval {
   return {

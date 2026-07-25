@@ -14,11 +14,11 @@ import {
   Storage,
   createDebugLogger,
   stripRuntimeSnapshotPrefix,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type {
   MCPServerConfig,
   McpServerScope,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import stripJsonComments from 'strip-json-comments';
 import { isWorkspaceTrusted } from './trustedFolders.js';
 import { hasOwnModelProviders } from './modelProvidersScope.js';

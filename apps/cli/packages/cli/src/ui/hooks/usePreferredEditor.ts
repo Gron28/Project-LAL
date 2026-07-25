@@ -10,7 +10,7 @@ import {
   isValidEditorType,
   allowEditorTypeInSandbox,
   createDebugLogger,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { useSettings } from '../contexts/SettingsContext.js';
 
 const debugLogger = createDebugLogger('PREFERRED_EDITOR');

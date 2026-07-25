@@ -24,14 +24,14 @@
  * fires before runtime and before the protocol docs go out of sync.
  *
  * Lives in the SDK package (not the CLI) because the SDK already
- * depends on `@qwen-code/qwen-code-core`, so all three identifiers are
+ * depends on `@lal/core`, so all three identifiers are
  * visible — and this is the package whose contract the test is
  * actually pinning.
  *
  * #4175 Wave 4 PR 17 (#4282 fold-in 1, wenshao review).
  */
 import { describe, expect, it } from 'vitest';
-import { APPROVAL_MODES } from '@qwen-code/qwen-code-core';
+import { APPROVAL_MODES } from '@lal/core';
 import { DAEMON_APPROVAL_MODES } from '../../src/index.js';
 
 describe('approval-mode SDK ↔ core drift detection', () => {

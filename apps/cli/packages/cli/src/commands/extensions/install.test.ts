@@ -21,7 +21,7 @@ const mockLoadSettings = vi.hoisted(() => vi.fn());
 const mockWriteStdoutLine = vi.hoisted(() => vi.fn());
 const mockWriteStderrLine = vi.hoisted(() => vi.fn());
 
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   ExtensionManager: vi.fn().mockImplementation(() => ({
     installExtension: mockInstallExtension,
     refreshCache: mockRefreshCache,

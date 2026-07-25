@@ -13,7 +13,7 @@ import type {
   PerFileStats,
   TurnDiff,
   TurnFileDiff,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { HistoryItem } from '../types.js';
 import { theme } from '../semantic-colors.js';
 import { useKeypress } from '../hooks/useKeypress.js';

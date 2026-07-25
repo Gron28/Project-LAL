@@ -40,7 +40,7 @@ import {
   type DiscoveredMCPPrompt,
   createDebugLogger,
   matchesAnyServerPattern,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { loadSettings, SettingScope } from '../../../config/settings.js';
 import { loadMcpApprovals } from '../../../config/mcpApprovals.js';
 import { isToolValid, getToolInvalidReasons } from './utils.js';

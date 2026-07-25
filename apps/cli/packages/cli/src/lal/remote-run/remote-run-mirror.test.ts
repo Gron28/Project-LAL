@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { AgentEventEmitter, AgentEventType } from '@qwen-code/qwen-code-core';
+import { AgentEventEmitter, AgentEventType } from '@lal/core';
 import { GatewayClient } from '../attach/gateway-client.js';
 import { RemoteRunMirror } from './remote-run-mirror.js';
 

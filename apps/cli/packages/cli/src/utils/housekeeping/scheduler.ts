@@ -12,7 +12,7 @@ import {
   type Config,
   createDebugLogger,
   getSubagentsRootDir,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { LoadedSettings } from '../../config/settings.js';
 import {
   cleanupOldFileHistoryBackups,

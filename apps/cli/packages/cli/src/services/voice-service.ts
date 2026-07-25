@@ -8,7 +8,7 @@ import {
   createDebugLogger,
   ModelsConfig,
   type ModelProvidersConfig,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { getPersistScopeForModelSelection } from '../config/modelProvidersScope.js';
 import { SettingScope, type LoadedSettings } from '../config/settings.js';
 import {

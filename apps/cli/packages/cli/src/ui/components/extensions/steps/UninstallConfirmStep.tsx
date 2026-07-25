@@ -9,7 +9,7 @@ import {
   type Extension,
   createDebugLogger,
   getExtensionDisplayName,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { theme } from '../../../semantic-colors.js';
 import { useKeypress } from '../../../hooks/useKeypress.js';
 import { t, getCurrentLanguage } from '../../../../i18n/index.js';

@@ -7,7 +7,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { watch as watchFs, type FSWatcher } from 'chokidar';
-import { createDebugLogger } from '@qwen-code/qwen-code-core';
+import { createDebugLogger } from '@lal/core';
 import { type LoadedSettings, SettingScope } from './settings.js';
 import { getFlattenedSchema } from '../utils/settingsUtils.js';
 

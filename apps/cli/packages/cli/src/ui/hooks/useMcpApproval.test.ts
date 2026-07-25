@@ -13,7 +13,7 @@ import {
   ApprovalMode,
   type Config,
   type MCPServerConfig,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { useMcpApproval } from './useMcpApproval.js';
 import { McpApprovalChoice } from '../components/mcp/MCPServerApprovalDialog.js';
 import { appEvents, AppEvent } from '../../utils/events.js';

@@ -275,7 +275,7 @@ export {
 // Auth
 // surface. These were re-exported from `./daemon/index.js` but the
 // public SDK entry (this file) never re-exported them, so an
-// `import { DaemonAuthFlow } from '@qwen-code/sdk'` resolved to
+// `import { DaemonAuthFlow } from '@lal/sdk'` resolved to
 // undefined. The PR description lists `reduceDaemonAuthEvent` as
 // SDK surface and `client.auth.start()` works only because
 // `DaemonClient` (already exported above) constructs `DaemonAuthFlow`

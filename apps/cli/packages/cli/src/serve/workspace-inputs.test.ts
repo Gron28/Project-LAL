@@ -95,7 +95,7 @@ describe('resolveSingleWorkspaceInput', () => {
       { code: 'EACCES' },
     );
     vi.resetModules();
-    vi.doMock('@qwen-code/acp-bridge/workspacePaths', () => ({
+    vi.doMock('@lal/acp-bridge/workspacePaths', () => ({
       canonicalizeWorkspace: (workspace: string) => {
         if (workspace === '/inaccessible') {
           throw canonicalizationError;
@@ -111,7 +111,7 @@ describe('resolveSingleWorkspaceInput', () => {
         resolveSingleWorkspaceInput(['/inaccessible', '/other']),
       ).toThrow(MultipleWorkspaceInputError);
     } finally {
-      vi.doUnmock('@qwen-code/acp-bridge/workspacePaths');
+      vi.doUnmock('@lal/acp-bridge/workspacePaths');
       vi.resetModules();
     }
   });

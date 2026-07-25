@@ -1,4 +1,4 @@
-# @qwen-code/sdk
+# @lal/sdk
 
 A minimum experimental TypeScript SDK for programmatic access to LAL.
 
@@ -7,7 +7,7 @@ Feel free to submit a feature request/issue/PR.
 ## Installation
 
 ```bash
-npm install @qwen-code/sdk
+npm install @lal/sdk
 ```
 
 ## Requirements
@@ -19,7 +19,7 @@ npm install @qwen-code/sdk
 ## Quick Start
 
 ```typescript
-import { query } from '@qwen-code/sdk';
+import { query } from '@lal/sdk';
 
 // Single-turn query
 const result = query({
@@ -109,7 +109,7 @@ channel, IDE, or web backend adapters do not need to pass `sessionId` into every
 call.
 
 ```typescript
-import { DaemonClient, DaemonSessionClient } from '@qwen-code/sdk';
+import { DaemonClient, DaemonSessionClient } from '@lal/sdk';
 
 const daemon = new DaemonClient({
   baseUrl: 'http://127.0.0.1:4170',
@@ -160,7 +160,7 @@ import {
   asKnownDaemonEvent,
   createDaemonSessionViewState,
   reduceDaemonSessionEvent,
-} from '@qwen-code/sdk';
+} from '@lal/sdk';
 
 let view = createDaemonSessionViewState();
 for await (const event of session.events()) {
@@ -184,7 +184,7 @@ import {
   isSDKSystemMessage,
   isSDKResultMessage,
   isSDKPartialAssistantMessage,
-} from '@qwen-code/sdk';
+} from '@lal/sdk';
 
 for await (const message of result) {
   if (isSDKAssistantMessage(message)) {
@@ -254,7 +254,7 @@ The first matching rule wins.
 ### Multi-turn Conversation
 
 ```typescript
-import { query, type SDKUserMessage } from '@qwen-code/sdk';
+import { query, type SDKUserMessage } from '@lal/sdk';
 
 async function* generateMessages(): AsyncIterable<SDKUserMessage> {
   yield {
@@ -288,7 +288,7 @@ for await (const message of result) {
 ### Custom Permission Handler
 
 ```typescript
-import { query, type CanUseTool } from '@qwen-code/sdk';
+import { query, type CanUseTool } from '@lal/sdk';
 
 const canUseTool: CanUseTool = async (toolName, input, { signal }) => {
   // Allow all read operations
@@ -324,7 +324,7 @@ object keyed by the question's index (as a string), where each value is the
 label of the chosen option (or free-form text when the user picks "Other").
 
 ```typescript
-import { query, type CanUseTool } from '@qwen-code/sdk';
+import { query, type CanUseTool } from '@lal/sdk';
 
 const canUseTool: CanUseTool = async (toolName, input, { signal }) => {
   if (toolName === 'ask_user_question') {
@@ -356,7 +356,7 @@ const canUseTool: CanUseTool = async (toolName, input, { signal }) => {
 ### With External MCP Servers
 
 ```typescript
-import { query } from '@qwen-code/sdk';
+import { query } from '@lal/sdk';
 
 const result = query({
   prompt: 'Use the custom tool from my MCP server',
@@ -375,7 +375,7 @@ const result = query({
 ### Override the System Prompt
 
 ```typescript
-import { query } from '@qwen-code/sdk';
+import { query } from '@lal/sdk';
 
 const result = query({
   prompt: 'Say hello in one sentence.',
@@ -388,7 +388,7 @@ const result = query({
 ### Append to the Built-in System Prompt
 
 ```typescript
-import { query } from '@qwen-code/sdk';
+import { query } from '@lal/sdk';
 
 const result = query({
   prompt: 'Review the current directory.',
@@ -446,7 +446,7 @@ Returns a `McpSdkServerConfigWithInstance` object that can be passed directly to
 
 ```typescript
 import { z } from 'zod';
-import { query, tool, createSdkMcpServer } from '@qwen-code/sdk';
+import { query, tool, createSdkMcpServer } from '@lal/sdk';
 
 // Define a tool with Zod schema
 const calculatorTool = tool(
@@ -483,7 +483,7 @@ for await (const message of result) {
 ### Abort a Query
 
 ```typescript
-import { query, isAbortError } from '@qwen-code/sdk';
+import { query, isAbortError } from '@lal/sdk';
 
 const abortController = new AbortController();
 
@@ -515,7 +515,7 @@ try {
 The SDK provides an `AbortError` class for handling aborted queries:
 
 ```typescript
-import { AbortError, isAbortError } from '@qwen-code/sdk';
+import { AbortError, isAbortError } from '@lal/sdk';
 
 try {
   // ... query operations
@@ -540,7 +540,7 @@ Version 0.1.0 requires [LAL](https://github.com/QwenLM/qwen-code) **>= 0.4.0** t
 
 ```bash
 # Install LAL globally
-npm install -g @qwen-code/qwen-code@latest
+npm install -g @lal/cli@latest
 ```
 
 **Note**: From version **0.1.1** onwards, the CLI is bundled with the SDK, so no separate LAL installation is needed.

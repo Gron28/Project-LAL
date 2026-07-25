@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup } from 'ink-testing-library';
-import { HookEventName } from '@qwen-code/qwen-code-core';
+import { HookEventName } from '@lal/core';
 import { HooksManagementDialog } from './HooksManagementDialog.js';
 import { renderWithProviders } from '../../../test-utils/render.js';
 import { useKeypress } from '../../hooks/useKeypress.js';
@@ -121,9 +121,9 @@ vi.mock('../../semantic-colors.js', () => ({
   },
 }));
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
   return {
     ...actual,
     createDebugLogger: vi.fn(() => ({

@@ -22,8 +22,8 @@ import {
   Storage,
   writeRuntimeStatus,
   writeWorktreeSessionMarker,
-} from '@qwen-code/qwen-code-core';
-import type { Config } from '@qwen-code/qwen-code-core';
+} from '@lal/core';
+import type { Config } from '@lal/core';
 
 const exec = promisify(execFile);
 

@@ -112,7 +112,7 @@ vi.mock('@agentclientprotocol/sdk', () => ({
   PROTOCOL_VERSION: '1.0.0',
 }));
 
-vi.mock('@qwen-code/acp-bridge/ndJsonStream', () => ({
+vi.mock('@lal/acp-bridge/ndJsonStream', () => ({
   ndJsonStream: vi.fn().mockReturnValue({}),
 }));
 
@@ -127,7 +127,7 @@ vi.mock('node:stream', async (importOriginal) => {
 });
 
 // Mock core dependencies
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   SESSION_ARTIFACT_PERSISTENCE_VERSION: 2,
   normalizeEventPayload: vi.fn((payload: unknown) =>
     typeof payload === 'object' &&
@@ -685,7 +685,7 @@ import {
   deliverClientMcpMessage,
 } from './acpAgent.js';
 import { gzipSync } from 'node:zlib';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import type { LoadedSettings } from '../config/settings.js';
 import type { CliArgs } from '../config/config.js';
 import {
@@ -710,7 +710,7 @@ import {
   startEventLoopLagMonitor,
   registerAcpEventLoopLagGauge,
   SESSION_ARTIFACT_PERSISTENCE_VERSION,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { McpServer } from '@agentclientprotocol/sdk';
 import { AgentSideConnection } from '@agentclientprotocol/sdk';
 import { loadSettings, SettingScope } from '../config/settings.js';
@@ -725,8 +725,8 @@ import { Session, buildAvailableCommandsSnapshot } from './session/Session.js';
 import {
   SERVE_STATUS_EXT_METHODS,
   SERVE_CONTROL_EXT_METHODS,
-} from '@qwen-code/acp-bridge/status';
-import type { ServeWorkspaceSkillsStatus } from '@qwen-code/acp-bridge/status';
+} from '@lal/acp-bridge/status';
+import type { ServeWorkspaceSkillsStatus } from '@lal/acp-bridge/status';
 import {
   updateOutputLanguageFile,
   writeOutputLanguageAndRegisterPath,
@@ -2792,7 +2792,7 @@ describe('QwenAgent MCP SSE/HTTP support', () => {
 
   it('extMethod preflight surfaces SkillError as parse_error errorKind', async () => {
     const skillError = new (
-      await import('@qwen-code/qwen-code-core')
+      await import('@lal/core')
     ).SkillError('bad frontmatter', 'PARSE_ERROR');
     mockConfig = {
       ...mockConfig,

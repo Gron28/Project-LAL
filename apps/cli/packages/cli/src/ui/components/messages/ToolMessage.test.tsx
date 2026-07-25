@@ -16,7 +16,7 @@ import type {
   AnsiOutput,
   AnsiOutputDisplay,
   Config,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { LoadedSettings } from '../../../config/settings.js';
 
 // Global compact mode was removed (#5666); type-based tool rendering no longer

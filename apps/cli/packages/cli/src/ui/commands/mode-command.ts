@@ -15,7 +15,7 @@ import {
   CODE_MODE_NAMES,
   CODE_MODE_PRESETS,
   type CodeModeName,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 const NAME_LIST = CODE_MODE_NAMES.join(', ');
 

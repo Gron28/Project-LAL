@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Storage, SessionService } from '@qwen-code/qwen-code-core';
+import { Storage, SessionService } from '@lal/core';
 import { loadSettings } from '../../config/settings.js';
 
 export function initSessionService(): SessionService {

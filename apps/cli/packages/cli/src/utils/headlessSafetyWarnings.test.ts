@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ApprovalMode } from '@qwen-code/qwen-code-core';
+import { ApprovalMode } from '@lal/core';
 import {
   HEADLESS_YOLO_NO_SANDBOX_WARNING,
   getHeadlessYoloSafetyWarning,

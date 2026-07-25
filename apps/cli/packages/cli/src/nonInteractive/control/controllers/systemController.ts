@@ -31,7 +31,7 @@ import {
   normalizeReasoningEffort,
   loadUsageDashboard,
   type MCPOAuthConfig,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 const debugLogger = createDebugLogger('SYSTEM_CONTROLLER');
 

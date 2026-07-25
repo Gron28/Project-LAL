@@ -65,12 +65,30 @@ foreground run was killed by an outer process-group cleanup two minutes in on
 The two big mechanical jobs, in this order, each verified by `npm test` +
 `node esbuild.config.js` + the full vitest suite after every batch:
 
-- **7.3 name ownership.** ~3,000 files contain `qwen`; 364 CLI UI files alone.
-  Most user-visible `Qwen` strings belong to the inherited **cloud OAuth
-  surface**, so the fix there is 7.2 deletion, not renaming. Do the package
-  rename (`@qwen-code/qwen-code-core` → a LAL name) as one atomic batch with the
-  build as the gate; it is mechanical but touches nearly every file, so it needs a
-  session where the whole thing fits in context.
+- **7.3 name ownership.** Two pieces done 2026-07-25:
+  - **Package scope renamed.** Every `@qwen-code/*` specifier is now `@lal/*`
+    (`qwen-code-core` → `@lal/core`, `qwen-code` → `@lal/cli`), 879 files in one
+    batch, gated on `npm install` + `node esbuild.config.js` + `tsc --noEmit`
+    on core and cli + `lal --version`. Watch the two non-specifier forms a
+    naive sweep misses: the scope *directory* `node_modules/@qwen-code/` in the
+    packaging scripts, and the prebuild artifact name
+    `@qwen-code+audio-capture.node`, which node-gyp-build derives from the
+    package name — both renamed with it.
+  - **Home directory owned in code.** `~/.lal` is now the default; `~/.qwen` is
+    still used when it is the only one present, so existing installs are not
+    orphaned. Previously only the `lal` shell wrapper set it, so anything
+    bypassing the wrapper wrote to `~/.qwen` — which is why both directories
+    were live on this machine.
+  - **Still open.** `QWEN_DIR` (the project-local `<repo>/.qwen`) is unchanged
+    on purpose. ~30 `QWEN_*` env var names, `QWEN.md`, and `.qwenignore` are
+    untouched — all are functional identifiers, not cosmetics, and each needs a
+    compatibility fallback rather than a sed. The theme picker still ships
+    "Qwen Dark"/"Qwen Light" as selectable built-ins. Most remaining
+    user-visible `Qwen` strings belong to the inherited **cloud OAuth
+    surface**, where the fix is 7.2 deletion, not renaming.
+  - **The operator's data.** `~/.qwen` on this machine still holds 106 projects
+    and a pending skill that nothing reads now. Merging or discarding it is an
+    explicit decision, not a migration to run silently.
 - **7.1/7.2** apply the Stage 0.2 census and remove cloud providers, enterprise
   channels, the desktop/mobile surface, SDKs, the computer-use driver, and the
   `lab-agent` path.

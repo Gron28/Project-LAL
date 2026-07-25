@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { ChatRecord } from '@qwen-code/qwen-code-core';
+import type { ChatRecord } from '@lal/core';
 import { collectSessionData } from './collect.js';
 import { toTxt } from './formatters/txt.js';
 

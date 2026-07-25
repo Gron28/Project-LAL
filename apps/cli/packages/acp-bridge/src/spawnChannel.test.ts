@@ -12,7 +12,7 @@
  * or `scrubChildEnv` directly. These tests close that gap.
  *
  * Why this matters: now that `defaultSpawnChannelFactory` is a public
- * export of `@qwen-code/acp-bridge`, channels (`packages/channels/base/
+ * export of `@lal/acp-bridge`, channels (`packages/channels/base/
  * AcpBridge.ts`) and the VSCode IDE companion will consume it directly
  * and cannot rely on cli-package integration tests for env-scrubbing
  * guarantees. The scrubbing logic protects against:

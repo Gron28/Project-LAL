@@ -899,12 +899,12 @@ install_npm() {
         npm
         install
         -g
-        @qwen-code/qwen-code@latest
+        @lal/cli@latest
         --registry
         "${NPM_REGISTRY}"
     )
 
-    log_info "Running: npm install -g @qwen-code/qwen-code@latest --registry ${NPM_REGISTRY}"
+    log_info "Running: npm install -g @lal/cli@latest --registry ${NPM_REGISTRY}"
     if "${install_cmd[@]}"; then
         log_success "Qwen Code installed successfully."
         create_source_json
@@ -916,7 +916,7 @@ install_npm() {
     echo "This installer does not change your npm prefix or shell profile."
     echo "If the failure is a permission error, install Node.js with a user-owned"
     echo "Node version manager or fix your npm global package directory, then run:"
-    echo "  npm install -g @qwen-code/qwen-code@latest --registry ${NPM_REGISTRY}"
+    echo "  npm install -g @lal/cli@latest --registry ${NPM_REGISTRY}"
     return 1
 }
 

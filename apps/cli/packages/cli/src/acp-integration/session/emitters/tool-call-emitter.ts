@@ -20,7 +20,7 @@ import type {
   ToolKind,
 } from '@agentclientprotocol/sdk';
 import type { Part } from '@google/genai';
-import { ToolNames, Kind } from '@qwen-code/qwen-code-core';
+import { ToolNames, Kind } from '@lal/core';
 import { buildTruncatedDiffPreviewText } from '../../../utils/truncatedDiffPreview.js';
 
 const KIND_MAP: Record<Kind, ToolKind> = {
@@ -234,7 +234,7 @@ export class ToolCallEmitter extends BaseEmitter {
    *   - toolName matches `mcp__<server>__<tool>` → `'mcp'` with
    *     `serverId: <server>`. Naming convention from
    *     `packages/core/src/tools/mcp-tool.ts` in the
-   *     `@qwen-code/qwen-code-core` package — mirrors the SDK's same
+   *     `@lal/core` package — mirrors the SDK's same
    *     heuristic fallback so SDK consumers stay consistent with
    *     daemon classification.
    *   - everything else → `'builtin'`

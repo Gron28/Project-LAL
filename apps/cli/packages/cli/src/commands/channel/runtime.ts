@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { hashDaemonWorkspace, Storage } from '@qwen-code/qwen-code-core';
+import { hashDaemonWorkspace, Storage } from '@lal/core';
 import type {
   SessionRouter,
   ChannelAgentBridge,
@@ -10,8 +10,8 @@ import type {
   PermissionRequestEvent,
   PermissionResolvedEvent,
   ToolCallEvent,
-} from '@qwen-code/channel-base';
-import { sanitizeLogText } from '@qwen-code/channel-base';
+} from '@lal/channel-base';
+import { sanitizeLogText } from '@lal/channel-base';
 import { loadSettings, type LoadedSettings } from '../../config/settings.js';
 import { writeStderrLine, writeStdoutLine } from '../../utils/stdioHelpers.js';
 import { getExtensionManager } from '../extensions/utils.js';

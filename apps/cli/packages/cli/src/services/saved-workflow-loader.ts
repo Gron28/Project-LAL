@@ -17,12 +17,12 @@
  * discovered entries into `SlashCommand` objects.
  */
 
-import type { Config, SavedWorkflowEntry } from '@qwen-code/qwen-code-core';
+import type { Config, SavedWorkflowEntry } from '@lal/core';
 import {
   listSavedWorkflows,
   ToolNames,
   createDebugLogger,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { ICommandLoader } from './types.js';
 import type {
   CommandContext,

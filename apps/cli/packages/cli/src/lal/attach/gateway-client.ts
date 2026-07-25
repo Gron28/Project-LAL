@@ -19,7 +19,7 @@
 // bearer header + device headers OPPORTUNISTICALLY (forward-compatible with
 // a future gate) but never refuses to call `/api/agent/*` just because no
 // token is configured.
-import { PROTOCOL_VERSION } from '@qwen-code/qwen-code-core';
+import { PROTOCOL_VERSION } from '@lal/core';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

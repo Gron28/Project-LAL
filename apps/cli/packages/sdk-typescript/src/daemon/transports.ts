@@ -5,9 +5,9 @@
  */
 
 /**
- * Opt-in transport surface: `@qwen-code/sdk/daemon/transports`.
+ * Opt-in transport surface: `@lal/sdk/daemon/transports`.
  *
- * The default `@qwen-code/sdk/daemon` barrel deliberately ships only the
+ * The default `@lal/sdk/daemon` barrel deliberately ships only the
  * `DaemonTransport` interface and the lightweight `RestSseTransport` *type*
  * so its browser bundle stays under budget (see `scripts/build.js`
  * `MAX_DAEMON_BROWSER_BUNDLE_BYTES`). The concrete ACP transports —
@@ -22,7 +22,7 @@
  * import {
  *   negotiateTransport,
  *   AcpHttpTransport,
- * } from '@qwen-code/sdk/daemon/transports';
+ * } from '@lal/sdk/daemon/transports';
  *
  * const transport = await negotiateTransport(baseUrl, token);
  * const client = new DaemonClient({ baseUrl, token, transport });

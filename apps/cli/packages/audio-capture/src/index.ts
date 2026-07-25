@@ -63,7 +63,7 @@ function loadBinding(): NativeBinding {
   } catch (error) {
     throw new Error(
       'Native audio capture addon could not be loaded. Reinstall ' +
-        '@qwen-code/audio-capture, or run "npm run build" in packages/audio-capture. ' +
+        '@lal/audio-capture, or run "npm run build" in packages/audio-capture. ' +
         `(${error instanceof Error ? error.message : String(error)})`,
     );
   }

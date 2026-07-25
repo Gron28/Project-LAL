@@ -19,7 +19,7 @@ import {
   encodeInsightReadyMessage,
   openBrowserSecurely,
   Storage,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 const logger = createDebugLogger('DataProcessor');
 

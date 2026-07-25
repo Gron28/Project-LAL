@@ -21,14 +21,14 @@ import type {
   Config,
   Extension,
   GeminiChat,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   ApprovalMode,
   AuthType,
   SYSTEM_REMINDER_OPEN,
   SYSTEM_REMINDER_CLOSE,
-} from '@qwen-code/qwen-code-core';
-import * as core from '@qwen-code/qwen-code-core';
+} from '@lal/core';
+import * as core from '@lal/core';
 import { SettingScope } from '../../config/settings.js';
 import type {
   AgentSideConnection,
@@ -49,9 +49,9 @@ const transcribeVoiceAudioSpy = vi.hoisted(() => vi.fn());
 // Session computed (e.g. the home confinement root) without a private-field peek.
 const loopTickResolverDepsSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
   return {
     ...actual,
     createDebugLogger: () => ({

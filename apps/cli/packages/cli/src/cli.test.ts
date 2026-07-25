@@ -17,7 +17,7 @@ import {
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { FatalError } from '@qwen-code/qwen-code-core';
+import { FatalError } from '@lal/core';
 import { AlreadyReportedError } from './utils/errors.js';
 import {
   MCP_COMMANDS,
@@ -307,7 +307,7 @@ describe('bootstrap import boundaries', () => {
     const source = readFileSync('src/cli.ts', 'utf8');
 
     expect(source).not.toContain("import yargs from 'yargs'");
-    expect(source).not.toContain("from '@qwen-code/qwen-code-core'");
+    expect(source).not.toContain("from '@lal/core'");
     expect(source).not.toContain("import './gemini.js'");
     expect(source).not.toContain("import { main } from './gemini.js'");
   });

@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { canonicalizeWorkspace } from '@qwen-code/acp-bridge/workspacePaths';
-import { MAX_DAEMON_WORKSPACES } from '@qwen-code/acp-bridge/channelControlTimeouts';
+import { canonicalizeWorkspace } from '@lal/acp-bridge/workspacePaths';
+import { MAX_DAEMON_WORKSPACES } from '@lal/acp-bridge/channelControlTimeouts';
 import { isWithinRoot } from '../config/path-comparison.js';
 
 export const MAX_REGISTERED_WORKSPACES = MAX_DAEMON_WORKSPACES;

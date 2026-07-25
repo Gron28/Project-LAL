@@ -14,13 +14,13 @@ import {
   SETTINGS_DIRECTORY_NAME,
 } from '../config/settings.js';
 import { promisify } from 'node:util';
-import type { Config, SandboxConfig } from '@qwen-code/qwen-code-core';
+import type { Config, SandboxConfig } from '@lal/core';
 import {
   FatalSandboxError,
   Storage,
   isSubpath,
   resolveBundleDir,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { randomBytes } from 'node:crypto';
 import { writeStderrLine } from './stdioHelpers.js';
 import { parseSandboxImageName } from './sandboxImageName.js';

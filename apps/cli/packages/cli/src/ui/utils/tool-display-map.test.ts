@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ToolDisplayNames, ToolNames } from '@qwen-code/qwen-code-core';
+import { ToolDisplayNames, ToolNames } from '@lal/core';
 import { TOOL_DISPLAY_BY_NAME } from './tool-display-map.js';
 
 describe('TOOL_DISPLAY_BY_NAME', () => {

@@ -14,7 +14,7 @@ import {
   createDebugLogger,
   resetDebugLoggingState,
   setDebugLogSession,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   InvalidRewindTargetError,
   SessionBusyError,

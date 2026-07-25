@@ -31,7 +31,7 @@ import {
   type Config,
   Storage,
   createDebugLogger,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   parseInputForHighlighting,
   buildSegmentsForVisualSlice,

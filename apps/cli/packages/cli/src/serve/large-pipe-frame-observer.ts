@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { LOAD_REPLAY_META_KEY } from '@qwen-code/acp-bridge/bridgeTypes';
+import { LOAD_REPLAY_META_KEY } from '@lal/acp-bridge/bridgeTypes';
 import type { DaemonLogger } from './daemon-logger.js';
 
 export const LARGE_PIPE_FRAME_THRESHOLD_BYTES = 256 * 1024;

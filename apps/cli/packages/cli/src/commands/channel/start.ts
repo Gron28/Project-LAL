@@ -5,7 +5,7 @@ import {
   nextFireTime,
   parseCron,
   readChannelMemory,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { loadSettings } from '../../config/settings.js';
 import { writeStderrLine, writeStdoutLine } from '../../utils/stdioHelpers.js';
 import {
@@ -13,12 +13,12 @@ import {
   ChannelLoopScheduler,
   ChannelLoopStore,
   SessionRouter,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 import type {
   ChannelBase,
   ChannelBaseOptions,
   ChannelLoopController,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 import { findCliEntryPath, parseChannelConfig } from './config-utils.js';
 import { resolveProxy } from './proxy.js';
 import {

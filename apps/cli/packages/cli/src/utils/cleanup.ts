@@ -103,7 +103,7 @@ export function _resetCleanupFunctionsForTest(): void {
 }
 
 export async function cleanupCheckpoints() {
-  const { Storage } = await import('@qwen-code/qwen-code-core');
+  const { Storage } = await import('@lal/core');
   const storage = new Storage(process.cwd());
   const tempDir = storage.getProjectTempDir();
   const checkpointsDir = join(tempDir, 'checkpoints');

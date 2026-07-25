@@ -71,7 +71,7 @@ import {
   ENV_WAS_RECOVERED,
 } from './settings.js';
 import { needsMigration } from './migration/index.js';
-import { QWEN_DIR } from '@qwen-code/qwen-code-core';
+import { QWEN_DIR } from '@lal/core';
 
 const mockDebugLogger = vi.hoisted(() => ({
   debug: vi.fn(),
@@ -80,9 +80,9 @@ const mockDebugLogger = vi.hoisted(() => ({
   info: vi.fn(),
 }));
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
   return {
     ...actual,
     createDebugLogger: () => mockDebugLogger,

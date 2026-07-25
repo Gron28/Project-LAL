@@ -1,4 +1,4 @@
-import type { ChannelPlugin } from '@qwen-code/channel-base';
+import type { ChannelPlugin } from '@lal/channel-base';
 import { MockPluginChannel } from './MockPluginChannel.js';
 
 export { MockPluginChannel } from './MockPluginChannel.js';

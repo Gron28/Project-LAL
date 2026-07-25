@@ -38,7 +38,7 @@ export const stopCommand: CommandModule<unknown, StopArgs> = {
         process.env[QWEN_SERVER_TOKEN_ENV] ??
         process.env[QWEN_DAEMON_TOKEN_ENV];
       try {
-        const sdk = (await import('@qwen-code/sdk/daemon')) as unknown as {
+        const sdk = (await import('@lal/sdk/daemon')) as unknown as {
           DaemonClient: new (opts: { baseUrl: string; token?: string }) => {
             stopChannelWorker(opts?: {
               timeoutMs?: number;

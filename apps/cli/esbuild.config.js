@@ -63,7 +63,7 @@ const external = [
   '@lydell/node-pty-linux-x64',
   '@lydell/node-pty-win32-arm64',
   '@lydell/node-pty-win32-x64',
-  '@qwen-code/audio-capture',
+  '@lal/audio-capture',
   '@teddyzhu/clipboard',
   '@teddyzhu/clipboard-darwin-arm64',
   '@teddyzhu/clipboard-darwin-x64',
@@ -100,7 +100,7 @@ const mainBuild = esbuild.build({
   },
   alias: {
     'is-in-ci': path.resolve(__dirname, 'packages/cli/src/patches/is-in-ci.ts'),
-    '@qwen-code/web-templates': path.resolve(
+    '@lal/web-templates': path.resolve(
       __dirname,
       'packages/web-templates/src/index.ts',
     ),

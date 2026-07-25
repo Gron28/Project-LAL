@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import type { LoadedSettings } from '../../config/settings.js';
 import { useEffortCommand } from './use-effort-command.js';
 

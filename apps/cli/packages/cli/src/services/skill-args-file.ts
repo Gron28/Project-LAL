@@ -35,7 +35,7 @@ import {
   constants,
 } from 'node:fs';
 import { join } from 'node:path';
-import { createDebugLogger, sessionIdContext } from '@qwen-code/qwen-code-core';
+import { createDebugLogger, sessionIdContext } from '@lal/core';
 
 const debugLogger = createDebugLogger('SKILL_ARGS_FILE');
 

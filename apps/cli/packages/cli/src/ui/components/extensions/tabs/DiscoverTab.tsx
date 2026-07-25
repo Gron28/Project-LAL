@@ -20,7 +20,7 @@ import {
   parseInstallSource,
   redactUrlCredentials,
   createDebugLogger,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { getErrorMessage } from '../../../../utils/errors.js';
 import type { StatusMessage } from '../ExtensionsManagerDialog.js';
 

@@ -25,7 +25,7 @@ import {
   type TeamManager,
   type TeammateJoinedEvent,
   type TeammateExitedEvent,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { AgentViewActions } from '../contexts/AgentViewContext.js';
 import { theme } from '../semantic-colors.js';
 

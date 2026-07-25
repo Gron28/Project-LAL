@@ -8,7 +8,7 @@ import type {
   HookConfig,
   HooksConfigSource,
   HookEventName,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 export interface HookExitCode {
   code: number | string;

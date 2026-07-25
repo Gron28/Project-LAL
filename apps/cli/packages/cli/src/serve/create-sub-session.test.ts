@@ -5,7 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AcpSessionBridge } from '@qwen-code/acp-bridge/bridgeTypes';
+import type { AcpSessionBridge } from '@lal/acp-bridge/bridgeTypes';
 
 /** Captures the launcher's operator-facing stderr output. */
 const { stderrLines } = vi.hoisted(() => ({ stderrLines: [] as string[] }));

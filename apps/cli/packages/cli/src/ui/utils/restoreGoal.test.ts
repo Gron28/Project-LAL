@@ -12,7 +12,7 @@ import {
   notifyGoalTerminal,
   setActiveGoal,
   type Config,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { HistoryItem } from '../types.js';
 import {
   findGoalToRestore,

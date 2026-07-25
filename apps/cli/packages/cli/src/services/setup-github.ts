@@ -14,7 +14,7 @@ import {
   getLatestGitHubRelease,
   isGitHubRepositoryAsync,
 } from '../utils/gitUtils.js';
-import { createDebugLogger } from '@qwen-code/qwen-code-core';
+import { createDebugLogger } from '@lal/core';
 import { writeStderrLine } from '../utils/stdioHelpers.js';
 
 const debugLogger = createDebugLogger('SETUP_GITHUB');

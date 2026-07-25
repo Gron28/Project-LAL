@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import type { LoadedSettings } from '../config/settings.js';
 import {
   AppEvent,
@@ -32,7 +32,7 @@ const mockGetIdeClientInstance = vi.hoisted(() =>
 const mockInitializeTelemetry = vi.hoisted(() => vi.fn());
 const mockStartBackgroundHousekeeping = vi.hoisted(() => vi.fn());
 
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   createDebugLogger: () => ({
     debug: mockDebug,
     warn: mockWarn,

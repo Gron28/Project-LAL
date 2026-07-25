@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import {
   collectContextData,
   formatContextUsageText,
@@ -22,9 +22,9 @@ const { mockGetLastPromptTokenCount, mockGetLastCachedContentTokenCount } =
     mockGetLastCachedContentTokenCount: vi.fn().mockReturnValue(0),
   }));
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const original =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
   return {
     ...original,
     uiTelemetryService: {

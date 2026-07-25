@@ -7,7 +7,7 @@
 import { render } from 'ink-testing-library';
 import { describe, it, expect } from 'vitest';
 import { AutoAcceptIndicator } from './AutoAcceptIndicator.js';
-import { ApprovalMode } from '@qwen-code/qwen-code-core';
+import { ApprovalMode } from '@lal/core';
 import { setLanguageAsync } from '../../i18n/index.js';
 
 describe('<AutoAcceptIndicator />', () => {

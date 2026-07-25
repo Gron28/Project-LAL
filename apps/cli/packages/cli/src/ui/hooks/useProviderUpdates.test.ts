@@ -16,7 +16,7 @@ import {
   buildProviderTemplate,
   computeModelListVersion,
   PROVIDER_METADATA_NS,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { useProviderUpdates } from './useProviderUpdates.js';
 
 vi.mock('../../utils/settingsUtils.js', async (importOriginal) => {

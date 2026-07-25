@@ -31,8 +31,8 @@ import {
   worktreeBranchForSlug,
   writeWorktreeSession,
   writeWorktreeSessionMarker,
-} from '@qwen-code/qwen-code-core';
-import type { Config, WorktreeSession } from '@qwen-code/qwen-code-core';
+} from '@lal/core';
+import type { Config, WorktreeSession } from '@lal/core';
 
 const debugLogger = createDebugLogger('WORKTREE_STARTUP');
 

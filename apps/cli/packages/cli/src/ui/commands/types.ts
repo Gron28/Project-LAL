@@ -11,7 +11,7 @@ import type {
   AgentEventEmitter,
   Logger,
   SessionListItem,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type {
   HistoryItemWithoutId,
   HistoryItem,

@@ -19,7 +19,7 @@ import {
   createDebugLogger,
   persistSessionUsage,
   uiTelemetryService,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import dns from 'node:dns';
 import os from 'node:os';
 import path from 'node:path';

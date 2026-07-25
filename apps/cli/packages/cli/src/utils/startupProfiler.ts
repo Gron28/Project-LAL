@@ -30,7 +30,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
-import type { StartupEventAttrs } from '@qwen-code/qwen-code-core';
+import type { StartupEventAttrs } from '@lal/core';
 import { isServeFastPathArgv } from '../serve/fast-path-argv.js';
 
 interface Checkpoint {

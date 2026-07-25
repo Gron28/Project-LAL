@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ToolDisplayNames, ToolNames } from '@qwen-code/qwen-code-core';
+import { ToolDisplayNames, ToolNames } from '@lal/core';
 
 /**
  * Internal-tool-name → user-facing display-name lookup

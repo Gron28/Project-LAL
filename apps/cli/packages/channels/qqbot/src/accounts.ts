@@ -7,7 +7,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { getGlobalQwenDir } from '@qwen-code/channel-base';
+import { getGlobalQwenDir } from '@lal/channel-base';
 
 /** Build the credential file path for a given safe channel name. */
 export function getCredsFilePath(safeName: string): string {

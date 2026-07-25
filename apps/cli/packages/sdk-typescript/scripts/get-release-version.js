@@ -19,7 +19,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const PACKAGE_NAME = '@qwen-code/sdk';
+const PACKAGE_NAME = '@lal/sdk';
 const TAG_PREFIX = 'sdk-typescript-v';
 
 function getVersionFromNPM(distTag) {

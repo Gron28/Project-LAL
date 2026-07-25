@@ -342,10 +342,10 @@ function copyRuntimeAssets(packageRoot, outDir) {
   );
 }
 
-// Bundle the @qwen-code/audio-capture native addon (compiled JS + only this
+// Bundle the @lal/audio-capture native addon (compiled JS + only this
 // target's prebuild + its runtime dep node-gyp-build) into lib/node_modules so
 // streaming voice works in standalone installs. The addon is esbuild-external
-// and resolved at runtime via import('@qwen-code/audio-capture') from
+// and resolved at runtime via import('@lal/audio-capture') from
 // lib/cli.js, so lib/node_modules is where Node looks. Without it, standalone
 // users fall back to SoX/arecord (batch only) — #5502 follow-up #5590.
 function copyNativeAddon(packageRoot, target) {
@@ -376,7 +376,7 @@ function copyNativeAddon(packageRoot, target) {
   );
 
   const modulesDir = path.join(packageRoot, 'lib', 'node_modules');
-  const addonDest = path.join(modulesDir, '@qwen-code', 'audio-capture');
+  const addonDest = path.join(modulesDir, '@lal', 'audio-capture');
   fs.mkdirSync(addonDest, { recursive: true });
 
   // Trimmed manifest: keep type/exports so ESM resolution works; drop the

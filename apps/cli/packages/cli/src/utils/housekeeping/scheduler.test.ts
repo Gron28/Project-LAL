@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import type { LoadedSettings } from '../../config/settings.js';
 import {
   startBackgroundHousekeeping,

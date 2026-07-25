@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { redactLogCredentials } from '@qwen-code/acp-bridge/logRedaction';
+import { redactLogCredentials } from '@lal/acp-bridge/logRedaction';
 
 const MAX_REMEMBER_ERROR_DETAILS_CHARS = 1000;
 const MAX_REMEMBER_ERROR_CAUSE_DEPTH = 50;

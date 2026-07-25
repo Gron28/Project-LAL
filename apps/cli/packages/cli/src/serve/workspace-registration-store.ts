@@ -10,7 +10,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import lockfile from 'proper-lockfile';
-import { MAX_WORKSPACE_PATH_LENGTH } from '@qwen-code/acp-bridge/workspacePaths';
+import { MAX_WORKSPACE_PATH_LENGTH } from '@lal/acp-bridge/workspacePaths';
 import { getGlobalQwenDirLite } from '../config/storage-paths-lite.js';
 import { MAX_REGISTERED_WORKSPACES } from './workspace-inputs.js';
 
@@ -365,7 +365,7 @@ export class WorkspaceRegistrationStore {
   private async update(
     mutate: (snapshot: WorkspaceRegistrationSnapshot) => boolean,
   ): Promise<boolean> {
-    const { atomicWriteFile } = await import('@qwen-code/qwen-code-core');
+    const { atomicWriteFile } = await import('@lal/core');
     return withInProcessLock(this.filePath, async () => {
       const lock = await acquireFileLock(this.filePath);
       let committed = false;

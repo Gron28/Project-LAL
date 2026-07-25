@@ -10,7 +10,7 @@ import type {
   ToolRegistry,
   ServerGeminiStreamEvent,
   SessionMetrics,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { CLIUserMessage } from './nonInteractive/types.js';
 import {
   executeToolCall,
@@ -29,7 +29,7 @@ import {
   AUTONOMOUS_SENTINEL_DYNAMIC,
   LOOP_SENTINEL_CRON,
   LOOP_SENTINEL_DYNAMIC,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { Part } from '@google/genai';
 import {
   runNonInteractive,
@@ -51,9 +51,9 @@ import {
 
 // Mock core modules
 vi.mock('./ui/hooks/atCommandProcessor.js');
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const original =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
 
   class MockChatRecordingService {
     initialize = vi.fn();

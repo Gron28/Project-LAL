@@ -1,7 +1,7 @@
 export { WeComChannel } from './WeComAdapter.js';
 
 import { WeComChannel } from './WeComAdapter.js';
-import type { ChannelPlugin } from '@qwen-code/channel-base';
+import type { ChannelPlugin } from '@lal/channel-base';
 
 export const plugin: ChannelPlugin = {
   channelType: 'wecom',

@@ -195,7 +195,7 @@ describe('qwen-triage tmux workflow', () => {
       'apt-get install -y --no-install-recommends tmux util-linux',
     );
     expect(installStep).toContain(
-      "npm install -g --registry=https://registry.npmjs.org '@qwen-code/qwen-code@latest'",
+      "npm install -g --registry=https://registry.npmjs.org '@lal/cli@latest'",
     );
     expect(installStep).toContain('qwen --version');
     expect(installStep).toContain('tmux -V');

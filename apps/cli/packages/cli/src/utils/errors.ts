@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import {
   OutputFormat,
   JsonFormatter,
@@ -14,7 +14,7 @@ import {
   FatalBudgetExceededError,
   ToolErrorType,
   createDebugLogger,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { BudgetExceeded } from './runBudget.js';
 import { runExitCleanup } from './cleanup.js';
 import { writeStderrLine } from './stdioHelpers.js';

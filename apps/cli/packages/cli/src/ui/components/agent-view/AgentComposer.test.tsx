@@ -6,7 +6,7 @@
 
 import { render } from 'ink-testing-library';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentStatus } from '@qwen-code/qwen-code-core';
+import { AgentStatus } from '@lal/core';
 import {
   useAgentViewActions,
   useAgentViewState,

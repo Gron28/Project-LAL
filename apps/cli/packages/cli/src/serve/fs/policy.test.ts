@@ -9,7 +9,7 @@ import { promises as fsp } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { Ignore } from '@qwen-code/qwen-code-core';
+import { Ignore } from '@lal/core';
 import {
   MAX_READ_BYTES,
   MAX_WRITE_BYTES,

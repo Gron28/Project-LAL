@@ -5,7 +5,7 @@
  */
 
 import { type CommandModule } from 'yargs';
-import { FatalConfigError, getErrorMessage } from '@qwen-code/qwen-code-core';
+import { FatalConfigError, getErrorMessage } from '@lal/core';
 import { writeStdoutLine } from '../../utils/stdioHelpers.js';
 import { getExtensionManager, resolveExtensionCommandScope } from './utils.js';
 import { t } from '../../i18n/index.js';

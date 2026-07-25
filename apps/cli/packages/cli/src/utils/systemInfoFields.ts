@@ -9,7 +9,7 @@ import { t } from '../i18n/index.js';
 import {
   findProviderByCredentials,
   resolveMetadataKey,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 /**
  * Field configuration for system information display

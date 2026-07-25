@@ -6,8 +6,8 @@
 
 import * as path from 'node:path';
 import type { Request, Response } from 'express';
-import type { AcpSessionBridge } from '@qwen-code/acp-bridge/bridgeTypes';
-import { MAX_WORKSPACE_PATH_LENGTH } from '@qwen-code/acp-bridge/workspacePaths';
+import type { AcpSessionBridge } from '@lal/acp-bridge/bridgeTypes';
+import { MAX_WORKSPACE_PATH_LENGTH } from '@lal/acp-bridge/workspacePaths';
 import { writeStderrLine } from '../../utils/stdioHelpers.js';
 import type { WorkspaceRequestContext } from '../workspace-service/index.js';
 

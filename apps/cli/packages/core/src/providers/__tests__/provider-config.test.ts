@@ -18,7 +18,7 @@ import {
   shouldShowStep,
   providerMatchesCredentials,
   type ProviderConfig,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 function makeConfig(overrides: Partial<ProviderConfig> = {}): ProviderConfig {
   return {

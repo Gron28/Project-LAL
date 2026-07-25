@@ -8,8 +8,8 @@ import { stat } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import type { Application, Request, Response } from 'express';
-import { isWithinRoot } from '@qwen-code/qwen-code-core';
-import { MAX_WORKSPACE_PATH_LENGTH } from '@qwen-code/acp-bridge/workspacePaths';
+import { isWithinRoot } from '@lal/core';
+import { MAX_WORKSPACE_PATH_LENGTH } from '@lal/acp-bridge/workspacePaths';
 import { writeStderrLine } from '../../utils/stdioHelpers.js';
 import { MAX_REGISTERED_WORKSPACES } from '../workspace-inputs.js';
 import type {

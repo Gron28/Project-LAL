@@ -11,7 +11,7 @@ import {
 import {
   ChannelBase,
   isTerminalTaskLifecycleType,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 import type {
   ChannelAgentBridge,
   ChannelBaseOptions,
@@ -19,7 +19,7 @@ import type {
   ChannelTaskLifecycleEvent,
   Envelope,
   SessionTarget,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 
 const TELEGRAM_BOT_COMMANDS = [
   { command: 'start', description: 'Show quick-start help' },

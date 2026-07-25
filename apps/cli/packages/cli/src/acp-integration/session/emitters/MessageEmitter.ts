@@ -10,7 +10,7 @@ import type { Usage } from '@agentclientprotocol/sdk';
 import {
   getActiveGoal,
   type GoalTerminalEvent,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { BaseEmitter } from './base-emitter.js';
 import type { HistoryItemGoalStatus } from '../../../ui/types.js';
 

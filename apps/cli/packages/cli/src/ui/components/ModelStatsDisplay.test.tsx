@@ -13,7 +13,7 @@ import type {
   ModelMetricsCore,
   SessionMetrics,
 } from '../contexts/SessionContext.js';
-import { MAIN_SOURCE } from '@qwen-code/qwen-code-core';
+import { MAIN_SOURCE } from '@lal/core';
 import { SettingsContext } from '../contexts/SettingsContext.js';
 import type { LoadedSettings } from '../../config/settings.js';
 

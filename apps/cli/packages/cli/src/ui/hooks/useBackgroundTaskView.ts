@@ -34,7 +34,7 @@ import {
   type ShellTask,
   type TaskState,
   type WorkflowTask,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { reorderChildrenUnderParents } from '../components/background-view/agent-forest.js';
 
 // Cap on retained terminal dream entries surfaced via the dialog.
@@ -46,7 +46,7 @@ import { reorderChildrenUnderParents } from '../components/background-view/agent
 const MAX_RETAINED_TERMINAL_DREAMS = 3;
 
 /**
- * @deprecated Use {@link AgentTask} from `@qwen-code/qwen-code-core`
+ * @deprecated Use {@link AgentTask} from `@lal/core`
  * directly. Kept as a one-release alias while UI consumers migrate.
  */
 export type AgentDialogEntry = AgentTask;

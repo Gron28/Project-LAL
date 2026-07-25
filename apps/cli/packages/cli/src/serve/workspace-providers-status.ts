@@ -11,15 +11,15 @@ import {
   ModelsConfig,
   resolveProviderProtocol,
   tokenLimit,
-} from '@qwen-code/qwen-code-core';
-import type { AuthType } from '@qwen-code/qwen-code-core';
+} from '@lal/core';
+import type { AuthType } from '@lal/core';
 import type {
   ServeWorkspaceProviderCurrent,
   ServeWorkspaceProviderModel,
   ServeWorkspaceProviderStatus,
   ServeWorkspaceProvidersStatus,
-} from '@qwen-code/acp-bridge/status';
-import { STATUS_SCHEMA_VERSION } from '@qwen-code/acp-bridge/status';
+} from '@lal/acp-bridge/status';
+import { STATUS_SCHEMA_VERSION } from '@lal/acp-bridge/status';
 import { loadSettings } from '../config/settings.js';
 import type { Settings } from '../config/settings.js';
 import {

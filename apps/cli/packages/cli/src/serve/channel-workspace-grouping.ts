@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { canonicalizeWorkspace } from '@qwen-code/acp-bridge/workspacePaths';
+import { canonicalizeWorkspace } from '@lal/acp-bridge/workspacePaths';
 import { resolveChannelCwd } from '../commands/channel/channel-cwd.js';
 import type { ServeChannelSelection } from './types.js';
 

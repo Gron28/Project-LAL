@@ -9,7 +9,7 @@ import {
   type SlashCommand,
   CommandKind,
 } from './types.js';
-import { openBrowserSecurely } from '@qwen-code/qwen-code-core';
+import { openBrowserSecurely } from '@lal/core';
 import { MessageType, type HistoryItem } from '../types.js';
 import { getExtendedSystemInfo } from '../../utils/systemInfo.js';
 import { getSystemInfoFields } from '../../utils/systemInfoFields.js';

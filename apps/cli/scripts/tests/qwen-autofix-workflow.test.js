@@ -722,7 +722,7 @@ describe('qwen-autofix workflow', () => {
       "const GHCR_REPOSITORY = 'qwenlm/qwen-code';",
     );
     expect(sandboxImageResolverScript).toContain('ghcr.io/${GHCR_REPOSITORY}');
-    expect(workflow).not.toContain('npm view @qwen-code/qwen-code@latest');
+    expect(workflow).not.toContain('npm view @lal/cli@latest');
     expect(workflow).not.toContain('KNOWN_BOTS');
   });
 

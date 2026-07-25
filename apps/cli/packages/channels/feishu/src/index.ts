@@ -2,7 +2,7 @@ export { FeishuChannel } from './FeishuAdapter.js';
 export { downloadMedia } from './media.js';
 
 import { FeishuChannel } from './FeishuAdapter.js';
-import type { ChannelPlugin } from '@qwen-code/channel-base';
+import type { ChannelPlugin } from '@lal/channel-base';
 
 export const plugin: ChannelPlugin = {
   channelType: 'feishu',

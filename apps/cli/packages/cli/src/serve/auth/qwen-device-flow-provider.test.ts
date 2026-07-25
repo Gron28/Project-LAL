@@ -29,7 +29,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   QwenOAuthPollError,
   type IQwenOAuth2Client,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { QwenOAuthDeviceFlowProvider } from './qwen-device-flow-provider.js';
 import { brandSecret } from './device-flow.js';
 

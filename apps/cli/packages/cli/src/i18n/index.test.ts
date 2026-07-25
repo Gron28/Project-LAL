@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { Storage } from '@qwen-code/qwen-code-core';
+import { Storage } from '@lal/core';
 
 describe('bundled locale fallback', () => {
   beforeEach(() => {
@@ -193,7 +193,7 @@ describe('localizeToolDisplayName', () => {
     const { setLanguageAsync, localizeToolDisplayName } = await import(
       './index.js'
     );
-    const { ToolDisplayNames } = await import('@qwen-code/qwen-code-core');
+    const { ToolDisplayNames } = await import('@lal/core');
     await setLanguageAsync('zh');
 
     // Guards against a new tool landing without a `toolDisplayName.*` entry:

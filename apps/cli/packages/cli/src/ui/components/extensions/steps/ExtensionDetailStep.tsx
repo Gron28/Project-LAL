@@ -11,7 +11,7 @@ import {
   getExtensionDisplayName,
   getExtensionDescription,
   type Extension,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { t, getCurrentLanguage } from '../../../../i18n/index.js';
 
 interface ExtensionDetailStepProps {

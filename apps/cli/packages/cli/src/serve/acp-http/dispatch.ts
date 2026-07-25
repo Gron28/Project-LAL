@@ -23,7 +23,7 @@ import {
   type SessionArchiveState,
   type SubagentLevel,
   IMAGE_CAPABILITY,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 // Import the permission error classes from the same module REST's
 // `sendPermissionVoteError` uses, so `instanceof` matches the class the bridge
 // actually throws (the core re-export is a distinct identity at runtime).
@@ -40,18 +40,18 @@ import {
   UnsupportedDeviceFlowProviderError,
   UpstreamDeviceFlowError,
 } from '../auth/device-flow.js';
-import type { HttpAcpBridge } from '@qwen-code/acp-bridge/bridgeTypes';
-import type { BridgeEvent } from '@qwen-code/acp-bridge/eventBus';
+import type { HttpAcpBridge } from '@lal/acp-bridge/bridgeTypes';
+import type { BridgeEvent } from '@lal/acp-bridge/eventBus';
 import {
   SessionShellClientRequiredError,
   SessionShellDisabledError,
   WorkspaceMismatchError,
-} from '@qwen-code/acp-bridge/bridgeErrors';
+} from '@lal/acp-bridge/bridgeErrors';
 import {
   SessionArtifactAuthorizationError,
   SessionArtifactValidationError,
-} from '@qwen-code/acp-bridge/sessionArtifacts';
-import { canonicalizeWorkspace } from '@qwen-code/acp-bridge/workspacePaths';
+} from '@lal/acp-bridge/sessionArtifacts';
+import { canonicalizeWorkspace } from '@lal/acp-bridge/workspacePaths';
 import { writeStderrLine } from '../../utils/stdioHelpers.js';
 import { MAX_WORKSPACE_PATH_LENGTH } from '../fs/paths.js';
 import {

@@ -8,7 +8,7 @@ const mockDaemonClient = vi.hoisted(() =>
   vi.fn(() => ({ getChannelWorkerControl: mockGetChannelWorkerControl })),
 );
 
-vi.mock('@qwen-code/sdk/daemon', () => ({ DaemonClient: mockDaemonClient }));
+vi.mock('@lal/sdk/daemon', () => ({ DaemonClient: mockDaemonClient }));
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();

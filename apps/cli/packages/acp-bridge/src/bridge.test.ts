@@ -62,7 +62,7 @@ import {
   ShellExecutionService,
   stableSessionArtifactId,
   ToolNames,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   FakeAgent,
   type ChannelHandle,

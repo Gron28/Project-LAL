@@ -1,7 +1,7 @@
 export { QQChannel } from './QQChannel.js';
 
 import { QQChannel } from './QQChannel.js';
-import type { ChannelPlugin } from '@qwen-code/channel-base';
+import type { ChannelPlugin } from '@lal/channel-base';
 
 export const plugin: ChannelPlugin = {
   channelType: 'qq',

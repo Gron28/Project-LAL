@@ -6,7 +6,7 @@
 
 import * as path from 'node:path';
 import { writeStderrLine } from '../../utils/stdioHelpers.js';
-import type { BridgeEvent } from '@qwen-code/acp-bridge/eventBus';
+import type { BridgeEvent } from '@lal/acp-bridge/eventBus';
 import {
   canonicalizeWorkspace,
   createWorkspaceFileSystemFactory,

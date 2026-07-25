@@ -16,7 +16,7 @@ import type {
   ChannelAgentBridge,
   ChannelConfig,
   Envelope,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 
 const mocks = vi.hoisted(() => {
   type MockHttpResponse = {

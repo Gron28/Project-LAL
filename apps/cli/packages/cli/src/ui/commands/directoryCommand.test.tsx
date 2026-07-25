@@ -10,7 +10,7 @@ import {
   expandHomeDir,
   type Config,
   type WorkspaceContext,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { CommandContext, SlashCommandActionReturn } from './types.js';
 import { SettingScope } from '../../config/settings.js';
 import * as os from 'node:os';

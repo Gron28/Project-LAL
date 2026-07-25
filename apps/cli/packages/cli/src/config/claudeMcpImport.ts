@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import {
   type MCPServerConfig,
   normalizeClaudeMcpServer,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import stripJsonComments from 'strip-json-comments';
 import { SettingScope, type LoadedSettings } from './settings.js';
 

@@ -45,7 +45,7 @@ import {
   MAX_JOBS,
   type DurableCronTask,
   type CronTaskRun,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { writeStderrLine } from '../../utils/stdioHelpers.js';
 import type { WorkspaceRegistry } from '../workspace-registry.js';
 import {

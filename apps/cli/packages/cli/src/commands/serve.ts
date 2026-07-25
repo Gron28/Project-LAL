@@ -13,15 +13,15 @@ import { normalizeServeChannelSelection } from '../serve/channel-selection.js';
 // with ~50ms of cold ESM resolution. The runtime import is deferred to the
 // handler below so it only loads when the user actually runs `qwen serve`.
 import { writeStderrLine } from '../utils/stdioHelpers.js';
-import { DEFAULT_RING_SIZE } from '@qwen-code/acp-bridge/eventBus';
-import { DEFAULT_COMPACTED_REPLAY_MAX_BYTES } from '@qwen-code/acp-bridge/replayWindowLimits';
+import { DEFAULT_RING_SIZE } from '@lal/acp-bridge/eventBus';
+import { DEFAULT_COMPACTED_REPLAY_MAX_BYTES } from '@lal/acp-bridge/replayWindowLimits';
 import {
   ApprovalMode,
   MCP_BUDGET_WARN_FRACTION,
   openBrowserSecurely,
   parsePositiveIntegerEnv,
   shouldLaunchBrowser,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { loadSettings } from '../config/settings.js';
 import { HEADLESS_YOLO_NO_SANDBOX_WARNING } from '../utils/headlessSafetyWarnings.js';
 

@@ -16,7 +16,7 @@ import {
   AUTO_MEMORY_INDEX_FILENAME,
   clearAutoMemoryRootCache,
   getAutoMemoryRoot,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { MemoryDialog } from './MemoryDialog.js';
 import { useConfig } from '../contexts/ConfigContext.js';
 import { useSettings } from '../contexts/SettingsContext.js';

@@ -222,7 +222,7 @@ describe('package asset scripts', () => {
     expect(distPackageJson.files).toContain('examples');
     expect(distPackageJson.bundledDependencies).toBeUndefined();
     expect(distPackageJson.optionalDependencies).toMatchObject({
-      '@qwen-code/audio-capture': rootPackageJson.version,
+      '@lal/audio-capture': rootPackageJson.version,
     });
     expect(
       existsSync(
@@ -230,7 +230,7 @@ describe('package asset scripts', () => {
           rootDir,
           'dist',
           'node_modules',
-          '@qwen-code',
+          '@lal',
           'audio-capture',
         ),
       ),
@@ -396,7 +396,7 @@ describe('package asset scripts', () => {
           rootDir,
           'dist',
           'node_modules',
-          '@qwen-code',
+          '@lal',
           'audio-capture',
         ),
       ),
@@ -408,7 +408,7 @@ describe('package asset scripts', () => {
     createBundleArtifacts(rootDir);
     writeFile(
       rootDir,
-      'dist/node_modules/@qwen-code/audio-capture/prebuilds/darwin-arm64/@qwen-code+audio-capture.node',
+      'dist/node_modules/@lal/audio-capture/prebuilds/darwin-arm64/@lal+audio-capture.node',
       'stale native addon\n',
     );
     stubConsole();
@@ -430,7 +430,7 @@ describe('package asset scripts', () => {
           rootDir,
           'dist',
           'node_modules',
-          '@qwen-code',
+          '@lal',
           'audio-capture',
         ),
       ),
@@ -471,7 +471,7 @@ describe('package asset scripts', () => {
         'audio-capture',
         'prebuilds',
         'darwin-arm64',
-        '@qwen-code+audio-capture.node',
+        '@lal+audio-capture.node',
       ),
     );
     createBundleArtifacts(rootDir);
@@ -508,7 +508,7 @@ describe('package asset scripts', () => {
           rootDir,
           'dist',
           'node_modules',
-          '@qwen-code',
+          '@lal',
           'audio-capture',
         ),
       ),
@@ -552,7 +552,7 @@ describe('package asset scripts', () => {
           rootDir,
           'dist',
           'node_modules',
-          '@qwen-code',
+          '@lal',
           'audio-capture',
         ),
       ),
@@ -586,7 +586,7 @@ describe('package asset scripts', () => {
       'package.json',
       JSON.stringify(
         {
-          name: '@qwen-code/qwen-code',
+          name: '@lal/cli',
           version: '0.17.0',
           description: 'Qwen Code',
           repository: {
@@ -616,7 +616,7 @@ describe('package asset scripts', () => {
       'packages/audio-capture/package.json',
       JSON.stringify(
         {
-          name: '@qwen-code/audio-capture',
+          name: '@lal/audio-capture',
           version: '0.17.0',
           type: 'module',
           main: 'dist/index.js',
@@ -647,7 +647,7 @@ describe('package asset scripts', () => {
     );
     writeFile(
       rootDir,
-      'packages/audio-capture/prebuilds/darwin-arm64/@qwen-code+audio-capture.node',
+      'packages/audio-capture/prebuilds/darwin-arm64/@lal+audio-capture.node',
       'fake native addon\n',
     );
     writeFile(

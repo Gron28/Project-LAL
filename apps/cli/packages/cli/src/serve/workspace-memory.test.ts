@@ -23,13 +23,13 @@ import {
   DEFAULT_CONTEXT_FILENAME,
   Storage,
   setGeminiMdFilename,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { createMutationGate } from './auth.js';
 import {
   InvalidClientIdError,
   type AcpSessionBridge,
 } from './acp-session-bridge.js';
-import type { BridgeEvent } from '@qwen-code/acp-bridge/eventBus';
+import type { BridgeEvent } from '@lal/acp-bridge/eventBus';
 import { mountWorkspaceMemoryRoutes } from './workspace-memory.js';
 
 type RecordedEvent = Omit<BridgeEvent, 'id' | 'v'>;

@@ -11,7 +11,7 @@ import type {
   CronJob,
   CronScheduler,
   ToolCallRequestInfo,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { isSlashCommand } from './ui/utils/commandUtils.js';
 import { isInlineModelOverrideAllowed } from './utils/acpModelUtils.js';
 import type { LoadedSettings } from './config/settings.js';
@@ -44,7 +44,7 @@ import {
   getToolCallDedupIdentity,
   resetSemanticToolCallDedupAfterMutation,
   AgentEventType,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { Content, Part, PartListUnion } from '@google/genai';
 import type { CLIUserMessage, PermissionMode } from './nonInteractive/types.js';
 import type { JsonOutputAdapterInterface } from './nonInteractive/io/BaseJsonOutputAdapter.js';
@@ -473,15 +473,15 @@ export async function runNonInteractive(
     // a new manager is installed (or in `finally`). Without
     // this, a reused stream-json session could leave callbacks
     // attached to a stale TeamManager.
-    let boundManager: import('@qwen-code/qwen-code-core').TeamManager | null =
+    let boundManager: import('@lal/core').TeamManager | null =
       null;
     let approvalListener:
       | ((
-          event: import('@qwen-code/qwen-code-core').TeammateApprovalRequestEvent,
+          event: import('@lal/core').TeammateApprovalRequestEvent,
         ) => void)
       | null = null;
     const detachFromManager = (
-      m: import('@qwen-code/qwen-code-core').TeamManager,
+      m: import('@lal/core').TeamManager,
     ) => {
       m.setLeaderMessageCallback(null);
       if (approvalListener) {
@@ -493,7 +493,7 @@ export async function runNonInteractive(
       }
     };
     const onTeamManagerChangeHandler = (
-      manager: import('@qwen-code/qwen-code-core').TeamManager | null,
+      manager: import('@lal/core').TeamManager | null,
     ) => {
       // Detach from the previous manager before rebinding.
       if (boundManager && boundManager !== manager) {

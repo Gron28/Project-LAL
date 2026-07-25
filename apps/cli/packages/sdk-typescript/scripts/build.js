@@ -160,7 +160,7 @@ await esbuild.build({
   treeShaking: true,
 });
 
-// Opt-in transports subpath (`@qwen-code/sdk/daemon/transports`): the concrete
+// Opt-in transports subpath (`@lal/sdk/daemon/transports`): the concrete
 // ACP transports + negotiateTransport. Kept out of the default daemon barrel
 // (and its byte budget) so REST-only consumers stay tree-shaken; consumers who
 // want resumable ACP-over-HTTP import this entry explicitly. Built as its own

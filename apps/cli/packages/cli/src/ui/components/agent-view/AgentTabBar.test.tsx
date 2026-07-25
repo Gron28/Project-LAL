@@ -6,7 +6,7 @@
 
 import { render } from 'ink-testing-library';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentStatus } from '@qwen-code/qwen-code-core';
+import { AgentStatus } from '@lal/core';
 import type { KeypressHandler, Key } from '../../contexts/KeypressContext.js';
 import { useKeypress } from '../../hooks/useKeypress.js';
 import {

@@ -14,7 +14,7 @@ import {
   applyProviderInstallPlan,
   type ProviderConfig,
   type ProviderSetupInputs,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { LoadedSettings } from '../../config/settings.js';
 import { createLoadedSettingsAdapter } from '../../config/loadedSettingsAdapter.js';

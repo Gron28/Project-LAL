@@ -19,13 +19,13 @@ import {
   sanitizeSenderName,
   sanitizePromptText,
   sanitizeLogText,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 import type {
   ChannelConfig,
   ChannelBaseOptions,
   ChannelAgentBridge,
   ToolCallEvent,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 import WebSocket from 'ws';
 import {
   readFileSync,

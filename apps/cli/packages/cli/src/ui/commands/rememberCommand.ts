@@ -7,7 +7,7 @@
 import {
   buildBareRememberPrompt,
   buildManagedRememberPrompt,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { t } from '../../i18n/index.js';
 import type {
   CommandContext,

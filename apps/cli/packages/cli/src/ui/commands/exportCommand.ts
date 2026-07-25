@@ -17,7 +17,7 @@ import {
   getCoreSystemPrompt,
   isSubpath,
   SessionService,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   collectSessionData,
   normalizeSessionData,

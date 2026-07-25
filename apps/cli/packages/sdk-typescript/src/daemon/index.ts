@@ -33,11 +33,11 @@ export type { RestSseTransport } from './RestSseTransport.js';
 // NOT re-exported here: a static import chain from this barrel would pull
 // their framing/SSE code into the budget-checked browser bundle (see
 // `scripts/build.js` MAX_DAEMON_BROWSER_BUNDLE_BYTES). They ship instead
-// behind the opt-in `@qwen-code/sdk/daemon/transports` subpath
+// behind the opt-in `@lal/sdk/daemon/transports` subpath
 // (`./transports.ts`), so REST-only consumers stay tree-shaken while
 // consumers who want resumable ACP-over-HTTP get a first-class import:
 //   import { negotiateTransport, AcpHttpTransport }
-//     from '@qwen-code/sdk/daemon/transports';
+//     from '@lal/sdk/daemon/transports';
 // The `NegotiateTransportOptions` *type* stays available from this barrel
 // for backward compatibility (type-only, no bundle cost).
 export type { NegotiateTransportOptions } from './negotiateTransport.js';

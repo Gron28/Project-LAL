@@ -27,13 +27,13 @@ import {
 import { isBrowserAutomationMcpAvailable } from './cdp-mcp-command.js';
 import { RUNTIME_STARTUP_CANCELLED_MESSAGE } from './runtime-startup-errors.js';
 import { isLoopbackBind } from './loopback-binds.js';
-import * as acpBridge from '@qwen-code/acp-bridge/bridge';
-import { canonicalizeWorkspace } from '@qwen-code/acp-bridge/workspacePaths';
+import * as acpBridge from '@lal/acp-bridge/bridge';
+import { canonicalizeWorkspace } from '@lal/acp-bridge/workspacePaths';
 import type {
   BridgeDaemonStatusSnapshot,
   HttpAcpBridge,
-} from '@qwen-code/acp-bridge/bridgeTypes';
-import * as qwenCore from '@qwen-code/qwen-code-core';
+} from '@lal/acp-bridge/bridgeTypes';
+import * as qwenCore from '@lal/core';
 import * as serverModule from './server.js';
 import * as settingsRuntime from '../config/settings.js';
 import * as environmentRuntime from '../config/environment.js';
@@ -105,9 +105,9 @@ async function getFreeLoopbackPort(): Promise<number> {
   return port;
 }
 
-vi.mock('@qwen-code/acp-bridge/spawnChannel', async (importOriginal) => {
+vi.mock('@lal/acp-bridge/spawnChannel', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@qwen-code/acp-bridge/spawnChannel')>();
+    await importOriginal<typeof import('@lal/acp-bridge/spawnChannel')>();
   return {
     ...actual,
     createSpawnChannelFactory: vi.fn(

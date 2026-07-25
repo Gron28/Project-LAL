@@ -7,11 +7,11 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { StreamingState } from '../types.js';
 import type { LoadedSettings } from '../../config/settings.js';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import {
   fireNotificationHook,
   NotificationType,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { TerminalNotification } from './useTerminalNotification.js';
 import type { TrackedToolCall } from './useReactToolScheduler.js';
 import { sendNotification } from '../../services/notificationService.js';

@@ -57,9 +57,9 @@ import {
   TrustGateError,
   type Extension,
   type SessionListItem,
-} from '@qwen-code/qwen-code-core';
-import * as qwenCore from '@qwen-code/qwen-code-core';
-import type { DaemonStatusProvider } from '@qwen-code/acp-bridge';
+} from '@lal/core';
+import * as qwenCore from '@lal/core';
+import type { DaemonStatusProvider } from '@lal/acp-bridge';
 import {
   CancelSentinelCollisionError,
   InvalidClientIdError,
@@ -97,7 +97,7 @@ import {
 import type {
   BridgeEvent,
   SubscribeOptions,
-} from '@qwen-code/acp-bridge/eventBus';
+} from '@lal/acp-bridge/eventBus';
 import type {
   ServeSessionContextStatus,
   ServeSessionContextUsageStatus,
@@ -116,7 +116,7 @@ import type {
   ServeWorkspaceProvidersStatus,
   ServeWorkspaceSkillsStatus,
   ServeWorkspaceToolsStatus,
-} from '@qwen-code/acp-bridge/status';
+} from '@lal/acp-bridge/status';
 import { CAPABILITIES_SCHEMA_VERSION, type ServeOptions } from './types.js';
 import type { DaemonLogger } from './daemon-logger.js';
 import { FsError, type WorkspaceFileSystemFactory } from './fs/index.js';
@@ -16766,7 +16766,7 @@ describe('GET /session/:id/events (SSE)', () => {
     // UI consumers can render "retry" on init_timeout vs "show stack
     // trace" on unknown errors, without regex-matching the message
     // string.
-    const { BridgeTimeoutError } = await import('@qwen-code/acp-bridge');
+    const { BridgeTimeoutError } = await import('@lal/acp-bridge');
     const bridge = fakeBridge({
       async *subscribeImpl(_sessionId, _opts) {
         yield { id: 1, v: 1, type: 'session_update', data: 'first' };
@@ -16931,7 +16931,7 @@ describe('GET /session/:id/events (SSE)', () => {
     // BridgeTimeoutError → classified as `init_timeout`. The log line
     // must include `[init_timeout]` so operators can `grep '\[init_'`
     // for that specific failure class.
-    const { BridgeTimeoutError } = await import('@qwen-code/acp-bridge');
+    const { BridgeTimeoutError } = await import('@lal/acp-bridge');
     const stderrSpy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
     try {
       const bridge = fakeBridge({
@@ -19530,7 +19530,7 @@ describe('T2.9 serve-side errorKind taxonomy (issue #4514)', () => {
     // (different package, no cross-package import). Together they
     // guarantee a PR adding a kind on one side without the other
     // fails CI.
-    const { SERVE_ERROR_KINDS } = await import('@qwen-code/acp-bridge/status');
+    const { SERVE_ERROR_KINDS } = await import('@lal/acp-bridge/status');
     expect(SERVE_ERROR_KINDS).toContain('prompt_deadline_exceeded');
     expect(SERVE_ERROR_KINDS).toContain('writer_idle_timeout');
   });

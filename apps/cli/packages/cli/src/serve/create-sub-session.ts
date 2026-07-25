@@ -36,12 +36,12 @@ import { randomUUID } from 'node:crypto';
 import {
   createDebugLogger,
   stripTerminalControlSequences,
-} from '@qwen-code/qwen-code-core';
-import type { AcpSessionBridge } from '@qwen-code/acp-bridge/bridgeTypes';
+} from '@lal/core';
+import type { AcpSessionBridge } from '@lal/acp-bridge/bridgeTypes';
 import type {
   CreateSubSessionInfo,
   CreateSubSessionResult,
-} from '@qwen-code/acp-bridge/bridgeOptions';
+} from '@lal/acp-bridge/bridgeOptions';
 import { writeStderrLine } from '../utils/stdioHelpers.js';
 
 const log = createDebugLogger('SUB_SESSION');

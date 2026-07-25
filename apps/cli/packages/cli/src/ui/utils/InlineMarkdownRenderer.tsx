@@ -8,7 +8,7 @@ import React from 'react';
 import { Text } from 'ink';
 import { theme } from '../semantic-colors.js';
 import stringWidth from 'string-width';
-import { createDebugLogger } from '@qwen-code/qwen-code-core';
+import { createDebugLogger } from '@lal/core';
 import { renderInlineLatex } from './latexRenderer.js';
 import {
   MD_LINK_CAPTURE,

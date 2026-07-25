@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { ApprovalMode } from '@qwen-code/qwen-code-core';
+import { ApprovalMode } from '@lal/core';
 import { LoadedSettings } from '../../config/settings.js';
 import type { SettingScope } from '../../config/settings.js';
 import { renderWithProviders } from '../../test-utils/render.js';

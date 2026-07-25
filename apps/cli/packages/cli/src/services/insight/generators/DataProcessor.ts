@@ -9,7 +9,7 @@ import path from 'path';
 import {
   read as readJsonlFile,
   createDebugLogger,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import pLimit from 'p-limit';
 import type {
   InsightData,
@@ -34,7 +34,7 @@ import {
   runSideQuery,
   type Config,
   type ChatRecord,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 const logger = createDebugLogger('DataProcessor');
 

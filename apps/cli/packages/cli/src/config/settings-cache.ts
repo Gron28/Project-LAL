@@ -11,7 +11,7 @@ import {
   createDebugLogger,
   ideContextStore,
   Storage,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { findEnvFiles, preResolveHomeEnvOverrides } from './environment.js';
 import {
   getSystemDefaultsPath,

@@ -131,7 +131,7 @@ function Test-QwenStandaloneInstallDir {
         return $false
     }
 
-    if ($manifest.name -ne '@qwen-code/qwen-code') {
+    if ($manifest.name -ne '@lal/cli') {
         return $false
     }
 

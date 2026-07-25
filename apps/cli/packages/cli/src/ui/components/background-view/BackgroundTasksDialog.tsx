@@ -31,7 +31,7 @@ import {
   type MonitorTask,
   type ToolCallConfirmationDetails,
   type WorkflowTask,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { ToolConfirmationMessage } from '../messages/ToolConfirmationMessage.js';
 import { WorkflowSaveOverlay } from './workflow-save-overlay.js';
 import { formatDuration, formatTokenCount } from '../../utils/formatters.js';
@@ -959,7 +959,7 @@ const AgentDetailBody: React.FC<{
 };
 
 const ShellDetailBody: React.FC<{
-  entry: import('@qwen-code/qwen-code-core').ShellTask;
+  entry: import('@lal/core').ShellTask;
   maxHeight: number;
   maxWidth: number;
 }> = ({ entry, maxHeight, maxWidth }) => {

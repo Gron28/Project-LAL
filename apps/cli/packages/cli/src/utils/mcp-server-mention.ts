@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Config, MCPServerConfig } from '@qwen-code/qwen-code-core';
+import type { Config, MCPServerConfig } from '@lal/core';
 
 export const MCP_SERVER_REF_PREFIX = 'mcp:';
 

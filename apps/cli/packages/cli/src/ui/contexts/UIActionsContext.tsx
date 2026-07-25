@@ -14,7 +14,7 @@ import {
   type EditorType,
   type ApprovalMode,
   type ReasoningEffort,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { type SettingScope } from '../../config/settings.js';
 import type { AuthController } from '../auth/useAuth.js';
 import type { HistoryItem } from '../types.js';

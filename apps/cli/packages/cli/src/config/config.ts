@@ -37,7 +37,7 @@ import {
   type ConfigParameters,
   type MCPServerConfig,
   MAX_SUBAGENT_DEPTH_LIMIT,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { extensionsCommand } from '../commands/extensions.js';
 import { hooksCommand } from '../commands/hooks.js';
 import { normalizeDisabledToolList } from './normalizeDisabledTools.js';

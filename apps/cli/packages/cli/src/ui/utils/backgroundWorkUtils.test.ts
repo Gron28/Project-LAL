@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import {
   hasBlockingBackgroundWork,
   resetBackgroundStateForSessionSwitch,

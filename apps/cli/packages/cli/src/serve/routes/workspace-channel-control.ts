@@ -5,7 +5,7 @@
  */
 
 import type { Application, Request, RequestHandler, Response } from 'express';
-import { redactLogCredentials } from '@qwen-code/acp-bridge/logRedaction';
+import { redactLogCredentials } from '@lal/acp-bridge/logRedaction';
 import { normalizeServeChannelSelection } from '../channel-selection.js';
 import type {
   ChannelWorkerControlState,

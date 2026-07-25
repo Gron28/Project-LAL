@@ -5,7 +5,7 @@ import type {
   ChannelConfig,
   ChannelTaskLifecycleEvent,
   Envelope,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 
 type LifecycleBase = Omit<
   Extract<ChannelTaskLifecycleEvent, { type: 'started' }>,

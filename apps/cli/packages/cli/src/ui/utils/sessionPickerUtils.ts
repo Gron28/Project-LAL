@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { SessionListItem } from '@qwen-code/qwen-code-core';
+import type { SessionListItem } from '@lal/core';
 import { getCachedStringWidth } from './textUtils.js';
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, {

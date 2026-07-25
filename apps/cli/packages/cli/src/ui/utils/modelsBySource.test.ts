@@ -9,7 +9,7 @@ import {
   MAIN_SOURCE,
   type ModelMetrics,
   type ModelMetricsCore,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { flattenModelsBySource } from './modelsBySource.js';
 
 const emptyCore = (): ModelMetricsCore => ({

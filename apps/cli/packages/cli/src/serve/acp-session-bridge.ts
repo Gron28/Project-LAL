@@ -10,26 +10,26 @@
  * #4175 PR F1 lifted the bridge core (`BridgeClient`,
  * `defaultSpawnChannelFactory`, `createAcpSessionBridge` factory closure,
  * plus the supporting types/errors/options/status) to
- * `@qwen-code/acp-bridge`. This shim preserves the CLI-local bridge import
+ * `@lal/acp-bridge`. This shim preserves the CLI-local bridge import
  * surface so `server.ts`, `run-qwen-serve.ts`, `workspace-agents.ts`,
  * `workspace-memory.ts`, `index.ts`, plus the bridge test suite, keep resolving
  * through one module.
  *
  * The implementation now lives at:
- *   - `@qwen-code/acp-bridge/bridge` — `createAcpSessionBridge` factory
- *   - `@qwen-code/acp-bridge/bridgeClient` — `BridgeClient` class +
+ *   - `@lal/acp-bridge/bridge` — `createAcpSessionBridge` factory
+ *   - `@lal/acp-bridge/bridgeClient` — `BridgeClient` class +
  *     permission record types
- *   - `@qwen-code/acp-bridge/spawnChannel` — `defaultSpawnChannelFactory`
- *   - `@qwen-code/acp-bridge/bridgeOptions` — `BridgeOptions` +
+ *   - `@lal/acp-bridge/spawnChannel` — `defaultSpawnChannelFactory`
+ *   - `@lal/acp-bridge/bridgeOptions` — `BridgeOptions` +
  *     `DaemonStatusProvider` interfaces
- *   - `@qwen-code/acp-bridge/bridgeTypes` — bridge session + heartbeat
+ *   - `@lal/acp-bridge/bridgeTypes` — bridge session + heartbeat
  *     types + `AcpSessionBridge` interface
- *   - `@qwen-code/acp-bridge/bridgeErrors` — typed bridge error classes
- *   - `@qwen-code/acp-bridge/workspacePaths` — `canonicalizeWorkspace`
+ *   - `@lal/acp-bridge/bridgeErrors` — typed bridge error classes
+ *   - `@lal/acp-bridge/workspacePaths` — `canonicalizeWorkspace`
  *     + `MAX_WORKSPACE_PATH_LENGTH`
- *   - `@qwen-code/acp-bridge/status` — protocol-versioned status types
+ *   - `@lal/acp-bridge/status` — protocol-versioned status types
  *     + idle envelope helpers
- *   - `@qwen-code/acp-bridge/channel` — `AcpChannel` + `ChannelFactory`
+ *   - `@lal/acp-bridge/channel` — `AcpChannel` + `ChannelFactory`
  *
  * The bridge is bound to a single canonical workspace
  * (`BridgeOptions.boundWorkspace`); multi-workspace deployments use
@@ -40,19 +40,19 @@
 export {
   createAcpSessionBridge,
   createHttpAcpBridge,
-} from '@qwen-code/acp-bridge/bridge';
-export { defaultSpawnChannelFactory } from '@qwen-code/acp-bridge/spawnChannel';
+} from '@lal/acp-bridge/bridge';
+export { defaultSpawnChannelFactory } from '@lal/acp-bridge/spawnChannel';
 // `MAX_RESOLVED_PERMISSION_RECORDS`, `PendingPermission`,
 // `PermissionResolutionRecord` re-exports were removed alongside the
 // source definitions — the mediator now owns pending+resolved state.
-export { BridgeClient } from '@qwen-code/acp-bridge/bridgeClient';
-export type { BridgeClientSessionEntry } from '@qwen-code/acp-bridge/bridgeClient';
+export { BridgeClient } from '@lal/acp-bridge/bridgeClient';
+export type { BridgeClientSessionEntry } from '@lal/acp-bridge/bridgeClient';
 
 export type {
   AcpChannel,
   AcpChannelExitInfo,
   ChannelFactory,
-} from '@qwen-code/acp-bridge';
+} from '@lal/acp-bridge';
 
 export type {
   BridgeFreshSessionAdmission,
@@ -62,9 +62,9 @@ export type {
   BridgeSessionLifecycleEvent,
   BridgeOptions,
   DaemonStatusProvider,
-} from '@qwen-code/acp-bridge/bridgeOptions';
+} from '@lal/acp-bridge/bridgeOptions';
 
-export type { BridgeFileSystem } from '@qwen-code/acp-bridge/bridgeFileSystem';
+export type { BridgeFileSystem } from '@lal/acp-bridge/bridgeFileSystem';
 
 export type {
   BridgeSpawnRequest,
@@ -93,7 +93,7 @@ export type {
   BridgeShutdownOptions,
   AcpSessionBridge,
   HttpAcpBridge,
-} from '@qwen-code/acp-bridge/bridgeTypes';
+} from '@lal/acp-bridge/bridgeTypes';
 
 export {
   BranchWhilePromptActiveError,
@@ -127,14 +127,14 @@ export {
   PermissionPolicyNotImplementedError,
   SessionShellClientRequiredError,
   SessionShellDisabledError,
-} from '@qwen-code/acp-bridge/bridgeErrors';
+} from '@lal/acp-bridge/bridgeErrors';
 
 export {
   MAX_WORKSPACE_PATH_LENGTH,
   canonicalizeWorkspace,
-} from '@qwen-code/acp-bridge/workspacePaths';
+} from '@lal/acp-bridge/workspacePaths';
 
 export {
   SessionArtifactAuthorizationError,
   SessionArtifactValidationError,
-} from '@qwen-code/acp-bridge/sessionArtifacts';
+} from '@lal/acp-bridge/sessionArtifacts';

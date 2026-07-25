@@ -9,7 +9,7 @@ import * as path from 'node:path';
 import {
   type MCPServerConfig,
   normalizeClaudeMcpServer,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import stripJsonComments from 'strip-json-comments';
 
 /** Project-scoped MCP config filename, read from the workspace root. */

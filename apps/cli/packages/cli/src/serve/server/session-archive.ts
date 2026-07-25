@@ -7,7 +7,7 @@
 import {
   SessionService,
   type SessionLocation,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { AcpSessionBridge } from '../acp-session-bridge.js';
 import {
   SessionArchivedError,

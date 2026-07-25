@@ -5,7 +5,7 @@
  */
 
 import nodePath from 'node:path';
-import type { ReasoningEffort } from '@qwen-code/qwen-code-core';
+import type { ReasoningEffort } from '@lal/core';
 import { StreamingState } from './types.js';
 
 export const STATUS_LINE_PRESET_ITEM_IDS = [

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { CODE_MODE_PRESETS } from '@qwen-code/qwen-code-core';
+import { CODE_MODE_PRESETS } from '@lal/core';
 import {
   CommandKind,
   type SlashCommand,

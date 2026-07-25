@@ -5,7 +5,7 @@
  */
 
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import { refineVoiceTranscript } from './voice-refine.js';
 
 const mockRunSideQuery = vi.hoisted(() => vi.fn());
@@ -16,10 +16,10 @@ const mockLogger = vi.hoisted(() => ({
   debug: vi.fn(),
 }));
 
-vi.mock('@qwen-code/qwen-code-core', async () => {
+vi.mock('@lal/core', async () => {
   const actual = await vi.importActual<
-    typeof import('@qwen-code/qwen-code-core')
-  >('@qwen-code/qwen-code-core');
+    typeof import('@lal/core')
+  >('@lal/core');
   return {
     ...actual,
     createDebugLogger: vi.fn(() => mockLogger),

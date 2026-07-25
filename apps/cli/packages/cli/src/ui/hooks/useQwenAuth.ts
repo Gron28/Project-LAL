@@ -10,7 +10,7 @@ import {
   qwenOAuth2Events,
   QwenOAuth2Event,
   type DeviceAuthorizationData,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 export interface QwenAuthState {
   deviceAuth: DeviceAuthorizationData | null;

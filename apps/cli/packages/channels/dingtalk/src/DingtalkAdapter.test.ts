@@ -8,7 +8,7 @@ import type {
   ChannelTaskLifecycleEvent,
   Envelope,
   SessionTarget,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 
 type LifecycleBase = Omit<
   Extract<ChannelTaskLifecycleEvent, { type: 'started' }>,
@@ -82,13 +82,13 @@ vi.mock('dingtalk-stream-sdk-nodejs', () => ({
   EventAck: { SUCCESS: 'success' },
 }));
 
-vi.mock('@qwen-code/channel-base', async () => {
+vi.mock('@lal/channel-base', async () => {
   // Use the REAL sanitizeSenderName so the adapter's log-sanitization path is
   // exercised against the shared helper, not a stub that could mask drift. The
-  // vitest config aliases @qwen-code/channel-base to its SOURCE, so this resolves
+  // vitest config aliases @lal/channel-base to its SOURCE, so this resolves
   // with no prior channel-base build (dist may be absent/stale package-locally).
-  const real = await vi.importActual<typeof import('@qwen-code/channel-base')>(
-    '@qwen-code/channel-base',
+  const real = await vi.importActual<typeof import('@lal/channel-base')>(
+    '@lal/channel-base',
   );
   return {
     ChannelBase: class {
@@ -1597,7 +1597,7 @@ describe('DingtalkChannel reply mentions', () => {
 
 describe('DingtalkChannel mention target lifecycle', () => {
   it('does not retain a preflight-rejected group candidate', async () => {
-    vi.doUnmock('@qwen-code/channel-base');
+    vi.doUnmock('@lal/channel-base');
     vi.resetModules();
     const { DingtalkChannel: RealDingtalkChannel } = await import(
       './DingtalkAdapter.js'
@@ -1673,7 +1673,7 @@ describe('DingtalkChannel mention target lifecycle', () => {
   });
 
   it('does not retain a local-command candidate', async () => {
-    vi.doUnmock('@qwen-code/channel-base');
+    vi.doUnmock('@lal/channel-base');
     vi.resetModules();
     const { DingtalkChannel: RealDingtalkChannel } = await import(
       './DingtalkAdapter.js'
@@ -1739,7 +1739,7 @@ describe('DingtalkChannel mention target lifecycle', () => {
   });
 
   it('clears the final buffered command target after synthetic collect re-entry', async () => {
-    vi.doUnmock('@qwen-code/channel-base');
+    vi.doUnmock('@lal/channel-base');
     vi.resetModules();
     const { DingtalkChannel: RealDingtalkChannel } = await import(
       './DingtalkAdapter.js'
@@ -1813,7 +1813,7 @@ describe('DingtalkChannel mention target lifecycle', () => {
   });
 
   it('clears buffered mention targets for a dead session only', async () => {
-    vi.doUnmock('@qwen-code/channel-base');
+    vi.doUnmock('@lal/channel-base');
     vi.resetModules();
     const { DingtalkChannel: RealDingtalkChannel } = await import(
       './DingtalkAdapter.js'

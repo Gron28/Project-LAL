@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { KNOWN_EVENT_KINDS } from '@qwen-code/qwen-code-core';
+import { KNOWN_EVENT_KINDS } from '@lal/core';
 import { RENDERED_KINDS, renderEvent, type RenderContext } from './renderer.js';
 
 describe('renderer dispatch table', () => {

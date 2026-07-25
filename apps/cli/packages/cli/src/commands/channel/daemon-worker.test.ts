@@ -125,11 +125,11 @@ const mockSessionRouter = vi.hoisted(() =>
   ),
 );
 
-vi.mock('@qwen-code/acp-bridge/workspacePaths', () => ({
+vi.mock('@lal/acp-bridge/workspacePaths', () => ({
   canonicalizeWorkspace: mockCanonicalizeWorkspace,
 }));
 
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   appendChannelMemory: mockAppendChannelMemory,
   clearChannelMemory: mockClearChannelMemory,
   readChannelMemory: mockReadChannelMemory,
@@ -161,13 +161,13 @@ vi.mock('./runtime.js', () => ({
   sessionsPath: mockSessionsPath,
 }));
 
-vi.mock('@qwen-code/channel-base', () => ({
+vi.mock('@lal/channel-base', () => ({
   DaemonChannelBridge: mockDaemonChannelBridge,
   sanitizeLogText: mockSanitizeLogText,
   SessionRouter: mockSessionRouter,
 }));
 
-vi.mock('@qwen-code/sdk/daemon', () => ({
+vi.mock('@lal/sdk/daemon', () => ({
   DaemonClient: mockDefaultDaemonClient,
   DaemonSessionClient: mockDefaultDaemonSessionClient,
 }));

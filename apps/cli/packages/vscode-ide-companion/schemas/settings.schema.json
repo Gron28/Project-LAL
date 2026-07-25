@@ -834,9 +834,9 @@
           "default": true
         },
         "enableAutoSkill": {
-          "description": "Enable background review for reusable project skills after tool-heavy sessions.",
+          "description": "Background review that writes reusable project skills after tool-heavy sessions. Off by default: it spends a model turn and creates files on its own.",
           "type": "boolean",
-          "default": true
+          "default": false
         },
         "autoSkillConfirm": {
           "description": "Ask for confirmation before auto-generated skills are added to the skill library. When off, auto-skills are saved immediately.",

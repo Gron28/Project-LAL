@@ -16,12 +16,12 @@ import type {
   CoreReadTextFileRequest,
   FileSystemService,
   ReadTextFileResponse,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   createDebugLogger,
   getErrorMessage,
   isSubpath,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 

@@ -15,8 +15,8 @@ import type {
   SlashCommandRecordPayload,
   AtCommandRecordPayload,
   HistoryGap,
-} from '@qwen-code/qwen-code-core';
-import { getToolResponseDisplayText } from '@qwen-code/qwen-code-core';
+} from '@lal/core';
+import { getToolResponseDisplayText } from '@lal/core';
 import type {
   HistoryItem,
   HistoryItemInfo,

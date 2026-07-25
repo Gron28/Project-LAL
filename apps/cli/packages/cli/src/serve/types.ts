@@ -12,8 +12,8 @@ import {
 // Import the canonical `PermissionPolicy` union from acp-bridge
 // instead of inlining the string literals, so upstream changes
 // are compiler-flagged here.
-import type { PermissionPolicy } from '@qwen-code/acp-bridge';
-import type { AuthType, InputModalities } from '@qwen-code/qwen-code-core';
+import type { PermissionPolicy } from '@lal/acp-bridge';
+import type { AuthType, InputModalities } from '@lal/core';
 
 /**
  * Stage 1 daemon mode shape.

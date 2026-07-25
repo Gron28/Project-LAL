@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { AuthType, type Config } from '@qwen-code/qwen-code-core';
+import { AuthType, type Config } from '@lal/core';
 import type { LoadedSettings } from '../../config/settings.js';
 import {
   assertVoiceBaseUrlNetworkAllowed,

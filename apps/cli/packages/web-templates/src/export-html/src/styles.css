@@ -21,7 +21,7 @@
 
   /*
    * Mirror webui's light-theme overrides so ChatViewer follows the toggle.
-   * The first group tracks @qwen-code/webui's variables.css `:root.auto-theme`
+   * The first group tracks @lal/webui's variables.css `:root.auto-theme`
    * block. The second group covers `--app-*` tokens that the auto-theme block
    * does NOT override but ChatViewer / MarkdownRenderer / CollapsibleFileContent
    * still read — without these, light-mode exports leak dark surfaces (e.g.

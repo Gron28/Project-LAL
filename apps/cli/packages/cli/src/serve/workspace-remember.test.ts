@@ -17,7 +17,7 @@ import type {
   BridgeWorkspaceMemoryRememberResult,
 } from './acp-session-bridge.js';
 import { WorkspaceDrainingError } from './acp-session-bridge.js';
-import type { BridgeEvent } from '@qwen-code/acp-bridge/eventBus';
+import type { BridgeEvent } from '@lal/acp-bridge/eventBus';
 import {
   mountWorkspaceMemoryRememberRoutes,
   WorkspaceRememberTaskLane,
@@ -33,7 +33,7 @@ const { mockDebugLogger } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   createDebugLogger: () => mockDebugLogger,
 }));
 

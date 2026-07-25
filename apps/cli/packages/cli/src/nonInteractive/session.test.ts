@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SendMessageType, type Config } from '@qwen-code/qwen-code-core';
+import { SendMessageType, type Config } from '@lal/core';
 import type { Content } from '@google/genai';
 import { runNonInteractiveStreamJson } from './session.js';
 import type {

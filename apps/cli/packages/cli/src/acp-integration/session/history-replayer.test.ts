@@ -17,7 +17,7 @@ import type {
   ToolRegistry,
   ToolResultDisplay,
   TodoResultDisplay,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 describe('HistoryReplayer', () => {
   let mockContext: SessionContext;

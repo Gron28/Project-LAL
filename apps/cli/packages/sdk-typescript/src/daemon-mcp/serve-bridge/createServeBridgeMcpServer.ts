@@ -28,7 +28,7 @@ function stripTrailingSlashes(url: string): string {
  * @example
  * ```typescript
  * import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
- * import { createServeBridgeMcpServer } from '@qwen-code/sdk';
+ * import { createServeBridgeMcpServer } from '@lal/sdk';
  *
  * const server = createServeBridgeMcpServer({
  *   daemonUrl: 'http://127.0.0.1:4170',

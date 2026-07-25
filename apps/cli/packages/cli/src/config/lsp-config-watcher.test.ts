@@ -37,8 +37,8 @@ vi.mock('chokidar', () => ({
   watch: chokidarMock.watch,
 }));
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@qwen-code/qwen-code-core')>()),
+vi.mock('@lal/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@lal/core')>()),
   createDebugLogger: vi.fn(() => debugLoggerMock),
 }));
 

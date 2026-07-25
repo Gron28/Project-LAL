@@ -33,7 +33,7 @@ import {
   useVimModeState,
   useVimModeActions,
 } from '../contexts/VimModeContext.js';
-import { createDebugLogger, type Config } from '@qwen-code/qwen-code-core';
+import { createDebugLogger, type Config } from '@lal/core';
 import { useKeypress } from '../hooks/useKeypress.js';
 import {
   isDeletionKey,

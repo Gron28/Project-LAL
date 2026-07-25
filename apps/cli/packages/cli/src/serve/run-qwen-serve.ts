@@ -23,9 +23,9 @@ import { isWithinRoot } from '../config/path-comparison.js';
 import {
   DEFAULT_COMPACTED_REPLAY_MAX_BYTES,
   normalizeCompactedReplayMaxBytes,
-} from '@qwen-code/acp-bridge/replayWindowLimits';
-import type { BridgeEvent } from '@qwen-code/acp-bridge/eventBus';
-import type { NdJsonMessageObservation } from '@qwen-code/acp-bridge/ndJsonStream';
+} from '@lal/acp-bridge/replayWindowLimits';
+import type { BridgeEvent } from '@lal/acp-bridge/eventBus';
+import type { NdJsonMessageObservation } from '@lal/acp-bridge/ndJsonStream';
 import { getDeviceFlowRegistry } from './auth/device-flow.js';
 import {
   loadServeFastPathSettings,
@@ -36,14 +36,14 @@ import {
   MAX_REGISTERED_WORKSPACES,
   resolveWorkspaceInputs,
 } from './workspace-inputs.js';
-import type { AcpSessionBridge } from '@qwen-code/acp-bridge/bridgeTypes';
-import { canonicalizeWorkspace } from '@qwen-code/acp-bridge/workspacePaths';
+import type { AcpSessionBridge } from '@lal/acp-bridge/bridgeTypes';
+import { canonicalizeWorkspace } from '@lal/acp-bridge/workspacePaths';
 import type {
   AuthType,
   ProviderSetupInputs,
   TelemetryRuntimeConfig,
   TelemetrySettings,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { createBridgeFileSystemAdapter } from './bridge-file-system-adapter.js';
 // Dynamic-imported below (not at module scope) so the serve fast-path bundle
 // closure check doesn't trace create-sub-session's transitive deps through
@@ -92,7 +92,7 @@ import {
   workspaceRegistrationId,
   type WorkspaceRegistrationStore,
 } from './workspace-registration-store.js';
-import type { PermissionPolicy } from '@qwen-code/acp-bridge';
+import type { PermissionPolicy } from '@lal/acp-bridge';
 import { getCliVersion } from '../utils/version.js';
 import { getRateLimiter } from './rate-limit.js';
 import type { AcpHttpHandle } from './acp-http/index.js';
@@ -137,7 +137,7 @@ import type {
   ServiceInfo,
   ServiceInfoWorker,
 } from '../commands/channel/pidfile.js';
-import { sanitizeLogText } from '@qwen-code/channel-base';
+import { sanitizeLogText } from '@lal/channel-base';
 import { isBrowserAutomationMcpAvailable } from './cdp-mcp-command.js';
 
 // Reverse MCP channel; enabled only by explicit option or env opt-in.
@@ -548,7 +548,7 @@ export interface RunHandle {
   close(): Promise<void>;
 }
 
-type CoreRuntime = typeof import('@qwen-code/qwen-code-core');
+type CoreRuntime = typeof import('@lal/core');
 type ProviderConfig = NonNullable<ReturnType<CoreRuntime['findProviderById']>>;
 type SettingsRuntime = typeof import('../config/settings.js');
 type EnvironmentRuntime = typeof import('../config/environment.js');
@@ -784,7 +784,7 @@ function shouldPreheatBridge(deps: RunQwenServeDeps): boolean {
 
 let coreRuntimePromise: Promise<CoreRuntime> | undefined;
 function loadCoreRuntime(): Promise<CoreRuntime> {
-  coreRuntimePromise ??= import('@qwen-code/qwen-code-core');
+  coreRuntimePromise ??= import('@lal/core');
   return coreRuntimePromise;
 }
 
@@ -876,8 +876,8 @@ async function loadServeRuntimeModules() {
     workspaceRegistryModule,
   ] = await Promise.all([
     import('./server.js'),
-    import('@qwen-code/acp-bridge/bridge'),
-    import('@qwen-code/acp-bridge/spawnChannel'),
+    import('@lal/acp-bridge/bridge'),
+    import('@lal/acp-bridge/spawnChannel'),
     import('./workspace-service/index.js'),
     import('./workspace-service/types.js'),
     import('./daemon-status-provider.js'),

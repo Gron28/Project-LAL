@@ -8,7 +8,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import {
   ChannelBase,
   isTerminalTaskLifecycleType,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 import { buildCardContent, extractTitle, splitChunks } from './markdown.js';
 import { downloadMedia } from './media.js';
 import type {
@@ -18,7 +18,7 @@ import type {
   ChannelAgentBridge,
   ChannelTaskLifecycleEvent,
   SessionTarget,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 
 /** Feishu message event data shape. */
 interface FeishuMessageEvent {

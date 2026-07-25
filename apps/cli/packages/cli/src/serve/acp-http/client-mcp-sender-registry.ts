@@ -46,11 +46,11 @@
  */
 
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
-import type { ClientMcpMessageSender } from '@qwen-code/acp-bridge/bridgeOptions';
+import type { ClientMcpMessageSender } from '@lal/acp-bridge/bridgeOptions';
 import {
   CLIENT_MCP_OVER_WS_CONFIG_FLAG,
   type ClientMcpOverWsRuntimeConfig,
-} from '@qwen-code/acp-bridge/bridgeTypes';
+} from '@lal/acp-bridge/bridgeTypes';
 import type { ClientMcpServerProvider } from './client-mcp-ws.js';
 
 /** The `sendSdkMcpMessage`-shaped callback a WS connection registers. */

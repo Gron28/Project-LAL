@@ -1,5 +1,5 @@
 {
-  "name": "@qwen-code/channel-base",
+  "name": "@lal/channel-base",
   "version": "0.19.9",
   "description": "Base channel infrastructure for LAL",
   "type": "module",

@@ -12,7 +12,7 @@ import {
   type AgentToolOutputUpdateEvent,
   type AgentToolResultEvent,
   type AgentUsageEvent,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   GatewayClient,
   type ClientRunCommand,

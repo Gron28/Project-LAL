@@ -171,7 +171,7 @@ function verifyNativeAudioCapturePackage(rootDir, distDir, { required } = {}) {
   const addonDest = path.join(
     distDir,
     'node_modules',
-    '@qwen-code',
+    '@lal',
     'audio-capture',
   );
   const requiredPaths = [
@@ -317,7 +317,7 @@ function writeDistPackageJson(rootDir, distDir) {
     config: rootPackageJson.config,
     dependencies: {},
     optionalDependencies: {
-      '@qwen-code/audio-capture': rootPackageJson.version,
+      '@lal/audio-capture': rootPackageJson.version,
       '@lydell/node-pty': '1.2.0-beta.10',
       '@lydell/node-pty-darwin-arm64': '1.2.0-beta.10',
       '@lydell/node-pty-darwin-x64': '1.2.0-beta.10',

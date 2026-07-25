@@ -94,7 +94,7 @@ describe('update command', () => {
     });
     getInstallationInfo.mockReturnValue({
       isStandalone: false,
-      updateCommand: 'npm install -g @qwen-code/qwen-code@latest',
+      updateCommand: 'npm install -g @lal/cli@latest',
     });
   });
 
@@ -111,7 +111,7 @@ describe('update command', () => {
       'Run the following to update:',
     );
     expect(writeStdoutLine).toHaveBeenCalledWith(
-      '  npm install -g @qwen-code/qwen-code@1.2.3',
+      '  npm install -g @lal/cli@1.2.3',
     );
   });
 

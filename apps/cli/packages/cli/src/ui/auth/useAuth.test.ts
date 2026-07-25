@@ -16,7 +16,7 @@ import {
   getDefaultModelIds,
   resolveBaseUrl,
   type ProviderSetupInputs,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   useAuthCommand,
   normalizeCustomModelIds,

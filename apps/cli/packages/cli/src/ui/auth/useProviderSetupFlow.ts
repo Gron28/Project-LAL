@@ -11,12 +11,12 @@ import {
   resolveBaseUrl,
   getDefaultBaseUrlForProtocol,
   getDefaultModelIds,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type {
   InputModalities,
   ProviderConfig,
   ProviderSetupInputs,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { t } from '../../i18n/index.js';
 import { normalizeModelIds, maskApiKey } from './useAuth.js';
 

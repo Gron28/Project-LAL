@@ -10,7 +10,7 @@ import {
   recordDaemonHttpRequest,
   recordDaemonHttpResponse,
   withDaemonRequestSpan,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { NextFunction, Request, Response } from 'express';
 import {
   CLIENT_ID_HEADER,

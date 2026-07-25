@@ -11,7 +11,7 @@ import {
   fetchGitDiff,
   fetchGitDiffHunks,
   type GitDiffResult,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 const debugLogger = createDebugLogger('DiffDialog');
 

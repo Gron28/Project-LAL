@@ -15,7 +15,7 @@ import {
   buildSkillLlmContent,
   type Config,
   type SkillConfig,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 function makeSkill(overrides: Partial<SkillConfig> = {}): SkillConfig {
   return {

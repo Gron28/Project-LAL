@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { AuthType } from '@qwen-code/qwen-code-core';
+import { AuthType } from '@lal/core';
 import {
   buildAuthMethods,
   pickAuthMethodsForAuthRequired,

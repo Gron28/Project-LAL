@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process';
 // Namespace import (vs `import { constants }`) so vitest tests that
 // `vi.mock('node:fs', ...)` without supplying every named export don't
 // blow up in strict-mock mode just because they transitively load this
-// file via `@qwen-code/qwen-code-core`. The `constants?.X ?? 0` accesses
+// file via `@lal/core`. The `constants?.X ?? 0` accesses
 // below absorb a missing `constants` field by falling through to plain
 // `O_RDONLY` (= 0 on POSIX) — harmless in mock environments where no
 // real `open()` ever runs.
@@ -84,7 +84,7 @@ const BINARY_SNIFF_BYTES = 8 * 1024;
  *
  *  Computed lazily on first call (rather than at module load) so test files
  *  that `vi.mock('node:fs', ...)` without supplying `constants` can still
- *  load this module transitively via `@qwen-code/qwen-code-core` without
+ *  load this module transitively via `@lal/core` without
  *  vitest's strict-mock proxy throwing on the property access. Tests that
  *  do not actually exercise `countUntrackedLines` never trigger the lookup. */
 let untrackedOpenFlagsCache: number | undefined;

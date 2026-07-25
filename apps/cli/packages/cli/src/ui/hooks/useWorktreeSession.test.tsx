@@ -14,7 +14,7 @@ import {
   clearWorktreeSession,
   type Config,
   type WorktreeSession,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { useWorktreeSession } from './useWorktreeSession.js';
 
 const SESSION_ID = 'test-session-id';

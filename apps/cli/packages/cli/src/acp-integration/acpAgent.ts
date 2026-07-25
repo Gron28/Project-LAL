@@ -96,7 +96,7 @@ import {
   type SessionArtifactEventRecordPayload,
   type SessionArtifactSnapshotRecordPayload,
   type WorkspaceRememberContextMode,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { randomUUID } from 'node:crypto';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import {
@@ -142,7 +142,7 @@ import {
   pickAuthMethodsForAuthRequired,
 } from './authMethods.js';
 import { AcpFileSystemService } from './service/filesystem.js';
-import { ndJsonStream } from '@qwen-code/acp-bridge/ndJsonStream';
+import { ndJsonStream } from '@lal/acp-bridge/ndJsonStream';
 import { Readable, Writable } from 'node:stream';
 import { normalizeDisabledToolList } from '../config/normalizeDisabledTools.js';
 import { pipeline } from 'node:stream/promises';
@@ -263,7 +263,7 @@ import {
   type ServeExtensionCapabilities,
   type ServeWorkspaceExtensionsStatus,
   IDLE_HOOK_EVENTS,
-} from '@qwen-code/acp-bridge/status';
+} from '@lal/acp-bridge/status';
 import {
   CLIENT_MCP_OVER_WS_CONFIG_FLAG,
   LOAD_REPLAY_BULK_MODE,
@@ -272,7 +272,7 @@ import {
   LOAD_REPLAY_VERSION,
   type ClientMcpOverWsRuntimeConfig,
   type BridgeLoadReplayEnvelope,
-} from '@qwen-code/acp-bridge/bridgeTypes';
+} from '@lal/acp-bridge/bridgeTypes';
 import { isValidServerName } from '../serve/validate-server-name.js';
 import { MAX_REMEMBER_CONTENT_BYTES } from '../serve/workspace-memory-remember-constants.js';
 import { computeCpuPercent } from '../serve/daemon-metrics-ring.js';
@@ -4410,7 +4410,7 @@ class QwenAgent implements Agent {
   ): Promise<{ cells: ServePreflightCell[]; errors?: ServeStatusCell[] }> {
     // Drive emission order from the shared `ACP_PREFLIGHT_KINDS` constant
     // (also consumed by `createIdleAcpPreflightCells` from
-    // `@qwen-code/acp-bridge/status`)
+    // `@lal/acp-bridge/status`)
     // so the idle-placeholder list and the live builder cannot drift —
     // adding a new ACP kind in the constant flags any builder dispatch
     // gap as a TS exhaustiveness error in the switch below, instead of

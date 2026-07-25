@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type {
   ChannelAgentBridge,
   ChannelTaskLifecycleEvent,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 import { isValidChatId, DeliveryError } from './QQChannel.js';
 
 const {
@@ -81,9 +81,9 @@ vi.mock('./login.js', () => ({
   qrCodeLogin: vi.fn(),
 }));
 
-vi.mock('@qwen-code/channel-base', async () => {
-  const real = await vi.importActual<typeof import('@qwen-code/channel-base')>(
-    '@qwen-code/channel-base',
+vi.mock('@lal/channel-base', async () => {
+  const real = await vi.importActual<typeof import('@lal/channel-base')>(
+    '@lal/channel-base',
   );
   return {
     ChannelBase: class {

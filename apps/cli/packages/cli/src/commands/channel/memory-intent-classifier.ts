@@ -2,8 +2,8 @@ import type {
   ChannelAgentBridge,
   ChannelMemoryIntentClassifier,
   ChannelMemoryIntentClassifierResult,
-} from '@qwen-code/channel-base';
-import { sanitizeLogText } from '@qwen-code/channel-base';
+} from '@lal/channel-base';
+import { sanitizeLogText } from '@lal/channel-base';
 
 const CLASSIFIER_PROMPT = `Classify whether the user is trying to manage channel memory.
 

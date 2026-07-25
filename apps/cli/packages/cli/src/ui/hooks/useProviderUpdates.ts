@@ -9,7 +9,7 @@ import type {
   ProviderModelConfig,
   Config,
   ProviderConfig,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   ALL_PROVIDERS,
   applyProviderInstallPlan,
@@ -21,7 +21,7 @@ import {
   resolveBaseUrl,
   resolveMetadataKey,
   resolveOwnsModel,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { LoadedSettings } from '../../config/settings.js';
 import { t } from '../../i18n/index.js';
 import { createLoadedSettingsAdapter } from '../../config/loadedSettingsAdapter.js';

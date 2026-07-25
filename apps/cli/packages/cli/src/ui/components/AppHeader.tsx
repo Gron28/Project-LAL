@@ -10,7 +10,7 @@ import {
   AuthType,
   findProviderByCredentials,
   resolveMetadataKey,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { Header, AuthDisplayType } from './Header.js';
 import { Tips } from './Tips.js';
 import { theme } from '../semantic-colors.js';

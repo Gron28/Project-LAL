@@ -24,7 +24,7 @@ import {
   type SavedWorkflowSource,
   saveWorkflowScript,
   validateWorkflowName,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { useKeypress, type Key } from '../../hooks/useKeypress.js';
 import { theme } from '../../semantic-colors.js';
 import { t } from '../../../i18n/index.js';

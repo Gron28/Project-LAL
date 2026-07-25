@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { resolveProviderProtocol } from '@qwen-code/qwen-code-core';
+import { resolveProviderProtocol } from '@lal/core';
 import type {
   ModelProvidersConfig,
   ProviderProtocolConfig,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 export interface RemoveModelTarget {
   /** Resolved protocol/authType the model is grouped under (e.g. "openai"). */

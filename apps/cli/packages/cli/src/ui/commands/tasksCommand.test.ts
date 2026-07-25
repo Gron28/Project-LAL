@@ -12,7 +12,7 @@ import type {
   AgentTask,
   MonitorTask,
   ShellTask,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 type AgentTaskTestEntry = AgentTask;
 

@@ -12,7 +12,7 @@ import {
   type ResumedSessionData,
   SessionStartSource,
   computeUniqueBranchTitle,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   buildResumedHistoryItems,
   applyCollapsePolicyAndSummary,

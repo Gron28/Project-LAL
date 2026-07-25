@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { InputFormat } from '@qwen-code/qwen-code-core';
+import { InputFormat } from '@lal/core';
 import { createMinimalSettings } from '../../../config/settings.js';
 import type { StreamJsonOutputAdapter } from '../../io/StreamJsonOutputAdapter.js';
 import type { IControlContext } from '../ControlContext.js';

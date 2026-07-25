@@ -7,14 +7,14 @@
     "lib": ["DOM", "DOM.Iterable", "ES2023"],
     "types": ["node", "vitest/globals"],
     "paths": {
-      "@qwen-code/qwen-code-core": ["../core/src/index.ts"],
-      "@qwen-code/qwen-code-core/*": ["../core/src/*"],
-      "@qwen-code/acp-bridge": ["../acp-bridge/src/index.ts"],
-      "@qwen-code/acp-bridge/*": ["../acp-bridge/src/*"],
-      "@qwen-code/audio-capture": ["../audio-capture/src/index.ts"],
-      "@qwen-code/audio-capture/*": ["../audio-capture/src/*"],
-      "@qwen-code/sdk": ["../sdk-typescript/src/index.ts"],
-      "@qwen-code/sdk/*": ["../sdk-typescript/src/*"]
+      "@lal/core": ["../core/src/index.ts"],
+      "@lal/core/*": ["../core/src/*"],
+      "@lal/acp-bridge": ["../acp-bridge/src/index.ts"],
+      "@lal/acp-bridge/*": ["../acp-bridge/src/*"],
+      "@lal/audio-capture": ["../audio-capture/src/index.ts"],
+      "@lal/audio-capture/*": ["../audio-capture/src/*"],
+      "@lal/sdk": ["../sdk-typescript/src/index.ts"],
+      "@lal/sdk/*": ["../sdk-typescript/src/*"]
     }
   },
   "include": [

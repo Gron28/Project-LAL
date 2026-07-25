@@ -224,7 +224,7 @@ export function createSpawnChannelFactory(
  * cwd to a sandbox here would be theatre. Stage 4+ remote-sandbox swaps
  * this factory for a sandbox-aware variant; see the remote-sandbox plan.
  *
- * Lifted from `cli/src/serve/httpAcpBridge.ts` to `@qwen-code/acp-bridge`
+ * Lifted from `cli/src/serve/httpAcpBridge.ts` to `@lal/acp-bridge`
  * so `channels/base/AcpBridge.ts` and the VSCode IDE
  * companion can share one spawn implementation instead of each
  * reimplementing the child lifecycle (the current divergence noted in

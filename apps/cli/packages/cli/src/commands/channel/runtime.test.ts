@@ -8,7 +8,7 @@ import {
   sessionsPath,
 } from './runtime.js';
 
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   Storage: { getGlobalQwenDir: () => '/tmp/qwen' },
   hashDaemonWorkspace: (workspace: string) =>
     workspace === '/workspace' ? 'workspace-hash' : 'other-hash',

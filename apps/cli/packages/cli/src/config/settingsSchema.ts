@@ -13,7 +13,7 @@ import type {
   ChatCompressionSettings,
   ModelProvidersConfig,
   ProviderProtocolConfig,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   ApprovalMode,
   DEFAULT_MAX_SUBAGENT_DEPTH,
@@ -26,7 +26,7 @@ import {
   DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
   DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
   SENSITIVE_SPAN_ATTRIBUTE_MAX_LENGTH_LIMIT,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { CustomTheme } from '../ui/themes/theme.js';
 import { getLanguageSettingsOptions } from '../i18n/languages.js';
 

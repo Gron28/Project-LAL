@@ -29,7 +29,7 @@ import {
   resolveOutputLanguage,
   writeOutputLanguageAndRegisterPath,
 } from '../../utils/languageUtils.js';
-import { createDebugLogger } from '@qwen-code/qwen-code-core';
+import { createDebugLogger } from '@lal/core';
 
 const debugLogger = createDebugLogger('LANGUAGE_COMMAND');
 

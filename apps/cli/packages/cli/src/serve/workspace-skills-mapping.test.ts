@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { SkillConfig } from '@qwen-code/qwen-code-core';
+import type { SkillConfig } from '@lal/core';
 import { mapSkillConfigToStatus } from './workspace-skills-mapping.js';
 
 function makeSkill(overrides: Partial<SkillConfig> = {}): SkillConfig {

@@ -9,7 +9,7 @@ import {
   IdeClient,
   initializeTelemetry,
   type Config,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { LoadedSettings } from '../config/settings.js';
 import { preconnectApi } from '../utils/apiPreconnect.js';
 import { AppEvent, appEvents } from '../utils/events.js';

@@ -16,8 +16,8 @@ import type {
   ServerGeminiStreamEvent,
   ToolCallRequestInfo,
   ToolCallResponseInfo,
-} from '@qwen-code/qwen-code-core';
-import { createDebugLogger } from '@qwen-code/qwen-code-core';
+} from '@lal/core';
+import { createDebugLogger } from '@lal/core';
 import type { Part } from '@google/genai';
 import { StreamJsonOutputAdapter } from '../nonInteractive/io/index.js';
 import { reportChatRecordingFailureToAdapter } from '../utils/chat-recording-failure.js';

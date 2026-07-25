@@ -8,7 +8,7 @@ import {
   SESSION_TITLE_MAX_LENGTH,
   tryGenerateSessionTitle,
   type SessionTitleFailureReason,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { SlashCommand, SlashCommandActionReturn } from './types.js';
 import { CommandKind } from './types.js';
 import { t } from '../../i18n/index.js';

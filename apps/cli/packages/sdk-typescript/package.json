@@ -1,5 +1,5 @@
 {
-  "name": "@qwen-code/sdk",
+  "name": "@lal/sdk",
   "version": "0.1.8",
   "description": "TypeScript SDK for programmatic access to qwen-code CLI",
   "main": "./dist/index.cjs",
@@ -63,7 +63,7 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
-    "@qwen-code/acp-bridge": "file:../acp-bridge",
+    "@lal/acp-bridge": "file:../acp-bridge",
     "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^7.13.0",
     "@typescript-eslint/parser": "^7.13.0",

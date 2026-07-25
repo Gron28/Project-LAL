@@ -36,7 +36,7 @@ import type {
   ToolArtifact,
   VisionBridgeResult,
   MemoryWriteCandidate,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   AuthType,
   ApprovalMode,
@@ -129,12 +129,12 @@ import {
   shouldRunVisionBridge,
   splitImageParts,
   approxBase64Bytes,
-} from '@qwen-code/qwen-code-core';
-import { NOT_CURRENTLY_GENERATING_CANCEL_MESSAGE } from '@qwen-code/acp-bridge/bridgeErrors';
+} from '@lal/core';
+import { NOT_CURRENTLY_GENERATING_CANCEL_MESSAGE } from '@lal/acp-bridge/bridgeErrors';
 // Single source of truth shared with the daemon-side answerer (BridgeClient),
 // so a rename can't desync caller and answerer into a silent -32601 latch.
-import { MID_TURN_QUEUE_DRAIN_METHOD } from '@qwen-code/acp-bridge/bridgeTypes';
-import { SERVE_CONTROL_EXT_METHODS } from '@qwen-code/acp-bridge/status';
+import { MID_TURN_QUEUE_DRAIN_METHOD } from '@lal/acp-bridge/bridgeTypes';
+import { SERVE_CONTROL_EXT_METHODS } from '@lal/acp-bridge/status';
 import { getCommandSubcommandNames } from '../../services/commandMetadata.js';
 import { getEffectiveSupportedModes } from '../../services/commandUtils.js';
 import { readVoiceModel } from '../../services/voice-settings.js';

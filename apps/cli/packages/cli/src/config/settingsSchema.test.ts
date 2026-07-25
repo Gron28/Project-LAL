@@ -9,7 +9,7 @@ import {
   DEFAULT_QWEN_CUSTOM_IGNORE_FILE_NAMES,
   DEFAULT_SENSITIVE_SPAN_ATTRIBUTE_MAX_LENGTH,
   SENSITIVE_SPAN_ATTRIBUTE_MAX_LENGTH_LIMIT,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   getSettingsSchema,
   type SettingDefinition,

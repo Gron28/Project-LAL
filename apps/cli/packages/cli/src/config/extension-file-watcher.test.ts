@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as path from 'node:path';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import { ExtensionFileWatcher } from './extension-file-watcher.js';
 import type { ExtensionRefreshState } from './extension-refresh-state.js';
 

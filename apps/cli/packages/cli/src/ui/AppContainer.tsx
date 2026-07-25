@@ -75,7 +75,7 @@ import {
   GitWorktreeService,
   readWorktreeSessionMarker,
   isSessionRuntimeActive,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   applyCollapsePolicyAndSummary,
   buildResumedHistoryItems,

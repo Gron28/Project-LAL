@@ -12,7 +12,7 @@ import {
   isSuccessStatus,
   type Config,
   type ArenaAgentResult,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { theme } from '../../semantic-colors.js';
 import { useKeypress } from '../../hooks/useKeypress.js';
 import { MessageType, type HistoryItemWithoutId } from '../../types.js';

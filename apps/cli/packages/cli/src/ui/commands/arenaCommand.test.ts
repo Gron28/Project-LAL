@@ -9,7 +9,7 @@ import {
   type ArenaManager,
   AgentStatus,
   ArenaSessionStatus,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { arenaCommand } from './arenaCommand.js';
 import type {
   CommandContext,

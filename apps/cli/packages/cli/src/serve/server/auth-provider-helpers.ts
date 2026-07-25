@@ -5,7 +5,7 @@
  */
 
 import * as net from 'node:net';
-import { ALL_PROVIDERS, shouldShowStep } from '@qwen-code/qwen-code-core';
+import { ALL_PROVIDERS, shouldShowStep } from '@lal/core';
 import type {
   ServeAuthProviderCatalog,
   ServeAuthProviderDescriptor,

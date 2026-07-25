@@ -3,7 +3,7 @@ import type {
   ChannelWebhookConfig,
   ChannelWebhookSourceConfig,
   ChannelWebhookTargetConfig,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 import { resolveChannelCwd } from './channel-cwd.js';
 import { getPlugin, supportedTypes } from './channel-registry.js';
 

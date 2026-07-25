@@ -15,7 +15,7 @@ import type { Stats } from 'node:fs';
 import { fetch } from 'undici';
 import * as tar from 'tar';
 import type { ReadEntry } from 'tar';
-import { createDebugLogger } from '@qwen-code/qwen-code-core';
+import { createDebugLogger } from '@lal/core';
 import { verifySignature } from './standalone-update-verify.js';
 import { updateEventEmitter } from './updateEventEmitter.js';
 import { t } from '../i18n/index.js';

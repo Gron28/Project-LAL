@@ -17,11 +17,11 @@ import { RadioButtonSelect } from './shared/RadioButtonSelect.js';
 import { ScopeSelector } from './shared/ScopeSelector.js';
 import type { LoadedSettings } from '../../config/settings.js';
 import { SettingScope } from '../../config/settings.js';
-import type { EditorType } from '@qwen-code/qwen-code-core';
+import type { EditorType } from '@lal/core';
 import {
   createDebugLogger,
   isEditorAvailable,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { useKeypress } from '../hooks/useKeypress.js';
 import { t } from '../../i18n/index.js';
 

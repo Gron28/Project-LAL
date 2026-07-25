@@ -17,7 +17,7 @@ import type {
   Config,
   ConversationRecord,
   ResumedSessionData,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { Part } from '@google/genai';
 import type { HistoryItem } from '../types.js';
 

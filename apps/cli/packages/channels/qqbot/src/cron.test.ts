@@ -34,7 +34,7 @@ vi.mock('./login.js', () => ({
   qrCodeLogin: vi.fn(),
 }));
 
-vi.mock('@qwen-code/channel-base', () => ({
+vi.mock('@lal/channel-base', () => ({
   ChannelBase: class {
     protected config: Record<string, unknown> = {};
     protected bridge: Record<string, unknown> = {};
@@ -110,7 +110,7 @@ function makeChannel(): QQChannelClass {
       appSecret: 'test-secret',
       'cron-msg-experimental': true,
     },
-    bridge as unknown as import('@qwen-code/channel-base').AcpBridge,
+    bridge as unknown as import('@lal/channel-base').AcpBridge,
     { router } as unknown as Record<string, unknown>,
   );
 

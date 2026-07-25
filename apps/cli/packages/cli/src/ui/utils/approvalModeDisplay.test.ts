@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { ApprovalMode } from '@qwen-code/qwen-code-core';
+import { ApprovalMode } from '@lal/core';
 import {
   formatApprovalModeDescription,
   formatApprovalModeName,

@@ -2,7 +2,7 @@ export { DingtalkChannel } from './DingtalkAdapter.js';
 export { downloadMedia } from './media.js';
 
 import { DingtalkChannel } from './DingtalkAdapter.js';
-import type { ChannelPlugin } from '@qwen-code/channel-base';
+import type { ChannelPlugin } from '@lal/channel-base';
 
 export const plugin: ChannelPlugin = {
   channelType: 'dingtalk',

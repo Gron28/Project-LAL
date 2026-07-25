@@ -23,8 +23,8 @@ import type {
   Config,
   McpToolProgressData,
   FileDiff,
-} from '@qwen-code/qwen-code-core';
-import { ToolNames, ToolNamesMigration } from '@qwen-code/qwen-code-core';
+} from '@lal/core';
+import { ToolNames, ToolNamesMigration } from '@lal/core';
 import { ToolConfirmationMessage } from './ToolConfirmationMessage.js';
 import { PlanSummaryDisplay } from '../PlanSummaryDisplay.js';
 import { ShellInputPrompt } from '../ShellInputPrompt.js';

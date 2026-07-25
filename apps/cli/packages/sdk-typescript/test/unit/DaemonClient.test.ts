@@ -3439,7 +3439,7 @@ describe('DaemonClient', () => {
   describe('MCP restart timeout coupling (#4330)', () => {
     it('SDK default timeout equals server deadline + client headroom', async () => {
       const { MCP_RESTART_SERVER_DEADLINE_MS, MCP_RESTART_CLIENT_HEADROOM_MS } =
-        await import('@qwen-code/acp-bridge/mcpTimeouts');
+        await import('@lal/acp-bridge/mcpTimeouts');
       const expected =
         MCP_RESTART_SERVER_DEADLINE_MS + MCP_RESTART_CLIENT_HEADROOM_MS;
       expect(expected).toBe(330_000);

@@ -5,7 +5,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { ChatRecord, Config } from '@qwen-code/qwen-code-core';
+import type { ChatRecord, Config } from '@lal/core';
 import type { GenerateContentResponseUsageMetadata } from '@google/genai';
 import type { SessionContext } from '../../../acp-integration/session/types.js';
 import type { SessionUpdate, ToolCall } from '@agentclientprotocol/sdk';
@@ -359,7 +359,7 @@ async function extractMetadata(
   // Get git repository name
   let gitRepo: string | undefined;
   if (cwd) {
-    const { getGitRepoName } = await import('@qwen-code/qwen-code-core');
+    const { getGitRepoName } = await import('@lal/core');
     gitRepo = getGitRepoName(cwd);
   }
 

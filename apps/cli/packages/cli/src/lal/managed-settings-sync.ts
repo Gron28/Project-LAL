@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Config, ModelProvidersConfig } from '@qwen-code/qwen-code-core';
+import type { Config, ModelProvidersConfig } from '@lal/core';
 import { GatewayClient } from './attach/gateway-client.js';
 import { type LoadedSettings, SettingScope } from '../config/settings.js';
 

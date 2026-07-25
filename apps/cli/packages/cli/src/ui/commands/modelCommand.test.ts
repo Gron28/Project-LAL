@@ -13,7 +13,7 @@ import {
   AuthType,
   type ContentGeneratorConfig,
   type Config,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { LoadedSettings } from '../../config/settings.js';
 
 // Helper function to create a mock config

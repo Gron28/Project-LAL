@@ -22,7 +22,7 @@
 // dispatch table must never throw on an unrecognized `k`, and it must
 // never crash the process on a malformed payload shape either — every
 // branch reads its payload defensively.
-import { isKnownEventKind } from '@qwen-code/qwen-code-core';
+import { isKnownEventKind } from '@lal/core';
 
 export type RenderSeverity = 'info' | 'success' | 'warning' | 'error' | 'dim';
 

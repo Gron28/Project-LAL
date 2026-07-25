@@ -12,7 +12,7 @@ import {
   chmodSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { getGlobalQwenDir } from '@qwen-code/channel-base';
+import { getGlobalQwenDir } from '@lal/channel-base';
 
 export const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
 

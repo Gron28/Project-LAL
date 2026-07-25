@@ -13,12 +13,12 @@ import { TextInput } from '../components/shared/TextInput.js';
 import { theme } from '../semantic-colors.js';
 import { useKeypress } from '../hooks/useKeypress.js';
 import { t } from '../../i18n/index.js';
-import { AuthType } from '@qwen-code/qwen-code-core';
+import { AuthType } from '@lal/core';
 import type {
   ProviderConfig,
   BaseUrlOption,
   ModelSpec,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { ProviderSetupFlow } from './useProviderSetupFlow.js';
 import { normalizeModelIds } from './useAuth.js';
 

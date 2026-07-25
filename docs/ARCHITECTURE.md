@@ -450,7 +450,7 @@ Three passes, each with a known blind spot:
 
 The third pass caught the second pass lying, and a manual check caught the third
 pass lying: `packages/channels/*` is absent from the bundle yet is loaded at
-runtime through `import('@qwen-code/channel-telegram')` in
+runtime through `import('@lal/channel-telegram')` in
 `packages/cli/src/commands/channel/channel-registry.ts:10-15`. Absence from the
 bundle is not evidence of death.
 
@@ -487,7 +487,7 @@ package alone leaves a broken import.
 | Third-party SDK | `packages/sdk-typescript/src/{mcp,daemon-mcp,query,transport,types,utils}` | ~10,400 | Not in the bundle. **Keep `src/daemon`** — 21 files, 650KB, actively bundled. |
 | Insight reports | `packages/cli/src/services/insight/` + `packages/web-templates/src/insight/` | ~2,400 | |
 | HTML conversation export | `packages/cli/src/ui/utils/export/` + `packages/web-templates/src/export-html/` | ~3,000 | Distinct from LAL's own `/export` |
-| Voice input | `packages/cli/src/ui/voice/` + `packages/audio-capture` | ~1,600 | `@qwen-code/audio-capture` is an esbuild external — a native runtime dep |
+| Voice input | `packages/cli/src/ui/voice/` + `packages/audio-capture` | ~1,600 | `@lal/audio-capture` is an esbuild external — a native runtime dep |
 | Zed / ACP integration | `packages/cli/src/acp-integration/` + `packages/acp-bridge` | ~38,500 | Both bundled and live. Large, and the biggest single win. |
 | Locale machinery | `packages/cli/src/i18n/` | ~21,100 | **Bundled, 1.25MB of input.** Note `bundlePaths.ts` couples i18n asset lookup to the chunk dir name. |
 | Vendor telemetry | `packages/core/src/telemetry/` incl. `qwen-logger/` | ~10,800 | PLAN 1.2 keeps local observability and removes only external reporting — this is a **partial** cut, not a directory delete |

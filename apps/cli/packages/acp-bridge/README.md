@@ -1,4 +1,4 @@
-# `@qwen-code/acp-bridge`
+# `@lal/acp-bridge`
 
 Shared ACP bridge primitives consumed by `qwen serve`, channels, IDE, TUI,
 and remote-control adapters. Lives in the monorepo, not published to npm.
@@ -96,7 +96,7 @@ Lift history (#4175 Mode B daemon roadmap):
 
 ## Imports — root vs subpaths
 
-The package exposes both a barrel root (`@qwen-code/acp-bridge`) and
+The package exposes both a barrel root (`@lal/acp-bridge`) and
 per-module subpaths (`/eventBus`, `/inMemoryChannel`, `/channel`,
 `/permission`, `/status`, `/workspacePaths`, `/bridgeErrors`,
 `/bridgeTypes`, `/bridgeOptions`, `/spawnChannel`, `/bridgeClient`,
@@ -114,8 +114,8 @@ Both variants are stable across the F1 lift.
 ## Backward compatibility
 
 CLI code imports event-bus and in-memory channel primitives directly from
-`@qwen-code/acp-bridge/eventBus` and
-`@qwen-code/acp-bridge/inMemoryChannel`.
+`@lal/acp-bridge/eventBus` and
+`@lal/acp-bridge/inMemoryChannel`.
 
 `packages/cli/src/serve/acp-session-bridge.ts` remains as the CLI-local
 compatibility facade for the broader bridge surface, forwarding previously

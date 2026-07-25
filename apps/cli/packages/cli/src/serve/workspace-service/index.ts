@@ -29,7 +29,7 @@ import {
   createIdleAcpPreflightCells,
   type ServeWorkspacePreflightStatus,
   type ServeWorkspaceSkillsStatus,
-} from '@qwen-code/acp-bridge/status';
+} from '@lal/acp-bridge/status';
 
 import {
   WorkspaceInitPathEscapeError,
@@ -39,10 +39,10 @@ import {
   McpServerNotFoundError,
   McpServerRestartFailedError,
   SessionNotFoundError,
-} from '@qwen-code/acp-bridge/bridgeErrors';
+} from '@lal/acp-bridge/bridgeErrors';
 
-import { mapDomainErrorToErrorKind } from '@qwen-code/acp-bridge/status';
-import { MCP_RESTART_SERVER_DEADLINE_MS } from '@qwen-code/acp-bridge/mcpTimeouts';
+import { mapDomainErrorToErrorKind } from '@lal/acp-bridge/status';
+import { MCP_RESTART_SERVER_DEADLINE_MS } from '@lal/acp-bridge/mcpTimeouts';
 
 import { loadSettings } from '../../config/settings.js';
 import { getWorkspaceTrustStatus } from '../../config/trustedFolders.js';

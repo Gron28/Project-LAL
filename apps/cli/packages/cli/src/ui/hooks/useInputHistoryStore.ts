@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { createDebugLogger } from '@qwen-code/qwen-code-core';
+import { createDebugLogger } from '@lal/core';
 
 interface Logger {
   getPreviousUserMessages(): Promise<string[]>;

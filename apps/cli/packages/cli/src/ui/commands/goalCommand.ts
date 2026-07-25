@@ -18,7 +18,7 @@ import {
   registerGoalHook,
   unregisterGoalHook,
   type GoalTerminalEvent,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { MessageType, type HistoryItemGoalStatus } from '../types.js';
 import { installGoalTerminalObserver } from '../utils/restoreGoal.js';
 import { formatDuration } from '../utils/formatters.js';

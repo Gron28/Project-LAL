@@ -17,7 +17,7 @@ import type {
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgPath = join(here, '..', '..', 'package.json');
 
-describe('@qwen-code/sdk/daemon/transports — opt-in transport surface', () => {
+describe('@lal/sdk/daemon/transports — opt-in transport surface', () => {
   it('exports the concrete ACP transports + negotiateTransport at runtime', () => {
     // Locks the consumer-facing contract that lets agent-web (and any
     // external SDK consumer) get resumable ACP-over-HTTP without forking

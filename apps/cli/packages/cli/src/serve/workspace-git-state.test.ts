@@ -5,11 +5,11 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resolveBranchName, watchRepoBranch } from '@qwen-code/qwen-code-core';
+import { resolveBranchName, watchRepoBranch } from '@lal/core';
 import type { AcpSessionBridge } from './acp-session-bridge.js';
 import { WorkspaceGitState } from './workspace-git-state.js';
 
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   resolveBranchName: vi.fn(),
   watchRepoBranch: vi.fn(),
 }));

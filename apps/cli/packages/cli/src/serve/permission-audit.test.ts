@@ -13,7 +13,7 @@ import {
 import type {
   PermissionRequestRecord,
   PermissionVote,
-} from '@qwen-code/acp-bridge/permission';
+} from '@lal/acp-bridge/permission';
 
 const RECORD: PermissionRequestRecord = {
   requestId: 'req-1',

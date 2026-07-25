@@ -1,4 +1,4 @@
-# @qwen-code/channel-base
+# @lal/channel-base
 
 Base infrastructure for building LAL channel adapters. Provides the abstract base class, access control, session routing, and the adapter-facing bridge interface used to communicate with the agent.
 
@@ -7,7 +7,7 @@ If you're building a channel plugin, this is your only dependency.
 ## Install
 
 ```bash
-npm install @qwen-code/channel-base
+npm install @lal/channel-base
 ```
 
 ## Quick start
@@ -15,13 +15,13 @@ npm install @qwen-code/channel-base
 Subclass `ChannelBase` and implement three methods:
 
 ```typescript
-import { ChannelBase } from '@qwen-code/channel-base';
+import { ChannelBase } from '@lal/channel-base';
 import type {
   ChannelAgentBridge,
   ChannelBaseOptions,
   ChannelConfig,
   Envelope,
-} from '@qwen-code/channel-base';
+} from '@lal/channel-base';
 
 class MyChannel extends ChannelBase {
   constructor(
@@ -52,7 +52,7 @@ class MyChannel extends ChannelBase {
 Export a `ChannelPlugin` object so the extension loader can discover it:
 
 ```typescript
-import type { ChannelPlugin } from '@qwen-code/channel-base';
+import type { ChannelPlugin } from '@lal/channel-base';
 
 export const plugin: ChannelPlugin = {
   channelType: 'my-platform',
@@ -63,7 +63,7 @@ export const plugin: ChannelPlugin = {
 };
 ```
 
-For a complete working example, see [`@qwen-code/channel-plugin-example`](../plugin-example/).
+For a complete working example, see [`@lal/channel-plugin-example`](../plugin-example/).
 
 Migration note for existing TypeScript plugins: if your adapter constructor or factory explicitly types `bridge` as `AcpBridge`, change that annotation to `ChannelAgentBridge` and keep using only the methods exposed by that contract. JavaScript plugins are unaffected at runtime, and standalone `qwen channel start` still passes the current `AcpBridge` implementation.
 
@@ -368,4 +368,4 @@ Block streaming and `onResponseChunk` work independently — plugins can overrid
 ## Further reading
 
 - [Channel Plugin Developer Guide](../../../docs/developers/channel-plugins.md)
-- [`@qwen-code/channel-plugin-example`](../plugin-example/) — working reference implementation
+- [`@lal/channel-plugin-example`](../plugin-example/) — working reference implementation

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ChannelWebhookTask } from '@qwen-code/channel-base';
+import type { ChannelWebhookTask } from '@lal/channel-base';
 
 export type ChannelWebhookEnqueueErrorCode =
   | 'channel_worker_unavailable'

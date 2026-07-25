@@ -5,8 +5,8 @@ import {
   saveAccount,
   clearAccount,
   DEFAULT_BASE_URL,
-} from '@qwen-code/channel-weixin/accounts';
-import { startLogin, waitForLogin } from '@qwen-code/channel-weixin/login';
+} from '@lal/channel-weixin/accounts';
+import { startLogin, waitForLogin } from '@lal/channel-weixin/login';
 
 export const configureWeixinCommand: CommandModule<
   object,

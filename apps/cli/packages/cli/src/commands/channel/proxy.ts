@@ -1,5 +1,5 @@
 import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
-import { normalizeProxyUrl } from '@qwen-code/qwen-code-core';
+import { normalizeProxyUrl } from '@lal/core';
 
 /**
  * Resolve and apply proxy settings for channel service processes.

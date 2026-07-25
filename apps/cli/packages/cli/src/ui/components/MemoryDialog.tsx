@@ -17,7 +17,7 @@ import {
   getAutoMemoryProjectStateDir,
   getUserAutoMemoryRoot,
   AUTO_MEMORY_INDEX_FILENAME,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { useConfig } from '../contexts/ConfigContext.js';
 import { useSettings } from '../contexts/SettingsContext.js';
 import { SettingScope } from '../../config/settings.js';

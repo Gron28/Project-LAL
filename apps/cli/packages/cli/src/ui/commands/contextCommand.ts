@@ -27,7 +27,7 @@ import {
   buildSkillLlmContent,
   computeThresholds,
   type CompactionThresholds,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { t } from '../../i18n/index.js';
 
 /**
@@ -100,7 +100,7 @@ function parseMemoryFiles(memoryContent: string): ContextMemoryDetail[] {
 }
 
 export async function collectContextData(
-  config: import('@qwen-code/qwen-code-core').Config,
+  config: import('@lal/core').Config,
   showDetails: boolean,
 ): Promise<HistoryItemContextUsage> {
   const modelName = config.getModel() || 'unknown';

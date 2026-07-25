@@ -5,7 +5,7 @@
  */
 
 import process from 'node:process';
-import { createDebugLogger } from '@qwen-code/qwen-code-core';
+import { createDebugLogger } from '@lal/core';
 import type {
   RecordedVoiceAudio,
   VoiceRecorder,

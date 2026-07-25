@@ -15,7 +15,7 @@ import {
   type DeviceTokenPendingData,
   type IQwenOAuth2Client,
   type QwenCredentials,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { writeStderrLine } from '../../utils/stdioHelpers.js';
 import {
   brandSecret,

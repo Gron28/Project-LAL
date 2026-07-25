@@ -12,7 +12,7 @@ export default defineConfig({
       // test run (e.g. `cd packages/channels/dingtalk && vitest`) doesn't depend
       // on a prior `tsc --build` of base — its dist may be absent or stale during
       // development. Mirrors packages/cli/vitest.config.ts.
-      '@qwen-code/channel-base': path.resolve(
+      '@lal/channel-base': path.resolve(
         __dirname,
         '../base/src/index.ts',
       ),

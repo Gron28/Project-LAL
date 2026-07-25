@@ -11,7 +11,7 @@ import { writeStdoutLine, writeStderrLine } from '../../utils/stdioHelpers.js';
 import type {
   MCPServerConfig,
   MCPOAuthConfig,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 async function addMcpServer(
   name: string,

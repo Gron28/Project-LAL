@@ -20,7 +20,7 @@ import {
   type RebuiltSessionArtifactSnapshot,
   type SessionArtifactEventRecordPayload,
   type SessionArtifactSnapshotRecordPayload,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 vi.mock('@xterm/headless', () => ({
   Terminal: class Terminal {},

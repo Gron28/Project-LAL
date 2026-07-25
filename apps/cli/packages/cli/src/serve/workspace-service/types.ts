@@ -23,7 +23,7 @@ import type {
   ServeWorkspaceEnvStatus,
   ServeWorkspacePreflightStatus,
   DaemonStatusProvider,
-} from '@qwen-code/acp-bridge';
+} from '@lal/acp-bridge';
 import type { WorkspaceTrustStatus } from '../../config/trustedFolders.js';
 import type {
   PermissionRuleType,
