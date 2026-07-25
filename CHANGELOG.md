@@ -1,5 +1,66 @@
 # Changelog / engineering log
 
+## 2026-07-24 (evening) — Tier 2 and Tier 4: nine field-reported defects, released as lal.31
+
+Driven by the operator's field report from Windows: "tool calling in general"
+failing, web_search and web_fetch unusable, research unable to run, file writes
+and shell flaky. Measurement was handed back to the operator; no benchmark was
+run in this batch.
+
+**web_fetch ran a full generation per fetch.** Every page went through
+`runSideQuery` pinned to the MAIN model before returning, so a research pass paid
+for N extra page-sized generations serialised behind the GPU lease the outer turn
+already held — and any model hiccup turned an already-successful fetch into
+WEB_FETCH_FALLBACK_FAILED. Page text now returns directly, like read_file, capped
+at 24k chars with explicit truncation.
+
+**Research forced a broken provider three more times.** The coverage gate counts
+only successful calls, so a failing web_search pinned coverage at zero and the
+controller spent every nudge — each a full model turn — demanding more searching.
+`researchProviderLooksBroken` now separates "hasn't searched enough" from
+"searching doesn't work here" (2+ attempts, 0 successes) and stops with an honest
+infrastructure report. PLAN 4.1 specified this row and it had never been built.
+
+**The write stash was written and never read.** Truncated writes reported "saved
+… instead of being discarded" and no code path ever opened the file, so the next
+turn regenerated everything. Salvaged content is now staged to
+`<target>.lal-partial` with resume instructions naming the last COMPLETE line;
+the target file is never touched.
+
+**Windows got cmd.exe forever.** getShellConfiguration only chose Git Bash when
+MSYSTEM was set, which never happens launching from CMD — so the operator, who
+uses CMD, always got a shell that cannot chain with `;`, cannot take newlines,
+and whose single quotes do not quote, all of which the model keeps attempting. A
+verified bash.exe is now preferred; LAL_SHELL=cmd|powershell|bash overrides.
+
+**The CLI reported a version it was not running.** CLI_CLIENT_VERSION was a
+hardcoded '0.1.0-lal.28' while package.json was at lal.30. Every host device
+record — the only remote diagnostic when Windows breaks — named the wrong build,
+and hours were spent reasoning from it. Now injected from package.json at bundle
+time.
+
+**Gateway allowlist drift is now a failing check**
+(scripts/check_tool_allowlist_drift.mjs, wired into web's `npm test`). It caught
+`screenshot` on first run: allowlisted, matched no registered tool, and read as
+though screen capture were available. Real capability is get_window_state.
+
+**web_search now logs every outcome** to the service journal (ok /
+provider-refused / threw / unauthorized, with caller, client version, elapsed
+ms). There was previously no way to tell whether a client search even arrived,
+which made two separate diagnoses guesses.
+
+Two process corrections worth recording. `project-lal.service` was reported dead
+with an orphan serving 8770; it is a `--user` unit and the process was its own
+MainPID — `systemctl`/`journalctl` had been queried in the system scope, and the
+absence was reported as a defect. Twice. Absence of evidence from one query is
+not evidence.
+
+Not attempted, and stated as such: one execution kernel, revision-aware editing,
+compaction-surviving state, runtime-decided completion (each multi-session), CLI
+text selection, bounded subagent concurrency. The "research opens real Firefox"
+item does not reproduce — graders.ts already runs headless and nothing in the
+research path launches a browser.
+
 ## 2026-07-24 (later still) — Three fixes, handed back for measurement
 
 No benchmark run: after the previous entry showed six runs could not resolve the
