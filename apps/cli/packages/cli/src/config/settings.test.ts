@@ -95,6 +95,10 @@ vi.mock('@lal/core', async (importOriginal) => {
 // resolved from `~/.env` after module load.
 const USER_SETTINGS_PATH = getUserSettingsPath();
 
+// The user-level config directory. QWEN_DIR is the PROJECT-local name
+// (<repo>/.qwen) and no longer tracks the home directory, which resolves to
+// .lal for a fresh install — which every mocked home in this file is.
+const USER_HOME_DIR = '.lal';
 const MOCK_WORKSPACE_DIR = '/mock/workspace';
 const RESOLVED_MOCK_WORKSPACE_DIR = pathActual.resolve(MOCK_WORKSPACE_DIR);
 // Use the (mocked) SETTINGS_DIRECTORY_NAME for consistency
@@ -248,7 +252,7 @@ describe('Settings Loading and Merging', () => {
         vi.mocked(osActual.homedir).mockReturnValue(homeDir);
         const homeSettingsPath = pathActual.join(
           homeDir,
-          SETTINGS_DIRECTORY_NAME,
+          USER_HOME_DIR,
           'settings.json',
         );
         (mockFsExistsSync as Mock).mockImplementation(
@@ -3761,7 +3765,7 @@ describe('Settings Loading and Merging', () => {
         .spyOn(process, 'cwd')
         .mockReturnValue(MOCK_WORKSPACE_DIR);
       const projectEnvPath = path.join(MOCK_WORKSPACE_DIR, '.env');
-      const userQwenEnvPath = path.join('/mock/home/user', QWEN_DIR, '.env');
+      const userQwenEnvPath = path.join('/mock/home/user', USER_HOME_DIR, '.env');
 
       vi.mocked(isWorkspaceTrusted).mockReturnValue({
         isTrusted: true,
@@ -3796,7 +3800,7 @@ describe('Settings Loading and Merging', () => {
         .spyOn(process, 'cwd')
         .mockReturnValue(MOCK_WORKSPACE_DIR);
       const projectEnvPath = path.join(MOCK_WORKSPACE_DIR, '.env');
-      const userQwenEnvPath = path.join('/mock/home/user', QWEN_DIR, '.env');
+      const userQwenEnvPath = path.join('/mock/home/user', USER_HOME_DIR, '.env');
 
       vi.mocked(isWorkspaceTrusted).mockReturnValue({
         isTrusted: true,
@@ -3832,7 +3836,7 @@ describe('Settings Loading and Merging', () => {
         .spyOn(process, 'cwd')
         .mockReturnValue(MOCK_WORKSPACE_DIR);
       const projectEnvPath = path.join(MOCK_WORKSPACE_DIR, '.env');
-      const userQwenEnvPath = path.join('/mock/home/user', QWEN_DIR, '.env');
+      const userQwenEnvPath = path.join('/mock/home/user', USER_HOME_DIR, '.env');
 
       vi.mocked(isWorkspaceTrusted).mockReturnValue({
         isTrusted: false,
@@ -3871,7 +3875,7 @@ describe('Settings Loading and Merging', () => {
         .mockReturnValue(path.join(nestedWorkspaceDir, 'nested'));
       const firstWorkspaceEnvPath = path.join(nestedWorkspaceDir, '.env');
       const parentWorkspaceEnvPath = path.join(MOCK_WORKSPACE_DIR, '.env');
-      const userQwenEnvPath = path.join('/mock/home/user', QWEN_DIR, '.env');
+      const userQwenEnvPath = path.join('/mock/home/user', USER_HOME_DIR, '.env');
 
       vi.mocked(isWorkspaceTrusted).mockReturnValue({
         isTrusted: true,
@@ -3917,7 +3921,7 @@ describe('Settings Loading and Merging', () => {
         .spyOn(process, 'cwd')
         .mockReturnValue(MOCK_WORKSPACE_DIR);
       const projectEnvPath = path.join(MOCK_WORKSPACE_DIR, '.env');
-      const userQwenEnvPath = path.join('/mock/home/user', QWEN_DIR, '.env');
+      const userQwenEnvPath = path.join('/mock/home/user', USER_HOME_DIR, '.env');
 
       vi.mocked(isWorkspaceTrusted).mockReturnValue({
         isTrusted: true,
@@ -4439,7 +4443,7 @@ describe('Settings Loading and Merging', () => {
         const cwdSpy = vi
           .spyOn(process, 'cwd')
           .mockReturnValue('/mock/home/user');
-        const userQwenEnvPath = path.join('/mock/home/user', QWEN_DIR, '.env');
+        const userQwenEnvPath = path.join('/mock/home/user', USER_HOME_DIR, '.env');
 
         vi.mocked(isWorkspaceTrusted).mockReturnValue({
           isTrusted: true,
@@ -4549,7 +4553,7 @@ describe('Settings Loading and Merging', () => {
         const cwdSpy = vi
           .spyOn(process, 'cwd')
           .mockReturnValue(MOCK_WORKSPACE_DIR);
-        const userQwenEnvPath = path.join('/mock/home/user', QWEN_DIR, '.env');
+        const userQwenEnvPath = path.join('/mock/home/user', USER_HOME_DIR, '.env');
         const customSettingsPath = path.join(
           '/tmp/from-user-env',
           'settings.json',
@@ -4585,7 +4589,7 @@ describe('Settings Loading and Merging', () => {
         process.env['QWEN_HOME'] = customHome;
         const legacySettings = path.join(
           '/mock/home/user',
-          QWEN_DIR,
+          USER_HOME_DIR,
           'settings.json',
         );
         // Active QWEN_HOME has nothing yet; legacy ~/.qwen has settings.json.
@@ -4611,7 +4615,7 @@ describe('Settings Loading and Merging', () => {
         );
         expect(warningMatch).toBeDefined();
         expect(warningMatch).toContain(customHome);
-        expect(warningMatch).toContain(path.join('/mock/home/user', QWEN_DIR));
+        expect(warningMatch).toContain(path.join('/mock/home/user', USER_HOME_DIR));
       });
 
       it('does not warn when QWEN_HOME points to a directory with settings.json', () => {
@@ -4640,7 +4644,7 @@ describe('Settings Loading and Merging', () => {
         delete process.env['QWEN_HOME'];
         const legacySettings = path.join(
           '/mock/home/user',
-          QWEN_DIR,
+          USER_HOME_DIR,
           'settings.json',
         );
 
@@ -4705,7 +4709,9 @@ describe('Settings Loading and Merging', () => {
           .spyOn(process, 'cwd')
           .mockReturnValue('/mock/home/user');
         const customHome = '/tmp/qwen-home-fresh-fallback';
-        const userQwenEnvPath = path.join('/mock/home/user', QWEN_DIR, '.env');
+        // Legacy really means .qwen here — this test is about falling back to
+        // the pre-rename home.
+        const userQwenEnvPath = path.join('/mock/home/user', '.qwen', '.env');
         const customSettingsPath = path.join(customHome, 'settings.json');
 
         vi.mocked(isWorkspaceTrusted).mockReturnValue({
@@ -4753,7 +4759,7 @@ describe('Settings Loading and Merging', () => {
       delete process.env['PROJECT_ONLY_VAR'];
       const projectEnvPath = path.resolve(MOCK_WORKSPACE_DIR, '.env');
       const userQwenEnvPath = path.normalize(
-        path.join('/mock/home/user', QWEN_DIR, '.env'),
+        path.join('/mock/home/user', USER_HOME_DIR, '.env'),
       );
       const envPaths = new Set([projectEnvPath, userQwenEnvPath]);
 
@@ -4790,7 +4796,7 @@ describe('Settings Loading and Merging', () => {
       delete process.env['OPENCODE_GO_API_KEY'];
       const projectEnvPath = path.resolve(MOCK_WORKSPACE_DIR, '.env');
       const userQwenEnvPath = path.normalize(
-        path.join('/mock/home/user', QWEN_DIR, '.env'),
+        path.join('/mock/home/user', USER_HOME_DIR, '.env'),
       );
       const envPaths = new Set([projectEnvPath, userQwenEnvPath]);
 

@@ -1783,7 +1783,13 @@ describe('Utility Functions', () => {
       const os = await import('os');
       const path = await import('path');
 
-      const expectedPath = path.join(os.homedir(), '.qwen', 'oauth_creds.json');
+      // Follows the resolved config home rather than a hardcoded name; on a
+      // machine with only ~/.qwen present it is still .qwen.
+      const { Storage } = await import('../config/storage.js');
+      const expectedPath = path.join(
+        Storage.getGlobalQwenDir(),
+        'oauth_creds.json',
+      );
 
       // Since this is a private function, we test it indirectly through clearQwenCredentials
       const { promises: fs } = await import('node:fs');

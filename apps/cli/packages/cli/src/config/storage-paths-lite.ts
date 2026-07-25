@@ -4,11 +4,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-// Keep this literal in sync with core's QWEN_DIR. This lite module must not
-// import @lal/core because it runs before serve listener ready.
+// This lite module must not import @lal/core (it runs before the serve
+// listener is ready), so the home-directory rule in Storage.getGlobalQwenDir()
+// is duplicated below. Keep the two in sync: if the fast path and the normal
+// path disagree about where settings live, a daemon started one way reads a
+// different config than the same daemon started the other way.
+export const LAL_HOME_DIR_NAME = '.lal';
+export const LEGACY_HOME_DIR_NAME = '.qwen';
+/** The PROJECT-local config dir (<repo>/.qwen) — not the home directory. */
 export const SETTINGS_DIRECTORY_NAME = '.qwen';
 
 export function resolveConfigPathLite(dir: string, cwd?: string): string {
@@ -34,15 +41,22 @@ export function resolveConfigPathLite(dir: string, cwd?: string): string {
 }
 
 export function getGlobalQwenDirLite(): string {
-  const envDir = process.env['QWEN_HOME'];
+  const envDir = process.env['LAL_HOME'] ?? process.env['QWEN_HOME'];
   if (envDir) {
     return resolveConfigPathLite(envDir);
   }
   const homeDir = os.homedir();
   if (!homeDir) {
-    return path.join(os.tmpdir(), SETTINGS_DIRECTORY_NAME);
+    return path.join(os.tmpdir(), LAL_HOME_DIR_NAME);
   }
-  return path.join(homeDir, SETTINGS_DIRECTORY_NAME);
+  // Mirror of Storage.resolveHomeDirName: .lal for a fresh install, .qwen when
+  // that is the only one already on disk, .lal when both exist.
+  if (!fs.existsSync(path.join(homeDir, LAL_HOME_DIR_NAME))) {
+    if (fs.existsSync(path.join(homeDir, LEGACY_HOME_DIR_NAME))) {
+      return path.join(homeDir, LEGACY_HOME_DIR_NAME);
+    }
+  }
+  return path.join(homeDir, LAL_HOME_DIR_NAME);
 }
 
 export function getSystemSettingsPath(): string {

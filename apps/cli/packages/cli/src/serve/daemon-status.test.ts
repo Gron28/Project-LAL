@@ -21,7 +21,6 @@ import {
   type BuildDaemonStatusOptions,
   type DaemonMetricsBucket,
 } from './daemon-status.js';
-import type { ChannelWorkerSnapshot } from './channel-worker-supervisor.js';
 import type { RateLimiterInstance, RateLimitTier } from './rate-limit.js';
 import type { DaemonWorkspaceService } from './workspace-service/index.js';
 
@@ -252,236 +251,6 @@ describe('buildDaemonStatusResponse', () => {
     // older clients that don't expect it.
     const without = await buildDaemonStatusResponse('summary', base);
     expect(without.runtime.metrics).toBeUndefined();
-  });
-
-  it('reports permanently failed channel worker snapshots as errors', async () => {
-    const response = await buildDaemonStatusResponse(
-      'summary',
-      makeOptions({
-        channelWorkerSnapshot: {
-          enabled: true,
-          state: 'failed',
-          channels: ['telegram'],
-          pid: 1234,
-          error: 'ipc failed',
-          restartCount: 2,
-          lastExitAt: '2026-07-01T01:00:00.000Z',
-          lastRestartAt: '2026-07-01T01:00:05.000Z',
-          lastHeartbeatAt: '2026-07-01T00:59:50.000Z',
-        },
-      }),
-    );
-
-    expect(response).toMatchObject({
-      status: 'error',
-      issues: expect.arrayContaining([
-        expect.objectContaining({
-          code: 'channel_worker_exited',
-          severity: 'error',
-          message:
-            'Channel worker is failed (pid=1234, restarts=2, lastExitAt=2026-07-01T01:00:00.000Z, lastRestartAt=2026-07-01T01:00:05.000Z, lastHeartbeatAt=2026-07-01T00:59:50.000Z): ipc failed.',
-          section: 'runtime.channelWorker',
-        }),
-      ]),
-      runtime: {
-        channelWorker: {
-          enabled: true,
-          state: 'failed',
-          channels: ['telegram'],
-          pid: 1234,
-          error: 'ipc failed',
-          restartCount: 2,
-          lastExitAt: '2026-07-01T01:00:00.000Z',
-          lastRestartAt: '2026-07-01T01:00:05.000Z',
-          lastHeartbeatAt: '2026-07-01T00:59:50.000Z',
-        },
-      },
-    });
-  });
-
-  it('reports and diagnoses non-primary channel workers', async () => {
-    const options = makeOptions({
-      channelWorkerSnapshot: {
-        enabled: false,
-        state: 'disabled',
-        channels: [],
-      },
-    });
-    options.workspaceRegistry = {
-      list: () => [
-        {
-          workspaceId: 'primary',
-          workspaceCwd: BASE_WORKSPACE,
-          primary: true,
-          trusted: true,
-          bridge: options.bridge,
-        },
-        {
-          workspaceId: 'secondary',
-          workspaceCwd: '/work/secondary',
-          primary: false,
-          trusted: true,
-          bridge: options.bridge,
-        },
-      ],
-    } as unknown as BuildDaemonStatusOptions['workspaceRegistry'];
-    options.getChannelWorkerSnapshots = () => [
-      {
-        enabled: true,
-        state: 'failed',
-        channels: ['telegram'],
-        error: 'secondary failed',
-        workspaceId: 'secondary',
-        workspaceCwd: '/work/secondary',
-        primary: false,
-      },
-    ];
-
-    const response = await buildDaemonStatusResponse('summary', options);
-
-    expect(response.runtime.channelWorkers).toEqual(
-      options.getChannelWorkerSnapshots(),
-    );
-    expect(response).toMatchObject({
-      status: 'error',
-      issues: expect.arrayContaining([
-        expect.objectContaining({
-          code: 'channel_worker_exited',
-          severity: 'error',
-          section: 'runtime.channelWorkers',
-          message: expect.stringContaining('/work/secondary'),
-        }),
-      ]),
-    });
-  });
-
-  it('omits channelWorkers for single-workspace and empty multi-workspace snapshots', async () => {
-    const single = makeOptions();
-    single.getChannelWorkerSnapshots = () => [
-      {
-        enabled: true,
-        state: 'running',
-        channels: ['telegram'],
-        workspaceId: 'primary',
-        workspaceCwd: BASE_WORKSPACE,
-        primary: true,
-      },
-    ];
-    expect(
-      (await buildDaemonStatusResponse('summary', single)).runtime
-        .channelWorkers,
-    ).toBeUndefined();
-
-    const multi = makeOptions();
-    multi.workspaceRegistry = {
-      list: () => [{ bridge: multi.bridge }, { bridge: multi.bridge }],
-    } as unknown as BuildDaemonStatusOptions['workspaceRegistry'];
-    multi.getChannelWorkerSnapshots = () => [];
-    expect(
-      (await buildDaemonStatusResponse('summary', multi)).runtime
-        .channelWorkers,
-    ).toBeUndefined();
-  });
-
-  it('warns for failed channel worker snapshots that still have a scheduled restart', async () => {
-    const response = await buildDaemonStatusResponse(
-      'summary',
-      makeOptions({
-        channelWorkerSnapshot: {
-          enabled: true,
-          state: 'failed',
-          channels: ['telegram'],
-          error: 'restart failed',
-          restartCount: 1,
-          nextRestartAt: '2026-07-01T01:01:00.000Z',
-        },
-      }),
-    );
-
-    expect(response).toMatchObject({
-      status: 'warning',
-      issues: expect.arrayContaining([
-        expect.objectContaining({
-          code: 'channel_worker_exited',
-          severity: 'warning',
-          message:
-            'Channel worker is failed (restarts=1, nextRestartAt=2026-07-01T01:01:00.000Z): restart failed.',
-          section: 'runtime.channelWorker',
-        }),
-      ]),
-    });
-  });
-
-  it('does not warn for a running channel worker that restarted successfully', async () => {
-    const response = await buildDaemonStatusResponse(
-      'summary',
-      makeOptions({
-        channelWorkerSnapshot: {
-          enabled: true,
-          state: 'running',
-          channels: ['telegram'],
-          requestedChannels: ['telegram'],
-          pid: 2345,
-          restartCount: 1,
-          lastRestartAt: '2026-07-01T01:00:00.000Z',
-          lastHeartbeatAt: '2026-07-01T01:00:10.000Z',
-        },
-      }),
-    );
-
-    expect(response).toMatchObject({
-      status: 'ok',
-      issues: [],
-      runtime: {
-        channelWorker: {
-          enabled: true,
-          state: 'running',
-          pid: 2345,
-          restartCount: 1,
-          lastRestartAt: '2026-07-01T01:00:00.000Z',
-          lastHeartbeatAt: '2026-07-01T01:00:10.000Z',
-        },
-      },
-    });
-  });
-
-  it('warns when a running channel worker only connected part of its requested channels', async () => {
-    const response = await buildDaemonStatusResponse(
-      'summary',
-      makeOptions({
-        channelWorkerSnapshot: {
-          enabled: true,
-          state: 'running',
-          channels: ['telegram'],
-          requestedChannels: ['telegram', 'feishu', 'dingtalk'],
-          pid: 1234,
-          restartCount: 1,
-          lastHeartbeatAt: '2026-07-01T01:00:10.000Z',
-        },
-      }),
-    );
-
-    expect(response).toMatchObject({
-      status: 'warning',
-      issues: expect.arrayContaining([
-        expect.objectContaining({
-          code: 'channel_worker_partial_connect',
-          severity: 'warning',
-          message:
-            'Channel worker connected 1/3 channel(s). Failed: feishu, dingtalk.',
-          section: 'runtime.channelWorker',
-        }),
-      ]),
-      runtime: {
-        channelWorker: {
-          enabled: true,
-          state: 'running',
-          channels: ['telegram'],
-          requestedChannels: ['telegram', 'feishu', 'dingtalk'],
-          pid: 1234,
-        },
-      },
-    });
   });
 
   it('rolls up statuses inside tools, hooks, and extensions', async () => {
@@ -949,7 +718,6 @@ interface MakeOptionsInput {
   toolsStatus?: unknown;
   hooksStatus?: unknown;
   extensionsStatus?: unknown;
-  channelWorkerSnapshot?: ChannelWorkerSnapshot;
   perfSnapshot?: {
     eventLoop: { meanMs: number; p50Ms: number; p99Ms: number; maxMs: number };
     promptQueueWait: {
@@ -1043,9 +811,6 @@ function makeOptions(input: MakeOptionsInput = {}): BuildDaemonStatusOptions {
     supportedDeviceFlowProviders: ['qwen-oauth'],
     deviceFlowRegistry: registry,
     sessionShellCommandEnabled: false,
-    ...(input.channelWorkerSnapshot
-      ? { getChannelWorkerSnapshot: () => input.channelWorkerSnapshot! }
-      : {}),
     ...(input.perfSnapshot
       ? { getPerfSnapshot: () => input.perfSnapshot! }
       : {}),

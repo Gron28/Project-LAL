@@ -1,3 +1,13 @@
+// Moved here from commands/channel/pidfile.ts when the messaging-channel
+// feature was removed (PLAN 7.2). It was never channel-specific: this is the
+// `qwen serve` daemon's own service pidfile, and the serve daemon and a2ui
+// route both depend on it.
+//
+// Its schema and on-disk path (<home>/channels/service.pid) are kept VERBATIM.
+// With channels gone `channels` is always empty and `owner` is always 'serve',
+// so the fields are inert — but renaming the path would orphan the pidfile of
+// an already-running daemon, which is a separate change from deleting a
+// feature. Left as a follow-up.
 import {
   existsSync,
   readFileSync,
