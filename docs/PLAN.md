@@ -18,49 +18,91 @@ history retains the originals.
 
 ## Start here — next session, in this order
 
-State as of 2026-07-25. Stages 0, 1, 3, 4, 5 and 6 are complete; Stage 2 is
-complete except 2.4; Stage 7 is partially applied. The working tree is clean and
-15,461 core tests pass.
+State as of 2026-07-25, end of day. Stages 0, 1, 3, 4, 5, 6 complete; Stage 2
+complete except **2.4**; Stage 7 partially applied. Working tree clean, 15,471
+core tests pass, nothing pushed.
 
-**One thing gates everything that remains: HTML-001 has not been run since the
-2026-07-24 six-run set.** Eight stages of behaviour changed after that
-measurement, and none of them has a number.
+**Everything remaining is gated on one number that does not exist yet.** Eight
+stages of behaviour changed after the last benchmark run (6/6, 2026-07-24), and
+none of it has been measured.
 
-1. **Run the benchmark.** `npm run bench:html001 -- --runs 10`. This is the whole
-   next step. It is now safe to interrupt — the report is written after every run
-   and carries `complete: false` until the loop finishes — and it writes to
-   `web/.data/html001/`, not to the benchmark UI's results directory (four run
-   reports landed there on 2026-07-24 and blanked the benchmark page).
+### 1. Run HTML-001. This is the whole first step.
 
-2. **Compare** against `web/.data/html001/html001-after-enforced-breaker-2026-07-24.json`
-   (6/6). Conditions 7 and 8 are now measured, not `null`: the trace carries
-   `interruptedWrites`, `resumedFromDraft` and `discardedDrafts`.
+```bash
+export LAL_API_KEY=$(./start.sh --show-cli-token | tail -1)
+npm run bench:html001 -- --runs 10
+```
 
-3. **Then, and only then, Stage 7's deletions.** They are gated on 9/10 for the
-   stated reason — deleting code you depend on is only safe once the benchmark can
-   prove you did not break it.
+Safe to interrupt now: the report is rewritten after every run and carries
+`complete: false` until the loop ends. Output goes to `web/.data/html001/` —
+**never** `web/.data/bench/`, which is the benchmark UI's results directory (four
+reports written there on 2026-07-24 blanked the /benchmark page).
 
-4. **2.4, the execution kernel, is the one stage not attempted.** It is a genuine
-   collapse of four parallel implementations (`web/src/lib/tools.ts` 495 LOC,
-   `agent-tools.ts` 580, `toolloop.ts` 672, plus the CLI's own), not an
-   afternoon's refactor, and doing it blind — without a current HTML-001 number —
-   would be the single most dangerous change available. Do it after the bar is
-   met, in reviewable slices, or not at all.
+Compare against `web/.data/html001/html001-after-enforced-breaker-2026-07-24.json`
+(6/6). Conditions 7 and 8 are now real measurements: the record carries
+`interruptedWrites`, `resumedFromDraft`, `discardedDrafts`.
 
-### What landed 2026-07-25, all unmeasured against HTML-001
+**The bar is 9 of 10 on Windows, unattended.** Until it is recorded in
+`CHANGELOG.md`, Stage 7's deletions and Stage 8 do not begin.
 
-| Stage | Change | Evidence |
-|---|---|---|
-| — | The benchmark page was blanked by harness output in `web/.data/bench/`; `listBench` now validates shape and names what it skips. `/api/bench` 1.27 MB → 40 KB. | deployed, verified 200 |
-| 3.1 | The write stash is enforced, not advertised: a resume is verified against the staged draft, a smaller restart is refused once, a regeneration is labelled. | 9 tests |
-| 4.2 | Research completes on evidence (breadth, independent origins, marginal return) instead of a 6-search/4-source quota; citations must name origins actually opened; "stop" outranks the gate. | 28 tests |
-| 5 | The read cache is re-armed for files the attachment block re-embedded in full — the reported "forgot the file was already read". Staged drafts survive compaction. | 12 tests |
-| 6 | Acceptance criteria registry; a completion claim is validated against artifacts on disk and repaired, bounded at 2 attempts, honest on give-up. | 21 tests |
-| 2.2 | One registry in `packages/protocol` for tool identity, imported by the gateway. `sync-protocol.mjs` + a doctor check kill the stale-copy failure. | drift checker, deploy |
-| 2.5 | `ModelLease` bounds subagent concurrency to `LAL_MAX_CONCURRENT_AGENTS` (default 1) with an announced queue; research redirected off the real-window browser to headless fetch. | 10 tests |
-| 3.3 | Whitespace-drifted anchors match; a patch that introduces a defect the file did not have is refused; `replace_all` blast radius bounded. | 18 tests |
-| 7.2 | `vitest run` at `apps/cli` root was broken by a project pointing at an absent directory; 20 dead npm scripts removed. | root suite runs |
-| 7.4 | Onboarding for a fresh clone on either machine; portable vs hardware-specific stated explicitly. | doctor on a simulated clone |
+### 2. Stage 7 — de-brand and delete (after the bar)
+
+The two big mechanical jobs, in this order, each verified by `npm test` +
+`node esbuild.config.js` + the full vitest suite after every batch:
+
+- **7.3 name ownership.** ~3,000 files contain `qwen`; 364 CLI UI files alone.
+  Most user-visible `Qwen` strings belong to the inherited **cloud OAuth
+  surface**, so the fix there is 7.2 deletion, not renaming. Do the package
+  rename (`@qwen-code/qwen-code-core` → a LAL name) as one atomic batch with the
+  build as the gate; it is mechanical but touches nearly every file, so it needs a
+  session where the whole thing fits in context.
+- **7.1/7.2** apply the Stage 0.2 census and remove cloud providers, enterprise
+  channels, the desktop/mobile surface, SDKs, the computer-use driver, and the
+  `lab-agent` path.
+
+### 3. 2.4 — the execution kernel. The one stage never attempted.
+
+Read the three files before planning: they are **layers**, not copies
+(`tools.ts` defs+executor, `agent-tools.ts` extended executor, `toolloop.ts` the
+loop). The name-agreement duplication is already guarded
+(`scripts/check_prompt_tool_visibility.mjs`, 26/26 in agreement). What remains is
+collapsing the web executor/loop and the CLI's `coreToolScheduler` into one
+component — and note the shared-package constraints in
+`packages/protocol` before designing it (see "Traps" below).
+
+### What landed 2026-07-25 — all unmeasured against HTML-001
+
+| Stage | Change |
+|---|---|
+| — | benchmark page fixed (`listBench` validates shape); `/api/bench` 1.27 MB → 40 KB |
+| 3.1 | write stash enforced: resume verified, smaller restart refused once, regeneration labelled |
+| 4.2 | research completes on evidence (breadth / independent origins / plateau); citations must name opened origins; "stop" outranks the gate |
+| 5 | read cache re-armed for fully re-embedded files; staged drafts survive compaction |
+| 6 | acceptance-criteria registry; completion validated against artifacts on disk, bounded repair |
+| 2.2 | one tool registry in `packages/protocol`; `sync-protocol.mjs` + doctor check |
+| 2.5 | `ModelLease` bounds subagents to 1 with an announced queue; research forced headless |
+| 3.3 | whitespace-drifted anchors match; damaging patches refused; `replace_all` bounded |
+| 7.2 | `vitest run` at `apps/cli` root fixed; 20 dead npm scripts removed |
+| 7.4 | fresh-clone onboarding for either machine; `npm run doctor` |
+| 2.1 | **root cause found**: `web_search`/`web_fetch`/`send_message` were `shouldDefer:true` while prompts told the model to use them → the model passed tool names to the shell. All four 2.1 hypotheses now closed with evidence. |
+| 1.2 | runtime decisions (gate rejections, refusals, verdicts) now recorded and shown in `/export` as `[runtime] …` |
+| 3.2 | the five `ensureServing` clauses are instrumented; a restart names its own cause |
+
+### Traps that have already cost real time
+
+- `lal` runs from `apps/cli/dist`. Rebuild with `cd apps/cli && node esbuild.config.js`
+  — it now also copies `dist/vendor/` (ripgrep). Missing that is why "ripgrep not
+  available" appeared on every start.
+- Deploy the host with `scripts/rebuild-local-ai-lab.sh`. The unit is
+  **`systemctl --user`** scoped; system scope falsely reports it dead.
+- `packages/protocol` must be a **synced copy** in `web/node_modules`. A symlink
+  breaks `next build` (Turbopack cannot resolve outside the project root) and the
+  package cannot re-export across its own files. `scripts/sync-protocol.mjs` runs
+  from web's prebuild.
+- A `git push` ships nothing to Windows: version bump + `scripts/release-lal-cli.sh`
+  + redeploy. `./update-all.sh` does it all on Linux.
+- Whenever a prompt names a tool, check that tool's `shouldDefer`. The failure is
+  silent — the only symptom is a model that "uses the shell wrong".
 
 ### How to measure anything
 
