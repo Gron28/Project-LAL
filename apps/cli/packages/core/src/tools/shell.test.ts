@@ -6430,11 +6430,17 @@ describe('ShellTool', () => {
       process.env = { ...originalEnv };
     });
 
-    it('should return the windows description when on windows', async () => {
+    it('should return the windows cmd.exe description when on windows', async () => {
       vi.mocked(os.platform).mockReturnValue('win32');
       delete process.env['ComSpec'];
       delete process.env['MSYSTEM'];
       delete process.env['TERM'];
+      // Pin the shell. Windows now PREFERS Git Bash when a real bash.exe is
+      // installed (see shell-utils.ts), and this file auto-mocks `fs` so
+      // accessSync never throws and every bash.exe path appears to exist. This
+      // test is about the cmd.exe description text, not about which shell gets
+      // selected — shell-utils.test.ts owns that.
+      process.env['LAL_SHELL'] = 'cmd';
       const shellTool = new ShellTool(mockConfig);
       expect(shellTool.description).toMatchSnapshot();
       expect(shellTool.description).toContain(

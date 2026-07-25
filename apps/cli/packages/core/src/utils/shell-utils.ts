@@ -151,21 +151,6 @@ export function getShellConfiguration(): ShellConfiguration {
         shell: 'bash',
       };
     }
-    if (forced !== 'cmd' && forced !== 'powershell') {
-      // Prefer Git Bash on Windows when a real bash.exe is installed, even
-      // though MSYSTEM is unset — which is the normal case when `lal` is
-      // launched from cmd.exe. Requested by the operator 2026-07-24: the model
-      // handles POSIX tooling far better than cmd.exe's quoting and control
-      // flow, and cmd.exe cannot chain with `;` or use newlines at all, which
-      // the model keeps trying. Set LAL_SHELL=cmd to opt out.
-      //
-      // Deliberately gated on a verified executable: guessing 'bash' here would
-      // trade cmd.exe's awkwardness for a shell that does not exist.
-      const bashExe = searchForBashExe();
-      if (bashExe) {
-        return { executable: bashExe, argsPrefix: ['-c'], shell: 'bash' };
-      }
-    }
 
     const comSpec = process.env['ComSpec'] || 'cmd.exe';
     const executable = comSpec.toLowerCase();
@@ -182,6 +167,25 @@ export function getShellConfiguration(): ShellConfiguration {
         argsPrefix: ['-NoProfile', '-Command'],
         shell: 'powershell',
       };
+    }
+
+    // ComSpec is cmd.exe (the default) rather than an explicit PowerShell
+    // choice, so prefer Git Bash when a real bash.exe is installed — even
+    // though MSYSTEM is unset, which is the normal case when `lal` is launched
+    // from cmd.exe. Requested by the operator 2026-07-24: cmd.exe cannot chain
+    // with ';' or take newlines, and its single quotes do not quote, all of
+    // which the model keeps attempting.
+    //
+    // Deliberately below the PowerShell branch: a ComSpec pointing at
+    // powershell/pwsh is a deliberate choice by the operator and must not be
+    // overridden. Deliberately gated on a VERIFIED executable: guessing 'bash'
+    // would trade cmd.exe's awkwardness for a shell that does not exist.
+    // LAL_SHELL=cmd opts out.
+    if (forced !== 'cmd') {
+      const bashExe = searchForBashExe();
+      if (bashExe) {
+        return { executable: bashExe, argsPrefix: ['-c'], shell: 'bash' };
+      }
     }
 
     // Default to cmd.exe for anything else on Windows.

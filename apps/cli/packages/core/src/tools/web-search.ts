@@ -45,13 +45,53 @@ function gatewayOrigin(): string {
   return DEFAULT_GATEWAY_ORIGIN;
 }
 
+/**
+ * Make a value safe to put in an HTTP header.
+ *
+ * `fetch` header values must be ByteStrings — every code unit <= 255. Anything
+ * above that makes undici throw *before the request is sent*, which is a silent
+ * failure with no server-side trace at all.
+ *
+ * This is not hypothetical. Measured from a Windows session on 2026-07-25: every
+ * web_search failed with
+ *
+ *   Cannot convert argument to a ByteString because the character at index 0
+ *   has a value of 8745 which is greater than 255
+ *
+ * 8745 is U+2229 (INTERSECTION). It is byte 0xEF — the first byte of the UTF-8
+ * BOM — rendered through code page 437. PowerShell 5.1 writes UTF-8 WITH a BOM
+ * by default, so the installer's `~/.lal/device-name` and friends begin with
+ * EF BB BF; `lal.cmd` reads them with `for /f`, the BOM lands in
+ * LAL_DEVICE_NAME, and that goes straight into `x-lal-device-name` here. Result:
+ * web_search was dead on Windows for every query, the host logged nothing
+ * because nothing arrived, and the model — unable to search — fell back to
+ * guessing recipe URLs one at a time.
+ *
+ * Stripping the BOM alone would fix that one case. Restricting to Latin-1 fixes
+ * the whole class, including a device or host name with an accent in it, which is
+ * entirely legitimate and would break identically.
+ */
+function headerSafe(value: string): string {
+  return (
+    value
+      // Strip BOM / zero-width marks anywhere, not just at index 0.
+      .replace(/[\uFEFF\u200B-\u200D\u2060]/g, '')
+      // Drop anything a header value cannot carry: non-Latin-1, plus CR/LF and
+      // other control characters (header injection).
+      .replace(/[^\u0020-\u007E\u00A0-\u00FF]/g, '')
+      .trim()
+  );
+}
+
 function requestHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'content-type': 'application/json',
   };
+  // The token is sanitised too: a BOM on ~/.lal/.env would otherwise turn every
+  // search into an unexplained 401 instead of an unexplained throw.
   const token =
-    process.env['LAL_API_KEY']?.trim() ||
-    process.env['LAL_CLI_TOKEN']?.trim();
+    headerSafe(process.env['LAL_API_KEY'] ?? '') ||
+    headerSafe(process.env['LAL_CLI_TOKEN'] ?? '');
   if (token) headers['authorization'] = `Bearer ${token}`;
 
   const forwardedHeaders: Array<[string, string | undefined]> = [
@@ -61,7 +101,8 @@ function requestHeaders(): Record<string, string> {
     ['x-lal-client-version', process.env['LAL_CLIENT_VERSION']],
   ];
   for (const [name, value] of forwardedHeaders) {
-    if (value?.trim()) headers[name] = value.trim();
+    const safe = headerSafe(value ?? '');
+    if (safe) headers[name] = safe;
   }
   return headers;
 }

@@ -7,6 +7,10 @@ export const maxDuration = 3600;
 
 type Usage = { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown };
 type Logprob = { logprob?: unknown; token?: unknown; top_logprobs?: Array<{ token?: unknown; logprob?: unknown }> };
+// Tools from the computer-use driver reach the wire with this prefix; the
+// allowlist below is written in terms of the unprefixed verb.
+const COMPUTER_USE_PREFIX = "computer_use__";
+
 const LAL_TERMINAL_TOOLS = new Set([
   "read_file",
   "edit",
@@ -91,7 +95,18 @@ function compactTools(value: unknown, dropped?: string[]): unknown {
     const fn = entry.function;
     if (!fn || typeof fn !== "object") return tool;
     const functionDef = fn as Record<string, unknown>;
-    const name = typeof functionDef.name === "string" ? functionDef.name : "tool";
+    const rawName = typeof functionDef.name === "string" ? functionDef.name : "tool";
+    // The computer-use driver advertises its tools PREFIXED (computer_use__page,
+    // computer_use__launch_app, ...) while this allowlist named the bare verbs.
+    // So every browser/page tool tool_search loaded was dropped right here, and
+    // the model — told by system.md to "use tool_search to load the browser/page
+    // tools" — was left with a capability it could never actually call.
+    // Confirmed from a Windows session 2026-07-25. This is PLAN 2.1's fourth
+    // hypothesis: "tools loaded lazily through tool_search are dropped by the
+    // same filter when their schemas arrive, leaving the model to improvise."
+    const name = rawName.startsWith(COMPUTER_USE_PREFIX)
+      ? rawName.slice(COMPUTER_USE_PREFIX.length)
+      : rawName;
     // This is the product boundary, not merely a client preference: old
     // managed settings cannot quietly reintroduce agent teams, generic
     // clarification dialogs, MCP, or workflow tools into a small-model turn.
@@ -101,7 +116,7 @@ function compactTools(value: unknown, dropped?: string[]): unknown {
     // hypothesis for the Windows `'agent' is not recognized as a command`
     // report. The caller logs whatever lands in `dropped`.
     if (!LAL_TERMINAL_TOOLS.has(name)) {
-      dropped?.push(name);
+      dropped?.push(rawName);
       return [];
     }
     return {

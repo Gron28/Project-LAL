@@ -12,9 +12,22 @@ $PlatformFile = Join-Path $LalHome 'platform'
 $DeviceId = if (Test-Path $DeviceIdFile) { (Get-Content $DeviceIdFile -Raw).Trim() } else { [guid]::NewGuid().ToString('N') }
 $DeviceName = if (Test-Path $DeviceNameFile) { (Get-Content $DeviceNameFile -Raw).Trim() } else { $env:COMPUTERNAME }
 $Platform = "$([System.Environment]::OSVersion.VersionString)/$env:PROCESSOR_ARCHITECTURE"
+# [Text.Encoding]::UTF8 EMITS A BOM. Every file written with it below lands in
+# ~/.lal, gets read by lal.cmd's `for /f` into an environment variable, and the
+# BOM comes along. LAL_DEVICE_NAME then carries U+FEFF into the
+# `x-lal-device-name` HTTP header, where fetch rejects any code unit > 255 and
+# throws BEFORE sending the request:
+#   "Cannot convert argument to a ByteString because the character at index 0
+#    has a value of 8745"
+# (8745 = U+2229, byte 0xEF of the BOM rendered through code page 437.)
+# That killed web_search outright on Windows, silently, with nothing reaching the
+# host to log. Proof it was these exact writes: the host's device records showed
+# mojibake on `name` and `platform` — the two UTF8-written fields — while
+# `device-id`, written as ASCII, was clean. Diagnosed 2026-07-25.
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText($DeviceIdFile, "$DeviceId`r`n", [Text.Encoding]::ASCII)
-[IO.File]::WriteAllText($DeviceNameFile, "$DeviceName`r`n", [Text.Encoding]::UTF8)
-[IO.File]::WriteAllText($PlatformFile, "$Platform`r`n", [Text.Encoding]::UTF8)
+[IO.File]::WriteAllText($DeviceNameFile, "$DeviceName`r`n", $Utf8NoBom)
+[IO.File]::WriteAllText($PlatformFile, "$Platform`r`n", $Utf8NoBom)
 
 $Token = $env:LAL_TOKEN
 $EnvFile = Join-Path $LalHome '.env'
@@ -37,10 +50,10 @@ $SystemBasePromptPath = Join-Path $LalHome 'system.base.md'
 $SystemLocalPromptPath = Join-Path $LalHome 'system.local.md'
 Invoke-WebRequest -UseBasicParsing -Headers $Headers -OutFile $SystemBasePromptPath "$HostUrl/api/lal/prompt/terminal"
 if (-not (Test-Path $SystemLocalPromptPath)) {
-  [IO.File]::WriteAllText($SystemLocalPromptPath, '# Your local LAL prompt additions. This file is preserved by lal update.' + "`r`n", [Text.Encoding]::UTF8)
+  [IO.File]::WriteAllText($SystemLocalPromptPath, '# Your local LAL prompt additions. This file is preserved by lal update.' + "`r`n", $Utf8NoBom)
 }
 $SystemPrompt = (Get-Content -LiteralPath $SystemBasePromptPath -Raw) + "`r`n`r`n---`r`n`r`n# Owner additions (system.local.md)`r`n`r`n" + (Get-Content -LiteralPath $SystemLocalPromptPath -Raw)
-[IO.File]::WriteAllText($SystemPromptPath, $SystemPrompt, [Text.Encoding]::UTF8)
+[IO.File]::WriteAllText($SystemPromptPath, $SystemPrompt, $Utf8NoBom)
 
 $RuntimeFile = Join-Path $LalHome 'runtime-version'
 $InstalledRuntime = if (Test-Path $RuntimeFile) { (Get-Content $RuntimeFile -Raw).Trim() } else { '' }
@@ -117,7 +130,6 @@ Set-LalSettingProperty $CurrentSettings 'security' $ManagedSettings.security
 Set-LalSettingProperty $CurrentSettings 'model' $ManagedSettings.model
 Set-LalSettingProperty $CurrentSettings 'modelProviders' $ManagedSettings.modelProviders
 $MergedSettingsText = $CurrentSettings | ConvertTo-Json -Depth 100
-$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText($SettingsPath, $MergedSettingsText, $Utf8NoBom)
 
 $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')

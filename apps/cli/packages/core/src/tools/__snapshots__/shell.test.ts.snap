@@ -62,7 +62,7 @@ IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO N
 "
 `;
 
-exports[`ShellTool > getDescription > should return the windows description when on windows 1`] = `
+exports[`ShellTool > getDescription > should return the windows cmd.exe description when on windows 1`] = `
 "Executes a given shell command (as \`cmd.exe /d /s /c <command>\`) in a subprocess with optional timeout, ensuring proper handling and security measures.
 
 IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.

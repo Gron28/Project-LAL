@@ -201,6 +201,29 @@ class WebFetchToolInvocation extends BaseToolInvocation<
         `[WebFetchTool] Content length: ${textContent.length} characters`,
       );
 
+      // An empty body is a FAILURE, not an empty success. Observed 2026-07-25:
+      // food.com, reddit.com and youtube.com each returned HTTP 200 with no
+      // extractable text, and web_fetch reported that as a successful fetch with
+      // nothing in it. The model read the blank result as "the page had no
+      // answer", moved on, and counted it toward research coverage. A tool that
+      // returns nothing must say so.
+      if (!textContent.trim()) {
+        const emptyMessage =
+          `Fetched ${url} successfully (HTTP ${response.status}) but extracted no ` +
+          `readable text. The page is almost certainly JavaScript-rendered or ` +
+          `bot-blocked, so its content is not reachable this way. Treat this as a ` +
+          `FAILED source, not an empty one: do not cite it, and do not refetch it. ` +
+          `Try a different source.`;
+        return {
+          llmContent: `Error: ${emptyMessage}`,
+          returnDisplay: `No readable text at ${url}`,
+          error: {
+            message: emptyMessage,
+            type: ToolErrorType.WEB_FETCH_FALLBACK_FAILED,
+          },
+        };
+      }
+
       const truncated = textContent.length > DIRECT_CONTENT_MAX_CHARS;
       const body = truncated
         ? textContent.slice(0, DIRECT_CONTENT_MAX_CHARS)
