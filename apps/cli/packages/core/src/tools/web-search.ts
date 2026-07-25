@@ -211,7 +211,7 @@ export class WebSearchTool extends BaseDeclarativeTool<
       //
       // The prompt advertises these unconditionally, so the registry must too.
       // Two small schemas per turn is the entire cost.
-      false,
+      false, // shouldDefer
       false, // alwaysLoad
       'web search internet sources repositories github research',
     );

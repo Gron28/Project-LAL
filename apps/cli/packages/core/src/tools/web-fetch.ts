@@ -432,7 +432,7 @@ export class WebFetchTool extends BaseDeclarativeTool<
       // infrequent during research, and hiding it while the system prompt
       // advertises it is what drove the model to the shell. See the long note in
       // web-search.ts; both tools share one cause and must share the fix.
-      false,
+      false, // shouldDefer
       false, // alwaysLoad
       'web fetch url http download content',
     );

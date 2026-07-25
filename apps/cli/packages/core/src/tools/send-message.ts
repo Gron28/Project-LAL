@@ -303,7 +303,13 @@ export class SendMessageTool extends BaseDeclarativeTool<
       },
       true, // isOutputMarkdown
       false, // canUpdateOutput
-      true, // shouldDefer — sending messages is infrequent
+      // shouldDefer — WAS true, "sending messages is infrequent". For a teammate
+      // subagent it is the opposite: promptAddendum.ts instructs it "When done,
+      // call send_message(to: 'leader', ...)", so this is its final and mandatory
+      // action. Deferring it hid the one tool the agent was told it must use.
+      // Found by scripts/check_prompt_tool_visibility.mjs, 2026-07-25 — the same
+      // defect class as web_search/web_fetch, third instance.
+      false, // shouldDefer
       false, // alwaysLoad
       'send message task teammate team communicate notify',
     );
