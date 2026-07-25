@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Box, Static, type DOMElement, useBoxMetrics } from 'ink';
+import { Box, Static } from 'ink';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { HistoryItem, HistoryItemWithoutId } from '../types.js';
 import { isHistoryItemVisibleAfterRestore } from '../types.js';
@@ -83,12 +83,41 @@ function initialReplayCount(length: number): number {
 // stable completed items when unrelated UIState fields change during streaming.
 const VirtualHistoryItem = memo(HistoryItemDisplay);
 
+/**
+ * The hero banner as the FIRST ROW OF THE TRANSCRIPT, rather than a pinned box
+ * above it (PLAN 7.4: "fold the header into the scrolling chat area").
+ *
+ * It used to render inside `vpHeaderRef`, whose measured height was subtracted
+ * from the scroll container — so ~20 rows (11-line logo + info + tips) were a
+ * permanent tax on the chat, not scrollback. The operator saw "60% header, 20%
+ * chat, 20% footer".
+ *
+ * Collapsing the banner was tried first and was wrong twice over: it duplicated
+ * the project/model the footer already shows, and it threw the hero away instead
+ * of letting it scroll off. As a list row the full hero is preserved exactly, and
+ * it simply scrolls out of view as the conversation grows — which is what was
+ * asked for.
+ *
+ * ScrollableList is generic over its item type, so this needs no change to the
+ * list itself.
+ */
+const HEADER_ROW = { __appHeader: true } as const;
+type VirtualRow = HistoryItem | typeof HEADER_ROW;
+const isHeaderRow = (item: VirtualRow): item is typeof HEADER_ROW =>
+  '__appHeader' in item;
+
 // Pure functions with no closure deps — defined outside the component so they
 // are stable references and never trigger useMemo/useCallback invalidation.
-const virtualEstimatedItemHeight = () => 3;
-const virtualKeyExtractor = (item: HistoryItem) =>
-  item.id >= 0 ? `h-${item.id}` : `p-${-item.id - 1}`;
-const virtualIsStaticItem = (item: HistoryItem) => item.id > 0;
+// Indexed, not item-based (VirtualizedList's contract). Index 0 is the header row,
+// which is much taller than a message; a wrong estimate only affects scroll-offset
+// guessing before real measurement, but getting it roughly right avoids a visible
+// jump on first paint.
+const virtualEstimatedItemHeight = (index: number) => (index === 0 ? 16 : 3);
+const virtualKeyExtractor = (item: VirtualRow) =>
+  isHeaderRow(item) ? 'app-header' : item.id >= 0 ? `h-${item.id}` : `p-${-item.id - 1}`;
+// Static: never re-rendered on scroll. The banner never changes, so it qualifies.
+const virtualIsStaticItem = (item: VirtualRow) =>
+  isHeaderRow(item) ? true : item.id > 0;
 
 export const MainContent = () => {
   const { version } = useAppContext();
@@ -245,7 +274,8 @@ export const MainContent = () => {
   // Combine completed history + live pending items for the virtualized list.
   // Pending items get negative IDs (-(i+1)) so renderItem can tell them apart.
   const allVirtualItems = useMemo(
-    (): HistoryItem[] => [
+    (): VirtualRow[] => [
+      HEADER_ROW,
       ...visibleHistory,
       ...pendingHistoryItems.map((item, i) => ({ ...item, id: -(i + 1) })),
     ],
@@ -327,7 +357,16 @@ export const MainContent = () => {
   // Streaming-only state — including pending source-copy offsets — is read
   // from refs so callback identity is stable.
   const renderVirtualItem = useCallback(
-    ({ item }: { item: HistoryItem }) => {
+    ({ item }: { item: VirtualRow }) => {
+      if (isHeaderRow(item)) {
+        return (
+          <Box flexDirection="column">
+            <AppHeader version={version} />
+            <DebugModeNotification />
+            <Notifications />
+          </Box>
+        );
+      }
       const isPending = item.id < 0;
       const sourceCopyIndexOffsets = isPending
         ? pendingSourceCopyOffsetsRef.current[-item.id - 1]
@@ -374,32 +413,15 @@ export const MainContent = () => {
     ],
   );
 
-  const vpHeaderRef = useRef<DOMElement>(null);
-  const { height: vpHeaderHeight } = useBoxMetrics(vpHeaderRef);
-
   if (useVirtualScroll) {
+    // The header is a list row now, so the transcript gets the WHOLE height.
     const scrollContainerHeight = Math.max(
       0,
-      (uiState.availableTerminalHeight ?? 0) - vpHeaderHeight,
+      uiState.availableTerminalHeight ?? 0,
     );
 
     return (
       <>
-        <Box ref={vpHeaderRef} flexDirection="column" flexShrink={0}>
-          {/*
-            Pinned, not scrollback: vpHeaderHeight is subtracted from the
-            transcript height above. So the full banner collapses to one line as
-            soon as there is a conversation, instead of permanently costing ~20
-            rows. Legacy mode keeps the full banner because there it lives inside
-            <Static> and scrolls away by itself.
-          */}
-          <AppHeader
-            version={version}
-            compact={visibleHistoryItemsWithSourceCopyOffsets.length > 0}
-          />
-          <DebugModeNotification />
-          <Notifications />
-        </Box>
         <OverflowProvider>
           <ScrollableList
             hasFocus={!uiState.dialogsVisible}

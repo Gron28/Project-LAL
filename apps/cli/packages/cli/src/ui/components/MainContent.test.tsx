@@ -739,28 +739,31 @@ describe('<MainContent />', () => {
   });
 
   describe('virtual viewport path (ui.useTerminalBuffer)', () => {
-    it('collapses the pinned banner once there is history, and keeps it on startup', () => {
-      // In VP mode the header is pinned OUTSIDE the scroll area and its measured
-      // height is subtracted from the transcript, so ~20 rows of banner (11-line
-      // logo + info + tips) is a permanent tax on the chat, not scrollback. The
-      // operator saw it as "60% header, 20% chat, 20% footer".
-      appHeaderPropsSpy.mockClear();
+    it('puts the hero in the scroll list and gives the transcript the full height', () => {
+      // PLAN 7.4. The header used to render in a pinned box whose measured height
+      // was SUBTRACTED from the scroll container, so ~20 rows of banner were a
+      // permanent tax on the chat ("60% header, 20% chat, 20% footer"). As the
+      // first row of the transcript it scrolls away instead, and the list gets
+      // every available row.
+      scrollableListPropsSpy.mockClear();
       renderMainContent(
         createUIState({
           useTerminalBuffer: true,
+          availableTerminalHeight: 30,
           history: [{ id: 1, type: 'user', text: 'hello' }],
         }),
       );
-      expect(appHeaderPropsSpy).toHaveBeenCalled();
-      expect(appHeaderPropsSpy.mock.calls.at(-1)?.[0]?.compact).toBe(true);
 
-      // Startup screen keeps the full banner: the logo stays (PLAN 7.4), it just
-      // stops charging rent once there is a conversation to read.
-      appHeaderPropsSpy.mockClear();
-      renderMainContent(
-        createUIState({ useTerminalBuffer: true, history: [] }),
-      );
-      expect(appHeaderPropsSpy.mock.calls.at(-1)?.[0]?.compact).toBe(false);
+      const props = scrollableListPropsSpy.mock.calls.at(-1)?.[0];
+      expect(props).toBeTruthy();
+      // No rows withheld for a pinned header.
+      expect(props.containerHeight).toBe(30);
+      // The hero is row 0 of the transcript, ahead of the history.
+      expect(props.data.length).toBe(2);
+      expect('__appHeader' in props.data[0]).toBe(true);
+      expect(props.keyExtractor(props.data[0])).toBe('app-header');
+      // Static: the banner never changes, so it must not re-render on scroll.
+      expect(props.isStaticItem(props.data[0])).toBe(true);
     });
 
     it('renders ScrollableList and skips <Static> entirely when useTerminalBuffer is true', () => {
