@@ -3,8 +3,8 @@ import "./globals.css";
 import NavShell from "./nav-shell";
 
 export const metadata: Metadata = {
-  title: "Local AI Lab",
-  description: "Train, own, and run your own local models.",
+  title: "LAL",
+  description: "Measure and improve a local model on your own hardware.",
 };
 
 export default function RootLayout({

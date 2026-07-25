@@ -1,50 +1,58 @@
 @import "tailwindcss";
 
-/* Local AI Lab theme — assistant component variables mapped to the Fractal Lab palette
-   (dark terminal, green accent, mono). Keeps the copied assistant UI on-brand. */
+/* Local AI Lab theme. Tokens track the CLI's lal-dark theme so the terminal and the
+   web are visibly the same product: lime-green + yellow on green-tinted near-black,
+   near-square corners, mono display face. */
 :root {
   /* System stacks keep local/offline builds deterministic.  The application is
      an on-device tool, so a remote font request must never block a release. */
   --font-display: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --font-body: ui-sans-serif, system-ui, sans-serif;
   --font-data: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --bg: #05090c;
-  --surface-1: #0b1318;
-  --surface-2: #0f1a20;
-  --surface-3: #15242b;
+  /* Palette lifted from the CLI's lal-dark theme (apps/cli/.../themes/lal-dark.ts)
+     so the two surfaces read as one product. The web had drifted to blue-teal
+     (#3fa4b0 accent, #1e4a4c borders) while the terminal went lime-green and
+     yellow; opening both side by side looked like two different tools. Hex values
+     here are the CLI's, not approximations of them. */
+  --bg: #0b0f0c;            /* lal-dark Background */
+  --surface-1: #101613;
+  --surface-2: #161d18;
+  --surface-3: #1d261f;
   --panel: var(--surface-1);
 
-  --border: #1e4a4c;
-  --border-soft: #142f31;
-  --border-loud: #3fa4b0;
+  /* Green-tinted neutrals rather than teal, so borders stop competing with the
+     lime accent for attention. */
+  --border: #26312a;
+  --border-soft: #1a221d;
+  --border-loud: #a9ff73;   /* lal-dark AccentBlue slot — focused borders */
 
-  --text: #e8f6f5;
-  --text-1: #e8f6f5;
-  --text-2: #a2cdd0;
-  --text-3: #6b9497;
+  --text: #f2f7f1;          /* lal-dark Foreground */
+  --text-1: #f2f7f1;
+  --text-2: #b9c7b6;
+  --text-3: #7d8c79;
   --muted: var(--text-3);
 
-  /* Blue-leaning teal — shifted off the previous sage-green (#4fae87, hue ~154°)
-     toward hue ~189° so the whole app reads as blue-green rather than plain green.
-     accent-highlight is deliberately different: a small, rare yellow-green mark for
-     "this one thing is customized/notable," never the ambient UI color. */
-  --accent: #3fa4b0;
-  --accent-ai: #3fa4b0;
-  --accent-wa: #3fa4b0;
-  --accent-info: #6fa8ba;
-  --accent-warn: #ffc24d;
-  --accent-danger: #ff6b6b;
+  /* The CLI's two signature hues: lime-green for anything active or agentic,
+     yellow-lime for accents and literals. */
+  --accent: #a9ff73;
+  --accent-ai: #a9ff73;
+  --accent-wa: #a9ff73;
+  --accent-info: #a7ffe1;   /* AccentCyan */
+  --accent-warn: #ffe78a;   /* AccentYellow */
+  --accent-danger: #f26d78; /* AccentRed */
   /* Distinct from accent-ai on purpose: "good/passing/high score" is a semantic
      status, not the brand color — a benchmark near 100% should read as green
      regardless of what hue the UI chrome happens to be this week. */
-  --accent-success: #3fb96c;
-  --accent-highlight: #abc000;
+  --accent-success: #80ff9b; /* AccentGreen */
+  --accent-highlight: #fff28a; /* AccentPurple slot — yellow-lime */
 
-  --r-sm: 4px;
-  --r-md: 8px;
-  --r-lg: 12px;
+  /* Sharper corners. A terminal has square edges, and 12px radii on every panel
+     was the single loudest thing making the web app feel unrelated to the CLI. */
+  --r-sm: 2px;
+  --r-md: 3px;
+  --r-lg: 4px;
   --r-full: 999px;
-  --shadow-bubble: 0 1px 0 rgba(63,164,176,0.04);
+  --shadow-bubble: 0 1px 0 rgba(169,255,115,0.04);
 
   --mono: var(--font-data), "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 }

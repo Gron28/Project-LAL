@@ -167,6 +167,40 @@ const items = [
   { href: "/benchmark", label: "Bench", Icon: Gauge },
 ];
 
+
+/**
+ * The CLI's mark, at nav scale.
+ *
+ * apps/cli/.../AsciiArt.ts draws it in 11 lines of block glyphs: an apex, two legs
+ * descending, a wide crossbar through them, and small inverted legs below. That is
+ * too tall for a 12px rail, so this is the same geometry as strokes rather than a
+ * shrunken screenshot of the ASCII — it stays legible at 16px and shares the
+ * accent colour, which is what makes the two surfaces read as one product.
+ */
+function BrandMark({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="var(--accent-ai)"
+      strokeWidth="2"
+      strokeLinecap="square"
+      aria-hidden="true"
+    >
+      {/* apex + legs */}
+      <path d="M12 3 L4 17" />
+      <path d="M12 3 L20 17" />
+      {/* the crossbar, wider than the legs — the logo's defining stroke */}
+      <path d="M2 13 L22 13" />
+      {/* the small inverted legs beneath */}
+      <path d="M8 21 L11 17" />
+      <path d="M16 21 L13 17" />
+    </svg>
+  );
+}
+
 export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const p = usePathname();
   const active = (h: string) => (h === "/" ? p === "/" : p.startsWith(h));
@@ -181,8 +215,11 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
       {!collapsed && (
         <nav className="hidden md:flex md:flex-col fixed left-0 top-0 h-dvh w-12 lg:w-36 bg-[var(--surface-1)] border-r border-[var(--border)] z-50 py-2 gap-0.5">
           <div className="px-0 lg:px-3 mb-2 text-center lg:text-left">
-            <span className="text-[var(--text-2)] text-[11px] tracking-wide" style={{ fontFamily: "var(--font-display), monospace" }}>
-              <span className="hidden lg:inline">Local AI Lab</span><span className="lg:hidden">LAL</span>
+            <span className="flex items-center justify-center lg:justify-start gap-2 text-[var(--text-2)] text-[11px] tracking-wide" style={{ fontFamily: "var(--font-display), monospace" }}>
+              <BrandMark />
+              {/* "LAL" everywhere, matching the CLI and the `lal` command, instead of
+                  a longer name the terminal never uses. */}
+              <span className="hidden lg:inline">LAL</span>
             </span>
           </div>
           {items.map(({ href, label, Icon }) => (
