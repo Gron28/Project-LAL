@@ -34,6 +34,7 @@ import {
 } from './messages/StatusMessages.js';
 import { Box, Text } from 'ink';
 import { theme } from '../semantic-colors.js';
+import { messageTimeFromId } from '../utils/messageTime.js';
 import {
   MarkdownDisplay,
   type MarkdownSourceCopyIndexOffsets,
@@ -213,6 +214,11 @@ const HistoryItemDisplayComponent: React.FC<HistoryItemDisplayProps> = ({
   thoughtHeadId,
 }) => {
   const marginTop = getHistoryItemMarginTop(item);
+  // Submission time, rendered into the user prefix so it costs no extra row —
+  // the transcript is already short on vertical space (PLAN 7.4). Deliberately
+  // NOT behind a setting: the settings schema is typed and adding an entry is a
+  // separate change; this is one line to revert if unwanted.
+  const userTimeLabel = messageTimeFromId(item.id);
 
   const {
     allExpanded,
@@ -247,7 +253,10 @@ const HistoryItemDisplayComponent: React.FC<HistoryItemDisplayProps> = ({
     >
       {/* Render standard message types */}
       {itemForDisplay.type === 'user' && (
-        <UserMessage text={itemForDisplay.text} />
+        <UserMessage
+          text={itemForDisplay.text}
+          timeLabel={userTimeLabel}
+        />
       )}
       {itemForDisplay.type === 'notification' && (
         <InfoMessage text={itemForDisplay.text} />
