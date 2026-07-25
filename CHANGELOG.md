@@ -1,5 +1,107 @@
 # Changelog / engineering log
 
+## 2026-07-25 (evening) — six plan stages, and the instrument that gates them
+
+The plan's remaining functional stages landed in one pass. Every item below is
+unit-tested; **none has an HTML-001 number yet**, and that is now the single next
+action rather than a footnote.
+
+**The benchmark page was blanked by my own harness output.** `web/.data/bench/` is
+a plain folder of .json files that `listBench()` served wholesale, and four
+HTML-001 run reports were written there on 2026-07-24. They carry no `cats` /
+`score` / `model`, so the page threw at `result.cats[cat]`, and a render error in
+a client component blanks the entire route. Four files took out the measurement
+surface the plan gates every deletion behind. Fixed at three layers: `listBench`
+validates shape and logs what it skips; the harness writes to
+`web/.data/html001/`; and it now writes after every run instead of once at the
+end, so an interrupted ten-run set no longer loses everything (`complete: false`
+marks a partial). Separately the payload went 1,227,563 -> 40,053 bytes by
+fetching per-question evidence per suite on demand.
+
+**3.1 — the write stash is enforced, not advertised.** Staging existed; nothing
+checked it, so a regeneration was indistinguishable from a resume — which is why
+condition 7 was `null`. Three outcomes now, each on a fact: `resumed` (content
+begins with every complete staged line), `refuse` (a restart *smaller* than what
+is staged, once per path — if the model insists, progress beats purity), and
+`discarded` (a larger divergent rewrite, allowed but labelled). Deliberately not
+clever: no attempt to splice a continuation, because a wrong splice corrupts a
+file, which is worse than the regeneration it would save.
+
+**4.2 — research completes on evidence.** The 6-search/4-source quota was wrong in
+both directions: four pages from one site satisfied it, while a question settled by
+two strong sources was forced through four more model turns. Now breadth (3
+distinct searches), independence (2+ origins, subdomains folded together), and
+marginal return (a plateau of 3 fetches adding no new origin, never at zero
+sources — that is a broken provider, which is a different code path). Citations
+must name origins actually opened, because a URL from memory reads as verified.
+"Stop" outranks the gate, the nudge budget and the provider check — and can no
+longer arm the controller it was trying to switch off ("stop researching" contains
+the word "research").
+
+**5 — working state stops dying with the conversation.** The reported "after
+compaction the file-editing subsystem had forgotten the file was already read" was
+`client.ts` clearing the entire FileReadCache. Correct for files summarised away;
+wrong for the up-to-five files the attachment block re-embeds IN FULL, whose bytes
+are in the new prompt. Those entries are now re-armed from current stats, so a
+file that changed in between still demands a fresh read. Also: staged
+`.lal-partial` drafts are re-derived from disk into the attachment, because the
+resume pointer arrived as a turn error and compaction summarises turn errors — a
+compaction between an interruption and its retry deleted it.
+
+**6 — a completion claim is a proposal.** An acceptance-criteria registry, so
+adding a workflow means adding criteria rather than another branch in the turn
+loop. The web-artifact check is static by choice: a headless browser would mean a
+~200 MB download on a Windows clone to validate a 100-line page. It checks what is
+decidable from source — scripts parse (V8 via `new Function`, compiled not run),
+every looked-up id exists, no empty handler, no stub, no remote asset — and always
+prints what it did NOT check. The id check earns its keep: "complete but the
+buttons do nothing" is usually `getElementById('shuffle')` against markup spelling
+it `shuffleBtn`.
+
+**2.2 — one registry.** Tool identity moved to `packages/protocol`, imported by
+the gateway. Two build facts learned the hard way: a symlink breaks `next build`
+(Turbopack cannot resolve outside the project root) and the raw-TS package cannot
+re-export across its own files. So the copy stays and `sync-protocol.mjs` makes it
+deterministic, with a doctor check because a stale copy compiles fine and enforces
+an old allowlist.
+
+**2.5 — subagents are context isolation.** `ModelLease` admits
+`LAL_MAX_CONCURRENT_AGENTS` (default 1) and announces the queue; an invisible
+queue is indistinguishable from a hang. Reentrancy via AsyncLocalStorage, because
+at a limit of 1 a subagent spawning a subagent would wait for itself — a deadlock,
+not a slowdown. Research now redirects a browser launch at a URL to headless
+fetch.
+
+**3.3 — revision-aware editing.** Whitespace-drifted anchors match (unique only —
+an ambiguous drifted match edits a place nobody looked at). A patch that
+introduces a defect the file did not already have is refused, reusing the Stage 6
+criteria: a fact about two revisions, not a guess about intent. A pre-existing
+defect is not held against the edit, or repair becomes impossible. `replace_all`
+blast radius bounded — and the first cut was too strict, failing a legitimate
+existing test, so the rebalance is recorded in the constant.
+
+Writing the 3.3 tests found a real hole in the 6 checker: an unterminated
+`<script>` produced **no findings at all**, because the extractor requires a
+closing tag. The checker was fixed, not the test.
+
+**7.2 — the repo's own test command was broken.** `vitest run` at `apps/cli` root
+failed before collecting a test, because the config lists a project directory this
+fork does not have. Every test was only reachable from inside a package, which is
+how three failures sat in the tree unnoticed earlier this week. Plus 20 npm
+scripts pointing at absent directories; two were only caught because the removal
+refused to proceed while a survivor still called a deleted one.
+
+**7.4 — onboarding.** A fresh clone on either machine: three commands and
+`npm run doctor`. The README now states which capabilities are portable and which
+are scar tissue from an 8 GB gfx1032 — they look identical in a file listing, and
+`finetune_hqq.py` is strictly worse than Unsloth on a card that fits the model.
+
+Not attempted: **2.4, the execution kernel.** Collapsing four parallel
+implementations blind, with no current HTML-001 number, is the most dangerous
+change available here. It waits for the bar.
+
+15,461 core tests pass, 0 failures. 118 tests added today.
+
 ## 2026-07-25 (later) — Gemma 12B: 100k context, and the runtime upgrade paid for it
 
 Two changes stacked, measured on the same box the same day: the managed Ollama

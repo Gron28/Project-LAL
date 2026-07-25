@@ -18,57 +18,49 @@ history retains the originals.
 
 ## Start here — next session, in this order
 
-State as of 2026-07-24, end of day. Stages 0 and 1 are complete; 3.2, 4.1
-(partly) and 4.4 are done. The working tree is clean and HTML-001 passes.
+State as of 2026-07-25. Stages 0, 1, 3, 4, 5 and 6 are complete; Stage 2 is
+complete except 2.4; Stage 7 is partially applied. The working tree is clean and
+15,461 core tests pass.
 
-**Do these in order. The order is not a preference — step 2 is actively harmful
-before step 1, proven by measurement on 2026-07-24 (§2.1b).**
+**One thing gates everything that remains: HTML-001 has not been run since the
+2026-07-24 six-run set.** Eight stages of behaviour changed after that
+measurement, and none of them has a number.
 
-1. ~~**Make the circuit breaker enforce, not advise.**~~ **DONE (code), but the
-   benchmark did not exercise it — see §2.1c.** The breaker now withdraws a tool
-   for the session and `_schedule` answers further calls without dispatching,
-   and an exact-repeat guard now covers the non-mutating surface (read, search,
-   fetch, execute, agent), keyed on `(mutationEpoch, tool, args)`. Measured
-   6/6 pass, but **neither guard fired once in six runs**, because `turn.ts`
-   suppresses the repeat one layer upstream first. Do not read the improved
-   token numbers as evidence for this change; they are variance (§2.1c).
+1. **Run the benchmark.** `npm run bench:html001 -- --runs 10`. This is the whole
+   next step. It is now safe to interrupt — the report is written after every run
+   and carries `complete: false` until the loop finishes — and it writes to
+   `web/.data/html001/`, not to the benchmark UI's results directory (four run
+   reports landed there on 2026-07-24 and blanked the benchmark page).
 
-2. ~~**Repair `tool_call.id`.**~~ **DONE — and it needed no gateway change.**
-   The damage was in `toolCallIdUtils.ts`, not on the wire.
-   `normalizeModelToolCallIds` keyed same-turn replay detection on the raw id
-   alone, so with one constant id the first call in a turn claimed it and every
-   sibling hit `if (rawIdsInCurrentTurn.has(rawId)) continue;` and was **silently
-   deleted** — no error, no tool response, one debug line. The model asked for
-   three reads, was answered for one, and re-asked. Much of what has been read as
-   "the model loops" is the runtime discarding its work. Replay detection now
-   keys on id + name + args; a sibling whose id was already claimed is minted a
-   fresh id instead of a `__qwen_dup_N` collision.
-   `getToolCallDedupIdentity` was left keyed on `providerCallId` on purpose, so
-   each layer has one job: `turn.ts` suppresses wire replay, the step-1 scheduler
-   guard suppresses semantic repeats id-independently. Keying both on the same
-   thing is what made the §2.1b gateway rewrite catastrophic.
+2. **Compare** against `web/.data/html001/html001-after-enforced-breaker-2026-07-24.json`
+   (6/6). Conditions 7 and 8 are now measured, not `null`: the trace carries
+   `interruptedWrites`, `resumedFromDraft` and `discardedDrafts`.
 
-3. **Re-run and compare** against
-   `web/.data/bench/html001-after-inflight-guard-2026-07-24.json` (10/10),
-   `…-after-circuit-breaker-2026-07-24.json` (6/6), and
-   `…-after-enforced-breaker-2026-07-24.json` (6/6, step 1 landed).
-   Use ≥10 runs: at 6, run-to-run variance is larger than every effect measured
-   so far (§2.1c).
+3. **Then, and only then, Stage 7's deletions.** They are gated on 9/10 for the
+   stated reason — deleting code you depend on is only safe once the benchmark can
+   prove you did not break it.
 
-4. ~~**The largest remaining measured waste is not looping.**~~ **DONE.** 7 of
-   13 tool failures were `run_shell_command` permission denials — turns spent
-   discovering the session would not let it start an HTTP server or find a
-   browser. Fixed at both ends: headless runs given work now default to
-   `AUTO_EDIT` and **announce the posture** (PLAN 4.3 — `lal -p "write a file"`
-   previously could not write the file), and `client.setTools` no longer
-   advertises a tool the permission manager will refuse. Prediction on the
-   record, unmeasured: those 7 go to 0.
+4. **2.4, the execution kernel, is the one stage not attempted.** It is a genuine
+   collapse of four parallel implementations (`web/src/lib/tools.ts` 495 LOC,
+   `agent-tools.ts` 580, `toolloop.ts` 672, plus the CLI's own), not an
+   afternoon's refactor, and doing it blind — without a current HTML-001 number —
+   would be the single most dangerous change available. Do it after the bar is
+   met, in reviewable slices, or not at all.
 
-5. Then pick up Stage 3.1 (consume the write stash), 4.2 (research control),
-   Stage 5, Stage 6.
+### What landed 2026-07-25, all unmeasured against HTML-001
 
-**Do not** start Stage 7 (de-branding, CLI reduction) or Stage 8 (HIVE,
-training, benchmarking) — see the gates on each.
+| Stage | Change | Evidence |
+|---|---|---|
+| — | The benchmark page was blanked by harness output in `web/.data/bench/`; `listBench` now validates shape and names what it skips. `/api/bench` 1.27 MB → 40 KB. | deployed, verified 200 |
+| 3.1 | The write stash is enforced, not advertised: a resume is verified against the staged draft, a smaller restart is refused once, a regeneration is labelled. | 9 tests |
+| 4.2 | Research completes on evidence (breadth, independent origins, marginal return) instead of a 6-search/4-source quota; citations must name origins actually opened; "stop" outranks the gate. | 28 tests |
+| 5 | The read cache is re-armed for files the attachment block re-embedded in full — the reported "forgot the file was already read". Staged drafts survive compaction. | 12 tests |
+| 6 | Acceptance criteria registry; a completion claim is validated against artifacts on disk and repaired, bounded at 2 attempts, honest on give-up. | 21 tests |
+| 2.2 | One registry in `packages/protocol` for tool identity, imported by the gateway. `sync-protocol.mjs` + a doctor check kill the stale-copy failure. | drift checker, deploy |
+| 2.5 | `ModelLease` bounds subagent concurrency to `LAL_MAX_CONCURRENT_AGENTS` (default 1) with an announced queue; research redirected off the real-window browser to headless fetch. | 10 tests |
+| 3.3 | Whitespace-drifted anchors match; a patch that introduces a defect the file did not have is refused; `replace_all` blast radius bounded. | 18 tests |
+| 7.2 | `vitest run` at `apps/cli` root was broken by a project pointing at an absent directory; 20 dead npm scripts removed. | root suite runs |
+| 7.4 | Onboarding for a fresh clone on either machine; portable vs hardware-specific stated explicitly. | doctor on a simulated clone |
 
 ### How to measure anything
 
@@ -439,6 +431,8 @@ dropped tool name, so the next occurrence should name its own cause.
 
 ### 2.2 One tool registry
 
+**DONE 2026-07-25** (unit-tested; no HTML-001 number yet — see "Start here").
+
 A single declaration per tool — name, schema, handler, availability — consumed
 by CLI, gateway, and web. No second list. No prompt text that names a tool the
 registry does not export.
@@ -451,6 +445,10 @@ shell.** The silent `return []` at route.ts:94 becomes a logged, surfaced drop.
 
 ### 2.4 The kernel
 
+**NOT STARTED — deliberately.** The only stage left untouched. See "Start here" item 4:
+collapsing four parallel implementations blind, without a current HTML-001 number,
+is the most dangerous change available in this repository.
+
 One component owns: workflow state, tool dispatch, model scheduling, resource
 leases, event emission, retry policy, cancellation, compaction persistence,
 recovery, validation, and completion. Research, subagents, HIVE, coding, and
@@ -461,6 +459,8 @@ Today `web/src/lib/tools.ts` (495 LOC), `agent-tools.ts` (580), and
 the duplication to collapse.
 
 ### 2.5 Subagents are context isolation, not concurrency
+
+**DONE 2026-07-25** (unit-tested; no HTML-001 number yet — see "Start here").
 
 This box runs roughly one model at a time. The scheduler must reflect that
 whatever the model believes. Do not remove the model's parallel-planning
@@ -484,6 +484,8 @@ truncation. Raising limits only moves the wall — 40,960 max_tokens and 65,536
 ctx were already raised and the symptom persisted on lal.30.
 
 ### 3.1 Resumable transactional writer
+
+**DONE 2026-07-25** (unit-tested; no HTML-001 number yet — see "Start here").
 
 Begin a draft. Persist completed chunks as they land. Record the last
 successfully written position. After an interruption, resume from exactly that
@@ -585,6 +587,8 @@ measurable.
 
 ### 3.3 Revision-aware editing
 
+**DONE 2026-07-25** (unit-tested; no HTML-001 number yet — see "Start here").
+
 Replace anchor-based literal-text matching with edits addressed by line range,
 symbol, DOM node, or content hash. Every mutation verifies that unrelated
 content was not removed, and rolls back automatically on a damaging patch.
@@ -618,6 +622,8 @@ A repeated failing action must never consume dozens of turns or hundreds of
 thousands of tokens.
 
 ### 4.2 Evidence-based research completion
+
+**DONE 2026-07-25** (unit-tested; no HTML-001 number yet — see "Start here").
 
 Replace the fixed quota (currently six searches, four opened sources) with an
 evidence test: were the questions answered, is there credible independent
@@ -655,6 +661,8 @@ limit continues with full state.
 
 ## Stage 5 — State survives compaction
 
+**DONE 2026-07-25** (unit-tested; no HTML-001 number yet — see "Start here").
+
 **Closes:** "context compaction must not erase working state".
 
 Observed: after compaction the model still knew what it was doing, but the
@@ -673,6 +681,8 @@ regeneration, or a repeat of a known-failed action.
 ---
 
 ## Stage 6 — The runtime decides completion
+
+**DONE 2026-07-25** (unit-tested; no HTML-001 number yet — see "Start here").
 
 **Closes:** "completion must be decided by acceptance tests, not model
 confidence".
