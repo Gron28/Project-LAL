@@ -114,6 +114,55 @@ describe('WebFetchTool', () => {
       expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_FALLBACK_FAILED);
     });
 
+    it('refuses a navigation-menu page instead of reporting it as a source', async () => {
+      // Yahoo returned exactly this shape on 2026-07-25 and web_fetch called it a
+      // success; the model then counted it toward the research coverage gate and
+      // reported "4 sources opened" when this one had no prose in it.
+      const nav = [
+        'NEWS',
+        ...Array.from({ length: 30 }, (_, i) => ` * item ${i}`),
+        'LIFE',
+        ' * Health',
+        ' * Parenting',
+      ].join('\n');
+      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(false);
+      vi.spyOn(fetchUtils, 'fetchWithTimeout').mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'text/plain' }),
+        text: () => Promise.resolve(nav),
+      } as Response);
+
+      const tool = new WebFetchTool(mockConfig);
+      const result = await tool
+        .build({ url: 'https://news.example/x', prompt: 'the chef tips' })
+        .execute(new AbortController().signal);
+
+      expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_FALLBACK_FAILED);
+      expect(String(result.llmContent)).toContain('navigation menu');
+    });
+
+    it('accepts a short but substantive page rather than judging it by length', async () => {
+      // The counterweight to the test above: a small JSON body or plain-text file
+      // has no long lines either and must NOT be rejected for being brief. This
+      // is why the nav check requires many lines as well as low prose.
+      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(false);
+      vi.spyOn(fetchUtils, 'fetchWithTimeout').mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: () => Promise.resolve('{"cook_minutes":3,"eggs":2}'),
+      } as Response);
+
+      const tool = new WebFetchTool(mockConfig);
+      const result = await tool
+        .build({ url: 'https://api.example/omelette', prompt: 'cook time' })
+        .execute(new AbortController().signal);
+
+      expect(result.error).toBeUndefined();
+      expect(String(result.llmContent)).toContain('cook_minutes');
+    });
+
     it('returns page text directly and never calls a second model', async () => {
       // web_fetch used to summarise every page with a full generation on the
       // MAIN model, so a research pass paid for N extra generations serialised

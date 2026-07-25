@@ -44,6 +44,20 @@ const MAX_CONTENT_LENGTH = 100000;
  * involved. 24k chars matches web_search's result budget.
  */
 const DIRECT_CONTENT_MAX_CHARS = 24_000;
+
+/**
+ * Prose floor for a many-line page, in characters on lines over 80 chars.
+ * Calibrated on measured fetches 2026-07-25: a Tasting Table article yielded
+ * ~15k and a Mirror article ~4k, while a Yahoo navigation dump yielded zero.
+ */
+const MIN_PROSE_CHARS = 400;
+
+/**
+ * How many non-empty lines make a page's shape "chrome-like". Below this a page
+ * is simply short, which is not a defect — the prose floor only applies once
+ * there is enough structure for the low density to be meaningful.
+ */
+const NAV_LINE_COUNT = 15;
 const MAX_RESEARCH_REDIRECTS = 5;
 
 /**
@@ -200,6 +214,46 @@ class WebFetchToolInvocation extends BaseToolInvocation<
       this.debugLogger.debug(
         `[WebFetchTool] Content length: ${textContent.length} characters`,
       );
+
+      // Navigation is not content. Extracted text can be non-empty and still
+      // carry nothing citable: measured 2026-07-25, Yahoo returned a navigation
+      // menu and it was reported as a SUCCESSFUL fetch, after which the model
+      // counted it toward the research coverage gate and told the user it had
+      // "opened 4 sources" when that one held no prose at all.
+      //
+      // The discriminator is prose density ACROSS MANY LINES. Chrome arrives as
+      // dozens of short list items; an article arrives as long lines. Both
+      // conditions are required, because a short-but-real page — a small JSON API
+      // response, a plain-text file — also has no long lines and must not be
+      // rejected for being brief.
+      //
+      // Known remaining gap, stated rather than papered over: a page that returns
+      // only its <title> (Epicurious did) is a single short line, so it passes
+      // here. Catching that needs an absolute length floor, which would also
+      // reject legitimately tiny sources. And a site serving the WRONG page
+      // (Food Network returning a corporate profile) is rich, well-formed prose —
+      // no statistic catches it; the model spotted that one unaided.
+      const lines = textContent.split('\n').map((line) => line.trim());
+      const proseChars = lines
+        .filter((line) => line.length > 80)
+        .reduce((total, line) => total + line.length, 0);
+      const nonEmptyLines = lines.filter((line) => line.length > 0).length;
+      if (proseChars < MIN_PROSE_CHARS && nonEmptyLines >= NAV_LINE_COUNT) {
+        const thinMessage =
+          `Fetched ${url} (HTTP ${response.status}) but it yielded only ` +
+          `${proseChars} characters of prose across ${nonEmptyLines} lines — ` +
+          `that shape is a navigation menu or consent wall, not an article. ` +
+          `Treat this as a FAILED source: do not cite it, do not count it as ` +
+          `opened, and do not refetch it. Find a different source.`;
+        return {
+          llmContent: `Error: ${thinMessage}`,
+          returnDisplay: `No article text at ${url} (${proseChars} chars prose / ${nonEmptyLines} lines)`,
+          error: {
+            message: thinMessage,
+            type: ToolErrorType.WEB_FETCH_FALLBACK_FAILED,
+          },
+        };
+      }
 
       // An empty body is a FAILURE, not an empty success. Observed 2026-07-25:
       // food.com, reddit.com and youtube.com each returned HTTP 200 with no

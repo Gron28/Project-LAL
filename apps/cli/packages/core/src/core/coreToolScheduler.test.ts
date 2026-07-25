@@ -14076,3 +14076,121 @@ describe('CoreToolScheduler loop enforcement', () => {
     expect(messages[3]).not.toContain('LAL requires permission');
   });
 });
+
+/**
+ * PLAN 2.3 — "a typed tool name never reaches a shell".
+ *
+ * Across two Windows sessions the model never emitted native tool calls for the
+ * web tools; it emitted `run_shell_command` with the tool name as the command.
+ * Research mode rescued web_search/web_fetch via routeResearchToolCall, which is
+ * why research appeared to work at all. Outside research mode nothing rescues
+ * them, and nothing ever rescued `agent` — the string reached cmd.exe and came
+ * back as "'agent' is not recognized as an internal or external command", the
+ * report that opened PLAN 2.1.
+ */
+describe('CoreToolScheduler typed-tool-name shell guard', () => {
+  function createShellScheduler(toolNames: string[]) {
+    const onAllToolCallsComplete = vi.fn();
+    const shellTool = {
+      name: 'run_shell_command',
+      displayName: 'Shell',
+      description: 'runs a shell command',
+      kind: Kind.Execute,
+      schema: {},
+      build: () => ({
+        getDescription: () => 'shell',
+        shouldConfirmExecute: async () => false,
+        getDefaultPermission: async () => 'allow',
+        execute: async () => ({ llmContent: 'RAN', returnDisplay: 'RAN' }),
+      }),
+    } as unknown as AnyDeclarativeTool;
+
+    const mockToolRegistry = {
+      getTool: () => shellTool,
+      ensureTool: async () => shellTool,
+      getAllToolNames: () => toolNames,
+      getFunctionDeclarations: () => [],
+      tools: new Map(),
+    } as unknown as ToolRegistry;
+
+    const mockConfig = {
+      getSessionId: () => 'shell-guard-session',
+      getUsageStatisticsEnabled: () => false,
+      getDebugMode: () => false,
+      getApprovalMode: () => ApprovalMode.YOLO,
+      getPermissionsAllow: () => [],
+      getPermissionsDeny: () => undefined,
+      getContentGeneratorConfig: () => ({ model: 'm', authType: 'gemini' }),
+      getShellExecutionConfig: () => ({ terminalWidth: 80, terminalHeight: 24 }),
+      storage: { getProjectTempDir: () => '/tmp' },
+      getTruncateToolOutputThreshold: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
+      getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
+      getToolRegistry: () => mockToolRegistry,
+      getUseModelRouter: () => false,
+      getGeminiClient: () => null,
+      getChatRecordingService: () => undefined,
+      isInteractive: () => true,
+      getExperimentalZedIntegration: () => false,
+      getInputFormat: () => InputFormat.TEXT,
+      getSdkMode: () => false,
+      getMessageBus: vi.fn().mockReturnValue(undefined),
+      getDisableAllHooks: vi.fn().mockReturnValue(true),
+    } as unknown as Config;
+
+    const scheduler = new CoreToolScheduler({
+      config: mockConfig,
+      onAllToolCallsComplete,
+      getPreferredEditor: () => 'vscode',
+      onEditorClose: vi.fn(),
+    });
+    return { scheduler, onAllToolCallsComplete };
+  }
+
+  async function runCommand(command: string, toolNames: string[]) {
+    const { scheduler, onAllToolCallsComplete } = createShellScheduler(toolNames);
+    await scheduler.schedule(
+      [
+        {
+          callId: 'c1',
+          name: 'run_shell_command',
+          args: { command },
+          isClientInitiated: false,
+          prompt_id: 'p1',
+        },
+      ],
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => expect(onAllToolCallsComplete).toHaveBeenCalled());
+    return (onAllToolCallsComplete.mock.calls.at(-1)?.[0] as ToolCall[])[0];
+  }
+
+  const NAMES = ['run_shell_command', 'web_search', 'web_fetch', 'agent', 'edit'];
+
+  it('refuses web_search passed as a shell command', async () => {
+    const call = await runCommand('web_search "best omelette"', NAMES);
+    expect(call.status).toBe('error');
+    if (call.status === 'error') {
+      expect(call.response.error?.message).toContain('is one of your TOOLS');
+      expect(call.response.error?.message).toContain(
+        'not recognized as a command',
+      );
+    }
+  });
+
+  it('refuses agent passed as a shell command — the reported Windows symptom', async () => {
+    const call = await runCommand('agent "do the thing"', NAMES);
+    expect(call.status).toBe('error');
+  });
+
+  it('does not intercept a name that could be a real program', async () => {
+    // `edit` was a real DOS command and has no underscore, so it must NOT be
+    // second-guessed by this guard.
+    const call = await runCommand('edit notes.txt', NAMES);
+    if (call.status === 'error') {
+      // Surface the reason: the guard must not be the one rejecting this.
+      expect(call.response.error?.message ?? '').not.toContain(
+        'is one of your TOOLS',
+      );
+    }
+  });
+});

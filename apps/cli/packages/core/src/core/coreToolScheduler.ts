@@ -1208,6 +1208,40 @@ export function validationFailureFingerprint(
 const REPEATED_FAILURE_LIMIT = 3;
 
 /**
+ * Tool names that must never be executed as a shell command, even though the
+ * model keeps emitting them that way (PLAN 2.3: "a typed tool name never reaches
+ * a shell").
+ *
+ * Observed across two Windows sessions: the model does not emit native tool calls
+ * for these at all — it emits `run_shell_command` with the tool name as the
+ * command string. In research mode `routeResearchToolCall` rescues web_search and
+ * web_fetch by rerouting them (research-controller.ts), which is why research
+ * appeared to work. Nothing rescues them outside research mode, and nothing ever
+ * rescued the others: the string reaches cmd.exe and comes back as
+ * "'agent' is not recognized as an internal or external command" — the exact
+ * Windows report that opened PLAN 2.1.
+ *
+ * Restricted to names that cannot plausibly be a real executable, so a genuine
+ * `edit` or `page` binary is never intercepted. Underscored names are ours by
+ * construction; `agent` is included because it is the reported symptom.
+ */
+function isTypedToolNameForbiddenInShell(
+  token: string,
+  knownToolNames: readonly string[],
+): boolean {
+  const name = token.toLowerCase();
+  if (!knownToolNames.some((known) => known.toLowerCase() === name)) {
+    return false;
+  }
+  return name.includes('_') || name === 'agent';
+}
+
+/** First bare token of a shell command line, ignoring leading whitespace. */
+function firstShellToken(command: string): string {
+  return command.trim().split(/[\s;&|]/, 1)[0] ?? '';
+}
+
+/**
  * Kinds whose identical re-run cannot produce information the previous run did
  * not, and so are covered by the exact-repeat guard (`executedCallSigs`).
  *
@@ -2219,6 +2253,44 @@ export class CoreToolScheduler {
             durationMs: 0,
           });
           continue;
+        }
+
+        // PLAN 2.3 — a typed tool name never reaches a shell.
+        if (toolInstance.kind === Kind.Execute) {
+          const command =
+            typeof (reqInfo.args as Record<string, unknown> | undefined)?.[
+              'command'
+            ] === 'string'
+              ? ((reqInfo.args as Record<string, string>)['command'] ?? '')
+              : '';
+          const token = firstShellToken(command);
+          if (
+            token &&
+            isTypedToolNameForbiddenInShell(
+              token,
+              // Optional call: not every ToolRegistry shape in the wild (or in
+              // tests) implements this, and a missing enumeration must degrade to
+              // "cannot tell, let it through" rather than throwing and taking
+              // every shell command down with it.
+              this.toolRegistry.getAllToolNames?.() ?? [],
+            )
+          ) {
+            newToolCalls.push({
+              status: 'error',
+              request: reqInfo,
+              tool: toolInstance,
+              response: createErrorResponse(
+                reqInfo,
+                new Error(
+                  `"${token}" is one of your TOOLS, not a shell program, so this was NOT run — a shell would only answer "'${token}' is not recognized as a command". ` +
+                    `Call ${token} directly as a tool call with its own arguments, instead of passing it to ${reqInfo.name}.`,
+                ),
+                ToolErrorType.INVALID_TOOL_PARAMS,
+              ),
+              durationMs: 0,
+            });
+            continue;
+          }
         }
 
         // Reject file-modifying calls when truncated to prevent
