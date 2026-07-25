@@ -125,8 +125,54 @@ if (violations.size > 0) {
   process.exit(1);
 }
 
+// The same defect class in the web stack (PLAN 2.4's duplication).
+//
+// `web/src/lib/tools.ts` and `agent-tools.ts` each hold a list of advertised tool
+// definitions AND a dispatch switch that implements them. Two hand-maintained
+// lists of the same names, in one file, is the identical failure shape: a name
+// advertised to the model with no implementation behind it is a tool call that can
+// only fail, and a name implemented but never advertised is dead code the model
+// can never reach. Currently in agreement at 26/26 — this keeps it that way.
+function webToolDrift() {
+  const advertised = new Set();
+  const implemented = new Set();
+  for (const relative of ['web/src/lib/tools.ts', 'web/src/lib/agent-tools.ts']) {
+    const absolute = path.join(root, relative);
+    if (!fs.existsSync(absolute)) continue;
+    const source = fs.readFileSync(absolute, 'utf8');
+    for (const m of source.matchAll(/name:\s*"([a-z0-9_]+)"/g)) advertised.add(m[1]);
+    for (const m of source.matchAll(/case\s*"([a-z0-9_]+)"\s*:/g)) implemented.add(m[1]);
+  }
+  return {
+    advertised,
+    implemented,
+    missing: [...advertised].filter((n) => !implemented.has(n)),
+    unreachable: [...implemented].filter((n) => !advertised.has(n)),
+  };
+}
+
+const web = webToolDrift();
+if (web.missing.length || web.unreachable.length) {
+  console.error('\n!!! web tool definitions and their dispatch disagree:');
+  if (web.missing.length) {
+    console.error(
+      `      advertised to the model with no implementation: ${web.missing.join(', ')}`,
+    );
+    console.error('      → every call to these can only fail.');
+  }
+  if (web.unreachable.length) {
+    console.error(
+      `      implemented but never advertised: ${web.unreachable.join(', ')}`,
+    );
+    console.error('      → the model cannot reach these; either advertise or delete.');
+  }
+  console.error('');
+  process.exit(1);
+}
+
 console.log(
-  `prompt/tool visibility: ${deferred.size} deferred tool(s), none advertised imperatively by a prompt` +
+  `prompt/tool visibility: ${deferred.size} deferred tool(s), none advertised imperatively by a prompt; ` +
+    `web tools ${web.advertised.size} advertised / ${web.implemented.size} implemented, in agreement` +
     (unknown.length ? ` (${unknown.length} unreadable — see above)` : ''),
 );
 process.exit(unknown.length ? 1 : 0);
