@@ -33,7 +33,11 @@ const LAL_TERMINAL_TOOLS = new Set([
   "list_windows",
   "get_window_state",
   "page",
-  "screenshot",
+  // "screenshot" used to sit here and matched nothing — no tool is registered
+  // under that name, so the entry admitted nothing while reading as though
+  // screen capture were available (caught by
+  // scripts/check_tool_allowlist_drift.mjs, 2026-07-24). Screen capture is
+  // delivered by get_window_state, which returns the PNG.
 ]);
 
 // Budget guards, not documentation removal: a small local model needs the
