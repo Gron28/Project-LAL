@@ -541,20 +541,80 @@ A typed tool name resolves to its handler or produces an explicit, typed
 "tool unavailable" error naming the tool. **A typed tool name never reaches a
 shell.** The silent `return []` at route.ts:94 becomes a logged, surfaced drop.
 
-### 2.4 The kernel
+### 2.4 The kernel — re-scoped 2026-07-25 after reading the code
 
-**NOT STARTED — deliberately.** The only stage left untouched. See "Start here" item 4:
-collapsing four parallel implementations blind, without a current HTML-001 number,
-is the most dangerous change available in this repository.
+**Still not started.** But the premise below was wrong in a way that matters, so
+the stage is restated before anyone acts on it.
 
-One component owns: workflow state, tool dispatch, model scheduling, resource
-leases, event emission, retry policy, cancellation, compaction persistence,
-recovery, validation, and completion. Research, subagents, HIVE, coding, and
-file operations become **callers** of it, not parallel implementations of it.
+**The web side is not three implementations, it is three layers.** `tools.ts`
+(495 LOC) declares defs plus `makeExecutor`; `agent-tools.ts` (588) wraps that
+with `makeAgentExecutor` and the role-narrowed variants (orchestrator, planner,
+implementer); `toolloop.ts` (672) is the single loop every caller uses —
+`graders.ts`, `deliberate.ts`, `hive/engine.ts` and the agent routes all call
+`runToolLoop`. There is nothing to collapse here. Merging these would destroy a
+working separation, not remove duplication.
 
-Today `web/src/lib/tools.ts` (495 LOC), `agent-tools.ts` (580), and
-`toolloop.ts` (672) each hold part of this, and the CLI holds another. That is
-the duplication to collapse.
+**The real problem is not duplication between web and CLI. It is divergence.**
+Measured, not assumed:
+
+| behaviour | web `toolloop.ts` | CLI core |
+|---|---|---|
+| loop detection | yes | yes (`loopDetectionService`) |
+| turn/round cap | `maxRounds` | `maxSessionTurns` |
+| compaction | `compactOldToolResults` | yes (7 modules) |
+| `requireMutation` / `forceMutation` | yes | **absent** |
+| stall nudge | yes | **absent** |
+| forced verify | yes | **absent** |
+| research-depth nudge / ceiling | yes | **absent** |
+| act nudge | yes | **absent** |
+
+Those five are web-only. `grep -rl` across `packages/core/src` returns nothing
+for `stall_nudge`, `mutation_required`, `forced_verify`, `research_depth` or
+`act_nudge`.
+
+**And HTML-001 only exercises the CLI path.** The benchmark spawns
+`lal -p … --output-format stream-json`, which runs tools locally. Proof from the
+2026-07-25 trace: the tool names in it are `run_shell_command`, `read_file`,
+`web_fetch` — CLI vocabulary. The web registry's names are `run_shell`,
+`list_files`, `write_file`. They never appear.
+
+So the reliability work this plan credits to Stage 4 lives largely on the
+gateway/attach path, while the benchmark — and the Windows binary that
+motivated the benchmark — runs the path that lacks it. **10/10 does not mean
+those behaviours work. It means they were never invoked.** Any HTML-001 number
+measures the CLI's own scheduler, not the nudges in `toolloop.ts`.
+
+**Size, so nobody re-scopes this by feel.** Web is 1,755 LOC across the three
+files. The CLI is `coreToolScheduler.ts` at **5,318 LOC**, plus `client.ts`
+(3,527) and `turn.ts` (795). "One component owns workflow state, tool dispatch,
+model scheduling, leases, events, retry, cancellation, compaction, recovery,
+validation and completion" is a rewrite of the CLI's execution engine across two
+runtimes (Next.js server and a bundled Node CLI). That is not a stage. Attempted
+in one pass it is exactly the most dangerous change in this repository, and the
+current 10/10 would not catch a regression in the five behaviours above because
+it never reaches them.
+
+**Do it in this order instead. Each step is independently shippable.**
+
+1. **Close the divergence before merging anything.** Port the five missing
+   behaviours to the CLI path, one at a time, each with its own test. This is
+   the step with actual user-visible value — it is the difference between the
+   two surfaces behaving the same way for the same request.
+2. **A conformance suite that runs the same scenarios through both paths** and
+   asserts identical decisions (nudge fired / mutation forced / round capped /
+   refused). A mechanical check that the paths agree, before trying to make them
+   one. Without this, any unification is unverifiable by construction.
+3. **Extract the shared decision logic** — the pure predicates, which is most of
+   what diverged (`toolOutputSucceeded`, `dependencyOutputHasCriticalRisk`, the
+   nudge and ceiling policies) — into `packages/protocol` alongside the tool
+   registry. Pure functions, no I/O, consumable by both runtimes. This is the
+   real "one kernel", and it is achievable.
+4. **Only then** consider unifying dispatch and lifecycle, if step 3 leaves
+   enough shared surface to justify it. It may not, and that is a legitimate
+   outcome.
+
+**Prerequisite for step 1:** a fresh HTML-001 number. The current 10/10 predates
+today's de-brand, home-directory migration and package rename.
 
 ### 2.5 Subagents are context isolation, not concurrency
 
