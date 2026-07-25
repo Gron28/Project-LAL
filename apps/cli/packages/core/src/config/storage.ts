@@ -179,11 +179,20 @@ export class Storage {
     if (cached !== undefined) {
       return cached;
     }
+    // Defensive: this is the only path-resolution helper that touches the
+    // filesystem, and it is called from constructors all over the codebase —
+    // including in tests that mock node:fs partially and do not provide
+    // existsSync. A throw here would take out unrelated suites, and the right
+    // answer when we cannot look is the current name, not the legacy one.
     let name = LAL_DIR;
-    if (!fs.existsSync(path.join(homeDir, LAL_DIR))) {
-      if (fs.existsSync(path.join(homeDir, LEGACY_QWEN_DIR))) {
-        name = LEGACY_QWEN_DIR;
+    try {
+      if (!fs.existsSync(path.join(homeDir, LAL_DIR))) {
+        if (fs.existsSync(path.join(homeDir, LEGACY_QWEN_DIR))) {
+          name = LEGACY_QWEN_DIR;
+        }
       }
+    } catch {
+      name = LAL_DIR;
     }
     Storage.homeDirNameCache.set(homeDir, name);
     return name;

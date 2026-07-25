@@ -15,8 +15,6 @@ import type {
 import { isLoopbackBind } from './loopback-binds.js';
 import type { RateLimiterInstance, RateLimitTier } from './rate-limit.js';
 import type { ServeOptions } from './types.js';
-import type { ChannelWorkerSnapshot } from './channel-worker-supervisor.js';
-import type { ChannelWorkerGroupSnapshot } from './channel-worker-group.js';
 import type { DaemonMetricsBucket } from './daemon-metrics-ring.js';
 import type {
   DaemonWorkspaceService,
@@ -104,8 +102,6 @@ export interface BuildDaemonStatusOptions {
   deviceFlowRegistry: DeviceFlowRegistry;
   sessionShellCommandEnabled: boolean;
   startup?: DaemonStartupSnapshot;
-  getChannelWorkerSnapshot?: () => ChannelWorkerSnapshot;
-  getChannelWorkerSnapshots?: () => ChannelWorkerGroupSnapshot[];
   getPerfSnapshot?: () => DaemonPerfSnapshot;
   getMetricsSeries?: () => DaemonMetricsBucket[];
   getTotalSessionAdmissionSnapshot?: () => TotalSessionAdmissionSnapshot;
@@ -172,13 +168,6 @@ interface DaemonStatusRuntime {
     policy: string;
   };
   channel: { live: boolean };
-  channelWorker: ChannelWorkerSnapshot;
-  /**
-   * Per-workspace channel workers on a multi-workspace daemon. Additive to
-   * `channelWorker` (which stays as the primary workspace snapshot). Absent on
-   * single-workspace daemons.
-   */
-  channelWorkers?: ChannelWorkerGroupSnapshot[];
   transport: {
     restSseActive: number;
     acp: {
@@ -363,17 +352,6 @@ export async function buildDaemonStatusResponse(
     ) ??
     input.bridge.pendingPromptTotal ??
     derivedQueuedPrompts;
-  const channelWorker = input.getChannelWorkerSnapshot?.() ?? {
-    enabled: false,
-    state: 'disabled',
-    channels: [],
-  };
-  // Per-workspace worker list is multi-workspace only; single-workspace status
-  // keeps the byte-identical `channelWorker` shape.
-  const channelWorkers =
-    (workspaceRuntimes?.length ?? 1) > 1
-      ? input.getChannelWorkerSnapshots?.()
-      : undefined;
   const totalAdmissionSnapshot = input.getTotalSessionAdmissionSnapshot?.();
   const issues: DaemonStatusIssue[] = [];
   let full: FullDaemonStatus | undefined;
@@ -384,8 +362,6 @@ export async function buildDaemonStatusResponse(
     acpAggregate,
     rateLimitHits,
     input,
-    channelWorker,
-    channelWorkers,
     totalAdmissionSnapshot,
     workspaceSnapshots,
   );
@@ -471,10 +447,6 @@ export async function buildDaemonStatusResponse(
         policy: bridgeSnapshot.permissionPolicy,
       },
       channel: { live: aggregatedChannelLive },
-      channelWorker,
-      ...(channelWorkers && channelWorkers.length > 0
-        ? { channelWorkers }
-        : {}),
       transport: {
         restSseActive: input.getRestSseActive(),
         acp: {
@@ -651,8 +623,6 @@ function pushRuntimeIssues(
   acpAggregate: AcpHttpSnapshot | undefined,
   rateLimitHits: Record<RateLimitTier, number>,
   input: BuildDaemonStatusOptions,
-  channelWorker: ChannelWorkerSnapshot,
-  channelWorkers: readonly ChannelWorkerGroupSnapshot[] | undefined,
   totalAdmissionSnapshot: TotalSessionAdmissionSnapshot | undefined,
   workspaceSnapshots: readonly WorkspaceBridgeStatusSnapshot[],
 ): void {
@@ -746,89 +716,8 @@ function pushRuntimeIssues(
       message: `${sumRateHits(rateLimitHits)} request(s) have been rejected by rate limiting since start.`,
     });
   }
-
-  const groupedWorkers =
-    channelWorkers && channelWorkers.length > 0 ? channelWorkers : undefined;
-  const workers = groupedWorkers ?? [channelWorker];
-  for (const worker of workers) {
-    pushChannelWorkerIssues(issues, worker, groupedWorkers !== undefined);
-  }
 }
 
-function pushChannelWorkerIssues(
-  issues: DaemonStatusIssue[],
-  channelWorker: ChannelWorkerSnapshot | ChannelWorkerGroupSnapshot,
-  grouped: boolean,
-): void {
-  const workspace =
-    'workspaceCwd' in channelWorker
-      ? ` for workspace ${channelWorker.workspaceCwd}`
-      : '';
-  const section = grouped ? 'runtime.channelWorkers' : 'runtime.channelWorker';
-
-  if (
-    channelWorker.enabled &&
-    (channelWorker.state === 'exited' || channelWorker.state === 'failed')
-  ) {
-    const detailParts = [
-      channelWorker.pid !== undefined ? `pid=${channelWorker.pid}` : undefined,
-      channelWorker.exitCode !== undefined
-        ? `code=${channelWorker.exitCode ?? 'null'}`
-        : undefined,
-      channelWorker.signal ? `signal=${channelWorker.signal}` : undefined,
-      channelWorker.restartCount !== undefined
-        ? `restarts=${channelWorker.restartCount}`
-        : undefined,
-      channelWorker.lastExitAt
-        ? `lastExitAt=${channelWorker.lastExitAt}`
-        : undefined,
-      channelWorker.lastRestartAt
-        ? `lastRestartAt=${channelWorker.lastRestartAt}`
-        : undefined,
-      channelWorker.nextRestartAt
-        ? `nextRestartAt=${channelWorker.nextRestartAt}`
-        : undefined,
-      channelWorker.lastHeartbeatAt
-        ? `lastHeartbeatAt=${channelWorker.lastHeartbeatAt}`
-        : undefined,
-      channelWorker.staleHeartbeatAt
-        ? `staleHeartbeatAt=${channelWorker.staleHeartbeatAt}`
-        : undefined,
-    ].filter(Boolean);
-    const details =
-      detailParts.length > 0 ? ` (${detailParts.join(', ')})` : '';
-    const error = channelWorker.error ? `: ${channelWorker.error}` : '';
-    const isPermanentFailure =
-      channelWorker.state === 'failed' && !channelWorker.nextRestartAt;
-    issues.push({
-      code: 'channel_worker_exited',
-      severity: isPermanentFailure ? 'error' : 'warning',
-      message: `Channel worker${workspace} is ${channelWorker.state}${details}${error}.`,
-      section,
-    });
-  }
-
-  if (
-    channelWorker.enabled &&
-    channelWorker.state === 'running' &&
-    channelWorker.requestedChannels !== undefined
-  ) {
-    const connected = new Set(channelWorker.channels);
-    const failed = channelWorker.requestedChannels.filter(
-      (channel) => !connected.has(channel),
-    );
-    if (failed.length > 0) {
-      issues.push({
-        code: 'channel_worker_partial_connect',
-        severity: 'warning',
-        message:
-          `Channel worker${workspace} connected ${channelWorker.channels.length}/${channelWorker.requestedChannels.length} channel(s). ` +
-          `Failed: ${failed.join(', ')}.`,
-        section,
-      });
-    }
-  }
-}
 
 function pushFullIssues(
   issues: DaemonStatusIssue[],

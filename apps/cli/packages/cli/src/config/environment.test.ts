@@ -48,6 +48,16 @@ beforeEach(() => {
     previousEnv.set(key, process.env[key]);
     delete process.env[key];
   }
+  // Point the config home at an empty temp dir. Without this the loader reads
+  // the DEVELOPER'S real ~/.lal/.env, whose LAL_API_KEY then shows up in the
+  // overlay and fails the assertion below. It passed before only because the
+  // home resolved to ~/.qwen, which happened to have no .env — an accident,
+  // not isolation.
+  const isolatedHome = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-runtime-home-')),
+  );
+  tmpDirs.push(isolatedHome);
+  process.env['QWEN_HOME'] = isolatedHome;
 });
 
 afterEach(() => {

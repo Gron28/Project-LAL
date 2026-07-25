@@ -539,7 +539,7 @@ You are a helpful assistant.
 
     it('should determine level from file path', () => {
       const projectPath = '/test/project/.qwen/agents/test-agent.md';
-      const userPath = '/home/user/.qwen/agents/test-agent.md';
+      const userPath = '/home/user/.lal/agents/test-agent.md';
 
       const projectConfig = manager.parseSubagentContent(
         validMarkdown,
@@ -1292,10 +1292,10 @@ You are weird.
       expect(config).toBeDefined();
       expect(config!.name).toBe('test-agent');
       expect(fs.readdir).toHaveBeenCalledWith(
-        path.normalize('/home/user/.qwen/agents'),
+        path.normalize('/home/user/.lal/agents'),
       );
       expect(fs.readFile).toHaveBeenCalledWith(
-        path.normalize('/home/user/.qwen/agents/test-agent.md'),
+        path.normalize('/home/user/.lal/agents/test-agent.md'),
         'utf8',
       );
     });
@@ -1402,7 +1402,7 @@ You are a helpful assistant.`;
       expect(config).toBeDefined();
       expect(config!.name).toBe('target-agent');
       expect(config!.filePath).toBe(
-        path.normalize('/home/user/.qwen/agents/user-agent.md'),
+        path.normalize('/home/user/.lal/agents/user-agent.md'),
       );
       expect(config!.level).toBe('user');
     });
@@ -1510,7 +1510,7 @@ You are a helpful assistant.`;
         path.normalize('/test/project/.qwen/agents/test-agent.md'),
       );
       expect(fs.unlink).toHaveBeenCalledWith(
-        path.normalize('/home/user/.qwen/agents/test-agent.md'),
+        path.normalize('/home/user/.lal/agents/test-agent.md'),
       );
     });
 

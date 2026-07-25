@@ -763,7 +763,7 @@ describe('TodoWriteTool – runtime output directory', () => {
     expect(writePath).toContain(path.join(envRuntimeDir, 'todos'));
   });
 
-  it('should use default ~/.qwen path when no custom dir is configured', async () => {
+  it('should use the default user-home path when no custom dir is configured', async () => {
     const params: TodoWriteParams = {
       todos: [{ id: '1', content: 'Task 1', status: 'pending' }],
     };
@@ -779,7 +779,7 @@ describe('TodoWriteTool – runtime output directory', () => {
     await invocation.execute(mockAbortSignal);
 
     const writePath = mockAtomicWrite.mock.calls[0]?.[0] as string;
-    expect(writePath).toContain(path.join('.qwen', 'todos'));
+    expect(writePath).toContain(path.join('.lal', 'todos'));
   });
 
   it('should check file existence in custom runtime dir for getDescription', () => {
