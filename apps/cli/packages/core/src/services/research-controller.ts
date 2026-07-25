@@ -414,8 +414,119 @@ export function researchStopReport(trace: ResearchTrace): string {
   );
 }
 
+/**
+ * Does this shell command reach the network to gather evidence?
+ *
+ * Diagnosed 2026-07-25 from a real session. The model was asked to research
+ * peppers and never called `web_search` once. It ran `python3 << 'EOF'` heredocs
+ * using `requests.get("https://www.google.com/search?q=...")` — thirteen times —
+ * scraped the HTML with regexes, built the deliverable, and reported success.
+ *
+ * Every consequence followed from that one substitution:
+ *
+ * - The evidence gate saw zero searches and zero sources, because none of it went
+ *   through a tool it can observe. It correctly refused the synthesis — AFTER the
+ *   model had already finished and delivered the page, which is what the operator
+ *   experienced as "research triggered that the research was not enough even when
+ *   the model already finished the whole plan".
+ * - `researchProviderLooksBroken` could not save it either: that fires on failed
+ *   ATTEMPTS, and there were none to fail.
+ * - Trying to comply, the model then ran
+ *   `subprocess.run(['web_search', query])` — invoking a typed tool as a shell
+ *   binary. That is PLAN 2.1's `'agent' is not recognized as a command`, observed
+ *   here on Linux.
+ * - Scraping Google's SERP HTML with a regex returns nothing useful anyway, so the
+ *   "research" was near-empty and the images were never found.
+ *
+ * `embeddedResearchCommand` handles the cases that can be REWRITTEN into a proper
+ * tool call (`web_search "q"`, a bare curl). This is the residue: network access
+ * this module cannot faithfully translate. It is refused rather than guessed at —
+ * a python heredoc may do anything, and silently turning it into a fetch would be
+ * worse than declining it.
+ */
+/**
+ * Whether a research turn is currently active, readable from the tool scheduler.
+ *
+ * The scheduler is the only layer that can refuse a call before it executes, and
+ * it has no reference to the client's `ResearchTrace`. A process-wide flag is the
+ * smallest honest coupling — the alternative is threading a trace through the
+ * scheduler's constructor for one boolean.
+ */
+let researchTurnActive = false;
+
+export function setResearchTurnActive(active: boolean): void {
+  researchTurnActive = active;
+}
+
+export function isResearchTurnActive(): boolean {
+  return researchTurnActive;
+}
+
+export function shellReachesNetworkForResearch(
+  args: Record<string, unknown>,
+): { detected: boolean; what: string } {
+  const command = typeof args['command'] === 'string' ? args['command'] : '';
+  if (!command) return { detected: false, what: '' };
+  const patterns: Array<[RegExp, string]> = [
+    [/\brequests\s*\.\s*(?:get|post|Session)\b/, 'python requests'],
+    [/\b(?:urllib|urllib2|urllib3|httpx|aiohttp)\b/, 'a python http client'],
+    [/\bBeautifulSoup\b|\bbs4\b/, 'BeautifulSoup scraping'],
+    [/\bwget\b/, 'wget'],
+    [/\bcurl\b/, 'curl'],
+    [/\bnode\b[^\n]*\bfetch\s*\(/, 'node fetch'],
+    [/\blynx\b|\bw3m\b|\belinks\b/, 'a terminal browser'],
+  ];
+  for (const [pattern, what] of patterns) {
+    if (pattern.test(command)) return { detected: true, what };
+  }
+  return { detected: false, what: '' };
+}
+
+export function shellResearchRefusal(what: string): string {
+  return (
+    `Refused: this is a research turn, and web access must go through the ` +
+    `research tools, not the shell. This command uses ${what}.\n\n` +
+    `Use web_search for queries and web_fetch to open a source URL. They are ` +
+    `registered tools in this session — call them as tools, do NOT try to run ` +
+    `them as shell commands or through subprocess.\n\n` +
+    `Two reasons this is not a style preference:\n` +
+    `1. Evidence gathered through the shell is invisible to the runtime, so the ` +
+    `evidence gate cannot see it and will reject your synthesis no matter how ` +
+    `much work you did.\n` +
+    `2. Scraping a search engine's HTML returns markup, not results. web_search ` +
+    `returns actual results, and web_fetch converts a page to readable text.\n\n` +
+    `The shell is still available for everything that is not fetching from the web.`
+  );
+}
+
 export function researchContinuation(trace: ResearchTrace): string {
   const coverage = researchCoverage(trace);
+
+  // Nothing was ever ATTEMPTED through the observable tools. That is a different
+  // situation from "searched too little", and the generic message made it worse:
+  // it said "0 of 3 sub-questions have been searched", which a model that had
+  // just finished the entire task read as "throw the work away and start over"
+  // — observed 2026-07-25, where it abandoned a delivered HTML page and began
+  // re-researching. Name the actual problem and protect the deliverable.
+  if (coverage.attemptedQueryCount === 0 && coverage.attemptedSourceCount === 0) {
+    return (
+      `The evidence gate cannot see any research. web_search and web_fetch were ` +
+      `never called in this turn, so whatever sources you used are unverifiable ` +
+      `from the runtime's side — most likely the web was reached through the ` +
+      `shell (curl, python requests) instead of the research tools.
+
+` +
+      `KEEP everything you have already produced. Do not restart the task, do not ` +
+      `rewrite files that are already correct, and do not re-plan.
+
+` +
+      `Do only this: call web_search as a TOOL for the questions your answer ` +
+      `already relies on, open the best sources with web_fetch, then correct or ` +
+      `confirm the claims you made and cite the URLs. If a claim turns out to be ` +
+      `unsupported, fix that specific claim.`
+    );
+  }
+
   const missing: string[] = [];
   if (!coverage.breadthMet) {
     missing.push(

@@ -2148,7 +2148,10 @@ export class Config {
     this.enableManagedAutoDream = params.enableManagedAutoDream ?? true;
     this.enableTeamMemory = params.enableTeamMemory ?? false;
     this.enableTeamMemorySync = params.enableTeamMemorySync ?? false;
-    this.enableAutoSkill = params.enableAutoSkill ?? true;
+    // Off unless a caller opts in. Every default for this feature must agree
+    // (core, the CLI's settings fallback, and settingsSchema); a core default of
+    // `true` would silently re-enable it for any embedder that omits the param.
+    this.enableAutoSkill = params.enableAutoSkill ?? false;
     this.autoSkillConfirm = params.autoSkillConfirm ?? true;
     // Clamp: schema validation only runs on interactive edit paths, so a
     // negative value in settings.json would otherwise reach the agent runtime

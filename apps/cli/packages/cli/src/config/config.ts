@@ -2249,8 +2249,11 @@ export async function loadCliConfig(
       bareMode || safeMode
         ? false
         : (settings.memory?.enableTeamMemorySync ?? false),
+    // Default OFF — see settingsSchema's enableAutoSkill comment. The fallback
+    // here has to agree with the schema default or the setting's documented value
+    // is a lie for anyone who never wrote it to their settings file.
     enableAutoSkill:
-      bareMode || safeMode ? false : (settings.memory?.enableAutoSkill ?? true),
+      bareMode || safeMode ? false : (settings.memory?.enableAutoSkill ?? false),
     autoSkillConfirm:
       bareMode || safeMode
         ? false

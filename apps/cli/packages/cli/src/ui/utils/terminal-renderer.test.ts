@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   resolveTerminalRenderer,
   terminalAnimationsEnabled,
+  isRemoteSession,
 } from './terminal-renderer.js';
 
 describe('resolveTerminalRenderer', () => {
@@ -52,5 +53,59 @@ describe('resolveTerminalRenderer', () => {
         environment: { TERM: 'xterm', LAL_TERMINAL_RENDERER: 'viewport' },
       }),
     ).toBe('viewport');
+  });
+});
+
+describe('remote sessions default to the static renderer (2026-07-25)', () => {
+  // Termux over ssh: "the interface flashes on and off extremely fast ... on
+  // desktop and Linux this did not happen". Viewport repaints the whole
+  // alternate screen per update, which is a full screen of bytes per keystroke
+  // across an ssh link.
+  const base = { isTTY: true, screenReader: false };
+
+  it('stays on viewport for a local tty', () => {
+    expect(
+      resolveTerminalRenderer({ ...base, environment: { TERM: 'xterm-256color' } }),
+    ).toBe('viewport');
+  });
+
+  it('switches to static when reached over ssh', () => {
+    for (const key of ['SSH_TTY', 'SSH_CONNECTION', 'SSH_CLIENT']) {
+      expect(
+        resolveTerminalRenderer({
+          ...base,
+          environment: { TERM: 'xterm-256color', [key]: 'set' },
+        }),
+      ).toBe('static');
+    }
+  });
+
+  it('an explicit override still wins over the remote default', () => {
+    expect(
+      resolveTerminalRenderer({
+        ...base,
+        environment: {
+          TERM: 'xterm-256color',
+          SSH_TTY: '/dev/pts/3',
+          LAL_TERMINAL_RENDERER: 'viewport',
+        },
+      }),
+    ).toBe('viewport');
+  });
+
+  it('a configured setting also wins, so this is not a lock-in', () => {
+    expect(
+      resolveTerminalRenderer({
+        ...base,
+        configured: 'viewport',
+        environment: { TERM: 'xterm-256color', SSH_CONNECTION: 'x' },
+      }),
+    ).toBe('viewport');
+  });
+
+  it('isRemoteSession reads only ssh variables', () => {
+    expect(isRemoteSession({})).toBe(false);
+    expect(isRemoteSession({ TERM: 'xterm' })).toBe(false);
+    expect(isRemoteSession({ SSH_TTY: '/dev/pts/1' })).toBe(true);
   });
 });

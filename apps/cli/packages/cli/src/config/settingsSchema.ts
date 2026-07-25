@@ -1846,10 +1846,16 @@ const SETTINGS_SCHEMA = {
         label: 'Enable Auto Skill',
         category: 'Memory',
         requiresRestart: false,
-        default: true,
+        // OFF by default (2026-07-25). This dispatches a background subagent that
+        // writes skill files on its own after tool-heavy sessions. On a box with
+        // one GPU that is a real model run competing with the user's work, and the
+        // operator's report was unambiguous: "it also automatically made a skill,
+        // I don't want that ... I don't use it". An assistant that creates
+        // artifacts nobody asked for has to be opt-in.
+        default: false,
         description:
-          'Enable background review for reusable project skills after tool-heavy sessions.',
-        showInDialog: false,
+          'Background review that writes reusable project skills after tool-heavy sessions. Off by default: it spends a model turn and creates files on its own.',
+        showInDialog: true,
       },
       autoSkillConfirm: {
         type: 'boolean',

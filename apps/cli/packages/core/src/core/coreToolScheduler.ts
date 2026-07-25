@@ -146,6 +146,11 @@ import {
 } from '../telemetry/index.js';
 import { safeJsonStringify } from '../utils/safeJsonStringify.js';
 import { acquireSleepInhibitor } from '../services/sleepInhibitor.js';
+import {
+  isResearchTurnActive,
+  shellReachesNetworkForResearch,
+  shellResearchRefusal,
+} from '../services/research-controller.js';
 
 const debugLogger = createDebugLogger('TOOL_SCHEDULER');
 
@@ -1242,6 +1247,54 @@ function firstShellToken(command: string): string {
 }
 
 /**
+ * A typed tool name used as an executable somewhere INSIDE a script body.
+ *
+ * The first-token check above catches `web_search "peppers"`. It does not catch
+ * what a model actually does when it decides a tool must be a program:
+ *
+ *   python3 << 'EOF'
+ *   subprocess.run(['web_search', query], capture_output=True)
+ *   EOF
+ *
+ * observed verbatim on 2026-07-25. The first token is `python3`, so the guard
+ * passed it through, the subprocess failed with ENOENT inside python, and the
+ * model concluded the tool did not work.
+ *
+ * Deliberately narrow: only names that appear in a recognised
+ * process-spawning position, and only names that cannot plausibly be a real
+ * executable (same rule as the first-token guard).
+ */
+function typedToolNameSpawnedInScript(
+  command: string,
+  knownToolNames: readonly string[],
+): string | null {
+  const candidates = knownToolNames.filter(
+    (name) => name.includes('_') || name.toLowerCase() === 'agent',
+  );
+  if (candidates.length === 0) return null;
+  const alternation = candidates
+    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  const spawnPatterns = [
+    // subprocess.run(['NAME', ...]) / Popen(("NAME" ...)) / check_output(['NAME'
+    new RegExp(
+      `(?:subprocess\\.)?(?:run|Popen|call|check_output|check_call)\\s*\\(\\s*[\\[('"\`]+\\s*['"\`](${alternation})['"\`]`,
+    ),
+    // os.system("NAME ...") / execSync('NAME ...') / spawnSync("NAME"
+    new RegExp(
+      `(?:os\\.system|exec|execSync|execFile|execFileSync|spawn|spawnSync|system)\\s*\\(\\s*['"\`](${alternation})[\\s'"\`]`,
+    ),
+    // $(NAME ...) or \`NAME ...\` command substitution
+    new RegExp(`[$]\\(\\s*(${alternation})[\\s)]`),
+  ];
+  for (const pattern of spawnPatterns) {
+    const match = pattern.exec(command);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+/**
  * Kinds whose identical re-run cannot produce information the previous run did
  * not, and so are covered by the exact-repeat guard (`executedCallSigs`).
  *
@@ -2263,18 +2316,39 @@ export class CoreToolScheduler {
             ] === 'string'
               ? ((reqInfo.args as Record<string, string>)['command'] ?? '')
               : '';
+          // Optional call: not every ToolRegistry shape in the wild (or in
+          // tests) implements this, and a missing enumeration must degrade to
+          // "cannot tell, let it through" rather than throwing and taking every
+          // shell command down with it.
+          const knownToolNames = this.toolRegistry.getAllToolNames?.() ?? [];
           const token = firstShellToken(command);
-          if (
-            token &&
-            isTypedToolNameForbiddenInShell(
-              token,
-              // Optional call: not every ToolRegistry shape in the wild (or in
-              // tests) implements this, and a missing enumeration must degrade to
-              // "cannot tell, let it through" rather than throwing and taking
-              // every shell command down with it.
-              this.toolRegistry.getAllToolNames?.() ?? [],
-            )
-          ) {
+          const spawnedTool =
+            isTypedToolNameForbiddenInShell(token, knownToolNames)
+              ? token
+              : typedToolNameSpawnedInScript(command, knownToolNames);
+          // A research turn's web access must be observable, or the evidence
+          // gate is judging a run it cannot see (diagnosed 2026-07-25 — see
+          // shellReachesNetworkForResearch).
+          if (isResearchTurnActive()) {
+            const network = shellReachesNetworkForResearch(
+              reqInfo.args as Record<string, unknown>,
+            );
+            if (network.detected) {
+              newToolCalls.push({
+                status: 'error',
+                request: reqInfo,
+                tool: toolInstance,
+                response: createErrorResponse(
+                  reqInfo,
+                  new Error(shellResearchRefusal(network.what)),
+                  ToolErrorType.INVALID_TOOL_PARAMS,
+                ),
+                durationMs: 0,
+              });
+              continue;
+            }
+          }
+          if (token && spawnedTool) {
             newToolCalls.push({
               status: 'error',
               request: reqInfo,
@@ -2282,8 +2356,9 @@ export class CoreToolScheduler {
               response: createErrorResponse(
                 reqInfo,
                 new Error(
-                  `"${token}" is one of your TOOLS, not a shell program, so this was NOT run — a shell would only answer "'${token}' is not recognized as a command". ` +
-                    `Call ${token} directly as a tool call with its own arguments, instead of passing it to ${reqInfo.name}.`,
+                  `"${spawnedTool}" is one of your TOOLS, not a shell program, so this was NOT run — a shell would only answer "'${spawnedTool}' is not recognized as a command". ` +
+                    `Call ${spawnedTool} directly as a tool call with its own arguments, instead of passing it to ${reqInfo.name}` +
+                    `${spawnedTool === token ? '' : ' (it was being spawned from inside the script body)'}.`,
                 ),
                 ToolErrorType.INVALID_TOOL_PARAMS,
               ),

@@ -24,6 +24,10 @@ import {
   researchStopReport,
   sourceOrigin,
   synthesisCitesFetchedSources,
+  isResearchTurnActive,
+  setResearchTurnActive,
+  shellReachesNetworkForResearch,
+  shellResearchRefusal,
 } from './research-controller.js';
 
 describe('research controller', () => {
@@ -117,8 +121,15 @@ describe('research controller', () => {
 
   it('produces an observable continuation when coverage is shallow', () => {
     const trace = createResearchTrace('p', true);
+    // One successful search, so this exercises the COVERAGE branch. An empty
+    // trace now takes the zero-observable-evidence branch instead, which is a
+    // different message on purpose (see below).
+    recordResearchCall(trace, 'q0', 'web_search', { query: 'alpha' });
+    recordResearchResults(trace, [
+      { functionResponse: { id: 'q0', response: { ok: true } } },
+    ]);
     expect(researchContinuation(trace)).toContain(
-      'only 0 of 3 distinct sub-questions',
+      'only 1 of 3 distinct sub-questions',
     );
     // The message must not read as a quota — that framing is what produced
     // four fetches of the same site (PLAN 4.2).
@@ -426,5 +437,75 @@ describe('research stays headless (PLAN 2.5)', () => {
     expect(
       routeResearchToolCall(trace, 'launch_app', { url: 'https://example.com' }),
     ).toBe('launch_app');
+  });
+});
+
+describe('shell-based research is refused (diagnosed 2026-07-25)', () => {
+  it('detects the exact substitution seen in the field', () => {
+    // Verbatim shape from the session: a python heredoc scraping Google.
+    const command =
+      "python3 << 'EOF'\nimport requests\nresponse = requests.get(\"https://www.google.com/search?q=peppers\")\nEOF\n";
+    const verdict = shellReachesNetworkForResearch({ command });
+    expect(verdict.detected).toBe(true);
+    expect(verdict.what).toBe('python requests');
+  });
+
+  it('detects the other ways out', () => {
+    for (const command of [
+      'curl -s https://example.com',
+      'wget https://example.com',
+      'python3 -c "import urllib.request"',
+      'node -e "fetch(\'https://x\')"',
+      'lynx -dump https://example.com',
+    ]) {
+      expect(shellReachesNetworkForResearch({ command }).detected).toBe(true);
+    }
+  });
+
+  it('leaves ordinary shell work alone', () => {
+    for (const command of [
+      'ls -la',
+      'python3 -c "print(1+1)"',
+      'npm test',
+      'git status',
+    ]) {
+      expect(shellReachesNetworkForResearch({ command }).detected).toBe(false);
+    }
+  });
+
+  it('explains both reasons, including the one the model cannot infer', () => {
+    const refusal = shellResearchRefusal('python requests');
+    expect(refusal).toContain('invisible to the runtime');
+    expect(refusal).toContain('do NOT try to run');
+    // The shell must not read as forbidden in general.
+    expect(refusal).toContain('still available');
+  });
+
+  it('the research-turn flag is off unless set', () => {
+    expect(isResearchTurnActive()).toBe(false);
+    setResearchTurnActive(true);
+    expect(isResearchTurnActive()).toBe(true);
+    setResearchTurnActive(false);
+  });
+});
+
+describe('zero-observable-evidence message protects the deliverable', () => {
+  it('does not tell a finished model to start over', () => {
+    const trace = createResearchTrace('p', true);
+    const message = researchContinuation(trace);
+    expect(message).toContain('never called');
+    expect(message).toContain('KEEP everything you have already produced');
+    expect(message).toContain('Do not restart');
+    // The old generic phrasing is what caused the restart.
+    expect(message).not.toContain('of 3 distinct sub-questions');
+  });
+
+  it('still gives the coverage detail once calls are actually landing', () => {
+    const trace = createResearchTrace('p', true);
+    recordResearchCall(trace, 'q0', 'web_search', { query: 'a' });
+    recordResearchResults(trace, [
+      { functionResponse: { id: 'q0', response: { ok: true } } },
+    ]);
+    expect(researchContinuation(trace)).toContain('distinct sub-questions');
   });
 });

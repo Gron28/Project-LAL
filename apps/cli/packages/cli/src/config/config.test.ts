@@ -2914,7 +2914,28 @@ describe('loadCliConfig with includeDirectories', () => {
 
     expect(config.getManagedAutoMemoryEnabled()).toBe(true);
     expect(config.getManagedAutoDreamEnabled()).toBe(true);
-    expect(config.getAutoSkillEnabled()).toBe(true);
+    // autoSkill is the exception and is OFF by default (2026-07-25): unlike the
+    // memory toggles, it writes new skill FILES on its own from a background
+    // model run. Creating artifacts nobody asked for is opt-in.
+    expect(config.getAutoSkillEnabled()).toBe(false);
+  });
+
+  it('autoSkill: stays off unless explicitly enabled, and turns on when it is', async () => {
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    expect(
+      (await loadCliConfig({}, argv, undefined, [])).getAutoSkillEnabled(),
+    ).toBe(false);
+    expect(
+      (
+        await loadCliConfig(
+          { memory: { enableAutoSkill: true } },
+          argv,
+          undefined,
+          [],
+        )
+      ).getAutoSkillEnabled(),
+    ).toBe(true);
   });
 
   it('autoSkillConfirm: defaults to true when unset', async () => {

@@ -70,6 +70,7 @@ import {
   isExplicitWebResearchRequest,
   isResearchStopRequest,
   isResearchSynthesis,
+  setResearchTurnActive,
   recordResearchCall,
   recordResearchResults,
   routeResearchToolArgs,
@@ -2099,6 +2100,12 @@ export class GeminiClient {
       const carriedStop = stopRequested;
       this.researchTrace = createResearchTrace(prompt_id, enabled);
       this.researchTrace.stopRequested = carriedStop;
+      // Let the tool scheduler refuse shell-based web access for the duration of
+      // a research turn. Diagnosed 2026-07-25: the model scraped Google with
+      // python requests instead of calling web_search, so every piece of evidence
+      // was invisible to the gate, which then rejected a synthesis the model had
+      // already delivered.
+      setResearchTurnActive(enabled);
       // PLAN 6 — a new request gets a fresh artifact set. Without this, every
       // later request re-validates and re-announces files an earlier one wrote.
       this.producedArtifacts.clear();
@@ -2833,6 +2840,7 @@ export class GeminiClient {
             value: researchStopReport(researchTrace),
           };
           researchTrace.enabled = false;
+          setResearchTurnActive(false);
           normalCompletion = true;
           return turn;
         }

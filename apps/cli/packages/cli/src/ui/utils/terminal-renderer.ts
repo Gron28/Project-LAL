@@ -31,7 +31,36 @@ export function resolveTerminalRenderer(input: {
     input.screenReader ||
     term === 'dumb' ||
     environment['CI'] === 'true';
-  return nonInteractive ? 'static' : 'viewport';
+  if (nonInteractive) return 'static';
+  // A remote session gets the static renderer.
+  //
+  // `viewport` takes over the alternate screen and repaints the whole frame on
+  // every update. Locally that is smooth; over ssh each repaint is a full screen
+  // of bytes across the link, and on a phone terminal the result is a visible
+  // flash on every keystroke and every streamed token — reported 2026-07-25 from
+  // Termux: "the interface flashes on and off extremely fast ... on desktop and
+  // Linux this did not happen".
+  //
+  // Detection is the ssh server's own variables, because that is all that
+  // survives the hop: TERM is forwarded (Termux sends xterm-256color, identical
+  // to a desktop terminal) and TERMUX_VERSION is not. So this cannot single out a
+  // phone, and does not try to — it distinguishes local from remote, which is the
+  // axis that actually predicts the problem.
+  //
+  // Override in either direction with LAL_TERMINAL_RENDERER=viewport|static.
+  if (isRemoteSession(environment)) return 'static';
+  return 'viewport';
+}
+
+/** True when this process is attached to a terminal on the other end of ssh. */
+export function isRemoteSession(
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return Boolean(
+    environment['SSH_TTY'] ||
+      environment['SSH_CONNECTION'] ||
+      environment['SSH_CLIENT'],
+  );
 }
 
 export function setTerminalRenderer(renderer: ResolvedTerminalRenderer): void {
