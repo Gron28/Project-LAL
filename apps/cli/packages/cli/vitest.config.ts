@@ -85,10 +85,6 @@ export default defineConfig({
         __dirname,
         '../audio-capture/src/index.ts',
       ),
-      '@lal/sdk/daemon': path.resolve(
-        __dirname,
-        '../sdk-typescript/src/daemon/index.ts',
-      ),
     },
   },
   test: {

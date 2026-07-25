@@ -1780,7 +1780,6 @@ describe('Utility Functions', () => {
 
   describe('getQwenCachedCredentialPath', () => {
     it('should return correct path to cached credentials', async () => {
-      const os = await import('os');
       const path = await import('path');
 
       // Follows the resolved config home rather than a hardcoded name; on a

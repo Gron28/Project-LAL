@@ -100,7 +100,6 @@
   "references": [
     { "path": "../core" },
     { "path": "../acp-bridge" },
-    { "path": "../audio-capture" },
-    { "path": "../sdk-typescript/tsconfig.reference.json" }
+    { "path": "../audio-capture" }
   ]
 }

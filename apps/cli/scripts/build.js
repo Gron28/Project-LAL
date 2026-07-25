@@ -52,7 +52,6 @@ const buildOrder = [
   'packages/web-templates',
   'packages/audio-capture',
   'packages/acp-bridge',
-  'packages/sdk-typescript',
   'packages/cli',
 ];
 // Removed 2026-07-25: packages/webui, packages/web-shell,

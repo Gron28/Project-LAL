@@ -44,7 +44,6 @@
     "@lal/acp-bridge": "file:../acp-bridge",
     "@lal/audio-capture": "file:../audio-capture",
     "@lal/core": "file:../core",
-    "@lal/sdk": "file:../sdk-typescript",
     "@lal/web-templates": "file:../web-templates",
     "@types/update-notifier": "^6.0.8",
     "ansi-regex": "^6.2.2",
