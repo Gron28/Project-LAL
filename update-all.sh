@@ -159,12 +159,12 @@ echo "==> Building the executable CLI bundle"
 # small derived profile below is the official durable solution: it preserves
 # the familiar base name in LAL while giving tool-using Gemma enough room.
 if command -v ollama >/dev/null && ollama show gemma4:12b >/dev/null 2>&1; then
-  if ! ollama show gemma4:12b-lal-cli-16k >/dev/null 2>&1; then
-    echo "==> Creating Gemma 12B's managed 16K-context profile"
-    PROFILE_FILE="$(mktemp "${TMPDIR:-/tmp}/lal-gemma4-16k.XXXXXX.Modelfile")"
+  if ! ollama show gemma4:12b-lal-cli-ctx >/dev/null 2>&1; then
+    echo "==> Creating Gemma 12B's managed 100K-context profile"
+    PROFILE_FILE="$(mktemp "${TMPDIR:-/tmp}/lal-gemma4-ctx.XXXXXX.Modelfile")"
     trap 'rm -f "$PROFILE_FILE"' EXIT
-    printf 'FROM gemma4:12b\nPARAMETER num_ctx 16384\n' > "$PROFILE_FILE"
-    ollama create gemma4:12b-lal-cli-16k -f "$PROFILE_FILE"
+    printf 'FROM gemma4:12b\nPARAMETER num_ctx 102400\n' > "$PROFILE_FILE"
+    ollama create gemma4:12b-lal-cli-ctx -f "$PROFILE_FILE"
     rm -f "$PROFILE_FILE"
     trap - EXIT
   fi

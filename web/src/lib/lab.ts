@@ -239,8 +239,36 @@ export function renameModel(oldName: string, newName: string): { ok: boolean; er
 }
 
 export type ModelInfo = { name: string; source: "local" | "ollama"; path: string; gb: number };
-export const MANAGED_MODEL_PROFILE_SUFFIX = "-lal-cli-16k";
-export const OLLAMA_CLI_CONTEXT = 16384;
+// Context-agnostic on purpose. The suffix used to be "-lal-cli-16k" and the
+// number in the NAME is exactly what rotted when the value changed, so it no
+// longer encodes one.
+export const MANAGED_MODEL_PROFILE_SUFFIX = "-lal-cli-ctx";
+/**
+ * Context baked into the managed Ollama profile, raised from 16,384 on
+ * 2026-07-25 after measuring what this box actually does.
+ *
+ * The 16k cap was assumed to be protecting VRAM. It was not: gemma4:12b is 7.6 GB
+ * of weights against 7.98 GB of VRAM, so at 16k it was ALREADY running 23% on the
+ * CPU. Gemma's interleaved sliding-window attention means only the global layers
+ * scale with context, so KV growth is unusually cheap here. Measured on an
+ * RX 6650 XT (8 GB) with the desktop running:
+ *
+ *   ctx      total    CPU/GPU    generation
+ *   16,384   8.7 GB   23%/77%    14.0 tok/s
+ *   32,768   8.8 GB   24%/76%    -
+ *   65,536   9.0 GB   29%/71%    11.5 tok/s
+ *   102,400  9.1 GB   32%/68%    10.2 tok/s
+ *
+ * So 6.25x the context costs 0.4 GB and ~27% of generation speed. That trade was
+ * requested explicitly; 65,536 is the cheaper middle if speed regresses too far
+ * in practice.
+ *
+ * NOT MEASURED: prompt-eval time on a genuinely long prompt. Generation was timed
+ * with a short one. With a third of the model on CPU, filling 100k tokens of
+ * context will be materially slower than filling 16k, and that cost lands before
+ * the first token appears.
+ */
+export const OLLAMA_CLI_CONTEXT = 102_400;
 export function isPublicModelName(name: string): boolean {
   return !name.endsWith(MANAGED_MODEL_PROFILE_SUFFIX);
 }
@@ -612,7 +640,7 @@ export function managedOllamaModel(model: string): string {
   const candidate = `${model}${MANAGED_MODEL_PROFILE_SUFFIX}`;
   if (model.toLowerCase().includes("gemma")) {
     if (!allModels().some((item) => item.name === candidate)) {
-      throw new Error(`managed 16K profile is missing for ${model}; run update-all.sh`);
+      throw new Error(`managed long-context profile is missing for ${model}; run update-all.sh`);
     }
     return candidate;
   }
