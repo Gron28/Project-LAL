@@ -57,6 +57,43 @@ $SystemPrompt = (Get-Content -LiteralPath $SystemBasePromptPath -Raw) + "`r`n`r`
 
 $RuntimeFile = Join-Path $LalHome 'runtime-version'
 $InstalledRuntime = if (Test-Path $RuntimeFile) { (Get-Content $RuntimeFile -Raw).Trim() } else { '' }
+function Remove-StaleRuntime {
+  param([string]$Path)
+  if (-not (Test-Path $Path)) { return }
+  try {
+    Remove-Item -Recurse -Force $Path -ErrorAction Stop
+    return
+  } catch {
+    # Windows permits RENAMING a directory that holds a running executable but
+    # not DELETING one: a node.exe left running by an open LAL session keeps its
+    # own image locked. Reported 2026-07-25 as
+    #   "Cannot remove item ...\runtime.old\node\node.exe: Access to the path
+    #    'node.exe' is denied"
+    # which aborted `lal update` outright. Deleting leftover bytes is cleanup, not
+    # part of installing, and must never be able to fail an update -- least of all
+    # a leftover from a PREVIOUS update, which made the failure permanent until
+    # the lock happened to clear. Move it aside so the path is free, and let a
+    # later run collect it.
+    $Aside = "$Path.$(Get-Date -Format 'yyyyMMddHHmmss')"
+    try {
+      Move-Item -Force $Path $Aside -ErrorAction Stop
+      Write-Warning "Could not delete $Path - a LAL session is probably still running. Moved it to $Aside; delete it later at your leisure. The update itself continues."
+    } catch {
+      Write-Warning "Could not delete or move $Path. If the update fails, close every LAL window and run 'lal update' again."
+    }
+  }
+}
+
+# Opportunistically collect aside-moved runtimes from earlier updates. Best
+# effort by definition: any that are still locked are simply skipped.
+function Clear-AsideRuntimes {
+  param([string]$RuntimeRoot)
+  $parent = Split-Path -Parent $RuntimeRoot
+  $leaf = Split-Path -Leaf $RuntimeRoot
+  Get-ChildItem -Path $parent -Directory -Filter "$leaf.old.*" -ErrorAction SilentlyContinue |
+    ForEach-Object { Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue }
+}
+
 $RuntimeCommand = Join-Path $RuntimeDir 'bin\lal.cmd'
 $ExpectedRuntime = [string]$Manifest.lalRuntimeVersion
 if ($InstalledRuntime -ne $ExpectedRuntime -or -not (Test-Path $RuntimeCommand)) {
@@ -73,7 +110,7 @@ if ($InstalledRuntime -ne $ExpectedRuntime -or -not (Test-Path $RuntimeCommand))
     $StagedRuntime = Join-Path $TempDir 'lal-cli'
     if (-not (Test-Path (Join-Path $StagedRuntime 'bin\lal.cmd'))) { throw 'Invalid LAL runtime archive.' }
     $OldRuntime = "$RuntimeDir.old"
-    if (Test-Path $OldRuntime) { Remove-Item -Recurse -Force $OldRuntime }
+    Remove-StaleRuntime $OldRuntime
     if (Test-Path $RuntimeDir) { Move-Item -Force $RuntimeDir $OldRuntime }
     try {
       Move-Item -Force $StagedRuntime $RuntimeDir
@@ -81,9 +118,14 @@ if ($InstalledRuntime -ne $ExpectedRuntime -or -not (Test-Path $RuntimeCommand))
       if (Test-Path $OldRuntime) { Move-Item -Force $OldRuntime $RuntimeDir }
       throw
     }
-    if (Test-Path $OldRuntime) { Remove-Item -Recurse -Force $OldRuntime }
+    # The new runtime is already in place; this is only tidying. It must not be
+    # able to turn a completed update into a reported failure.
+    Remove-StaleRuntime $OldRuntime
+    Clear-AsideRuntimes $RuntimeDir
   } finally {
-    if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
+    if (Test-Path $TempDir) {
+      Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
+    }
   }
 }
 
