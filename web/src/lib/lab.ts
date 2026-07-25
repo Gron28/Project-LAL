@@ -260,13 +260,29 @@ export const MANAGED_MODEL_PROFILE_SUFFIX = "-lal-cli-ctx";
  *   102,400  9.1 GB   32%/68%    10.2 tok/s
  *
  * Re-measured on ollama 0.32.3 the same day (weights unchanged - the pull returned
- * the identical manifest, so this is a runtime win, not a model one):
+ * the identical manifest, so this is a runtime win, not a model one). Full curve:
  *
- *   16,384   7.9 GB   12%/88%    14.9 tok/s
- *   102,400  8.3 GB   23%/77%    11.4 tok/s
+ *   ctx      total    CPU/GPU    generation   vs 16k
+ *   16,384   7.9 GB   12%/88%    14.9 tok/s   -
+ *   32,768   8.0 GB   14%/86%    14.4 tok/s   -3%
+ *   65,536   8.2 GB   19%/81%    12.3 tok/s   -17%
+ *   102,400  8.3 GB   23%/77%    11.4 tok/s   -24%
  *
- * 100k on 0.32.3 costs what 16k cost on 0.30.10. That is what justifies keeping
- * this at 102,400 rather than the 65,536 middle.
+ * The knee is at 32,768: doubling the context costs 3%. Everything above it is
+ * paid for in KV cache displacing model layers onto the CPU. 102,400 is set
+ * because it was asked for explicitly; 32,768 is the value to choose if
+ * generation speed matters more than reach.
+ *
+ * Note the cost is STANDING, not usage-based: the KV cache is allocated when the
+ * model loads, so a short conversation at num_ctx=102,400 still generates at
+ * 11.4 tok/s rather than 14.9.
+ *
+ * Separately measured, and the real long-context tax: prefill runs at ~336 tok/s,
+ * so a COLD 100k prompt costs ~5 minutes before the first token. Incremental turns
+ * reuse the KV prefix and do not pay this, but Ollama unloads the model after ~5
+ * minutes idle and the cache dies with it, so a pause turns the next turn into a
+ * cold start. Raising OLLAMA_KEEP_ALIVE is NOT the fix on this box: 8.3 GB resident
+ * would starve llama-server's own model on an 8 GB card.
  *
  * So 6.25x the context costs 0.4 GB and ~27% of generation speed. That trade was
  * requested explicitly; 65,536 is the cheaper middle if speed regresses too far
