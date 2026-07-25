@@ -1,5 +1,6 @@
 import { activatePublicModel, allModels, beginGeneration, contextProfileForModel, isPublicModelName, modelRuntimeSettings, SERVE_PORT, touchServing } from "@/lib/lab";
 import { appendHostObservationForClientDevice } from "@/lib/runs";
+import { recordUsage } from "@/lib/usage-ledger";
 import { acquireCliGpuLease, cliAuthenticatedDeviceId, cliAuthorized, recordCliAccess, streamWithRelease, unauthorizedResponse } from "@/lib/lal-cli";
 
 export const dynamic = "force-dynamic";
@@ -190,6 +191,23 @@ export async function POST(request: Request) {
     appendHostObservationForClientDevice(deviceId, {
       k: "usage",
       v: { promptTokens, completionTokens, totalTokens, tokPerSec: completionTokens ? Number((completionTokens / elapsedSeconds).toFixed(1)) : null, ctx: observedContext, conf: null },
+    });
+    // The call above only lands when a *running client run* owned by this device
+    // exists (runs.ts filters on executionLocation/status), so ordinary chat and
+    // CLI turns were computing usage and throwing it away — 61 stored events
+    // against ~15,900 think events, all of them HIVE nodes. The ledger records
+    // every request unconditionally.
+    recordUsage({
+      ts: startedAt,
+      dev: deviceId ?? null,
+      devName: request.headers.get("x-lal-device-name") ?? undefined,
+      model,
+      prompt: promptTokens,
+      completion: completionTokens,
+      total: totalTokens,
+      ctx: observedContext,
+      ms: Date.now() - startedAt,
+      src: request.headers.get("x-lal-client-version") ? "cli" : "web",
     });
   };
 
