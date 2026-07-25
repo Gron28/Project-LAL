@@ -20,30 +20,45 @@ history retains the originals.
 
 State as of 2026-07-25, end of day. Stages 0, 1, 3, 4, 5, 6 complete; Stage 2
 complete except **2.4**; Stage 7 partially applied. Working tree clean, 15,471
-core tests pass, nothing pushed.
+core tests pass, nothing pushed. HTML-001 measured at 10/10 on Linux (below);
+the Windows bar is still unmeasured.
 
-**Everything remaining is gated on one number that does not exist yet.** Eight
-stages of behaviour changed after the last benchmark run (6/6, 2026-07-24), and
-none of it has been measured.
+### 1. HTML-001 — measured 2026-07-25, **10/10 on Linux**
 
-### 1. Run HTML-001. This is the whole first step.
+Run and recorded (`html001-2026-07-25-post-stage-pass.json`, `meetsBar: true`).
+Averages 115s / 123,766 tokens / 1 tool failure / 1 retry / 0 regenerated writes
+/ 8 turns, against the 2026-07-24 6/6 baseline's 113s / 126,385 / 2 / 1 / 0 / 9.
+Zero condition failures across all ten runs. See `CHANGELOG.md` for the per-run
+table and the three defects the passing runs exposed.
+
+**The pass has two honest gaps, and neither is closed by this number:**
+
+- **It is Linux, not Windows.** The bar as written is a Windows bar and the
+  Windows failures are what motivated the benchmark. This run cannot satisfy it.
+- **Condition 7 is still `null`, in all ten runs.** The record does carry
+  `interruptedWrites` / `resumedFromDraft` / `discardedDrafts` — they are all 0,
+  and `html001.mjs:328` scores condition 7 as `null` when `interruptedWrites === 0`.
+  A stream never died mid-write, so Stage 3.1's resume path was never entered.
+  It is unmeasured, not passing. Measuring it needs a fault-injection run
+  (kill the stream mid-write), not another clean ten.
+
+To re-run:
 
 ```bash
 export LAL_API_KEY=$(./start.sh --show-cli-token | tail -1)
 npm run bench:html001 -- --runs 10
 ```
 
-Safe to interrupt now: the report is rewritten after every run and carries
+Safe to interrupt: the report is rewritten after every run and carries
 `complete: false` until the loop ends. Output goes to `web/.data/html001/` —
 **never** `web/.data/bench/`, which is the benchmark UI's results directory (four
-reports written there on 2026-07-24 blanked the /benchmark page).
+reports written there on 2026-07-24 blanked the /benchmark page). Note that
+`web/.data/` is gitignored, so every baseline named here exists only on the
+machine that produced it; `CHANGELOG.md` is the durable record.
 
-Compare against `web/.data/html001/html001-after-enforced-breaker-2026-07-24.json`
-(6/6). Conditions 7 and 8 are now real measurements: the record carries
-`interruptedWrites`, `resumedFromDraft`, `discardedDrafts`.
-
-**The bar is 9 of 10 on Windows, unattended.** Until it is recorded in
-`CHANGELOG.md`, Stage 7's deletions and Stage 8 do not begin.
+Launch it **detached** (`setsid nohup node scripts/html001.mjs …`). A twenty-minute
+foreground run was killed by an outer process-group cleanup two minutes in on
+2026-07-25, losing the run with no records written.
 
 ### 2. Stage 7 — de-brand and delete (after the bar)
 

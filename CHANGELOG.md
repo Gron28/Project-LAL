@@ -1,5 +1,67 @@
 # Changelog / engineering log
 
+## 2026-07-25 (late) — HTML-001: 10/10 on Linux, and what the passes exposed
+
+The number the plan gates everything behind. Ten consecutive unattended runs of
+`html-001/v1` against `qwen35-9b`, after eight stages of behaviour change that had
+never been measured. Every run passed; zero condition failures.
+
+| | 2026-07-24 baseline | 2026-07-25 | |
+|---|---|---|---|
+| runs / passes | 6 / 6 | **10 / 10** | 6/6 was never a ten-run set — its own summary says `meetsBar: false` |
+| wall (mean) | 112.9 s | 114.7 s | +1.6% — noise |
+| tokens (mean) | 126,385 | 123,766 | −2.1% |
+| tool failures (mean) | 2 | 1 | halved |
+| retries (mean) | 1 | 1 | unchanged |
+| regenerated writes | 0 | 0 | unchanged |
+| turns (mean) | 9 | 8 | −1 |
+
+Per run: 114s/117k, 113s/134k, 88s/68k, 100s/117k, 107s/102k, 109s/118k,
+125s/156k, 131s/109k, 136s/176k, 125s/140k. Spread is wide (68k–176k tokens,
+88s–136s) and the slow tail is the last four runs — worth watching, not yet a
+trend.
+
+**Nothing here got worse.** Which makes the three things the *passing* runs
+exposed the actual finding:
+
+- **The constant `tool_call` id is live and it suppressed legitimate work.**
+  Three runs logged `Duplicate provider tool call id "ZsSt4SkIFMRz0HtqT7MTlimNvzlKM896"`
+  — the same literal id in every run, in every session, because llama.cpp emits a
+  constant. In runs 1 and 3 what it swallowed was `read_file` on the `index.html`
+  the model had just written: the benchmark prompt says *"verify the file works
+  before saying it is complete"*, the model went to re-read its own file, and the
+  dedupe silently ate the verification. The runs passed because the page was
+  already correct. Dedupe on a constant id cannot distinguish a loop from a
+  deliberate second look.
+- **`web_fetch` rejects `file://`.** Run 1: the model, which can now see
+  `web_fetch` at all (2.1's fix), reached for it to render the local file and got
+  `The 'url' must be a valid URL starting with http:// or https://`. Making the
+  tool visible made its wrong-shape-for-local-verification problem visible too.
+  The model has no working way to *look at* an HTML file it wrote.
+- **Six `run_shell_command` permission denials across five runs**, all the same
+  shape: `xdg-open`, `open`, `python3 -m http.server`, `which chromium`. The model
+  spends turns trying to open a browser it cannot have in a headless session.
+  Expected under `--approval-mode=auto-edit`; still pure waste, and the same
+  instinct as the `web_fetch` attempt above.
+
+**Two gaps this number does not close, stated plainly:**
+
+- **It is Linux.** The bar is *9 of 10 on Windows, unattended*, and Windows is
+  where the original failures were seen. This run does not satisfy the bar as
+  written; it establishes the Linux figure.
+- **Condition 7 is `null` in all ten runs — unmeasured, not passing.** Stage 3.1
+  made the write stash enforceable and the record now carries `interruptedWrites`
+  / `resumedFromDraft` / `discardedDrafts`. All three were 0 every run, and
+  `html001.mjs:328` correctly scores condition 7 as `null` when no write was ever
+  interrupted. Ten clean runs cannot exercise a resume path; only fault injection
+  (killing a stream mid-write) can. The prior "conditions 7 and 8 are now real
+  measurements" note in the plan was true of 8 and wrong about 7, and is corrected.
+
+Process notes: the first attempt was killed two minutes in by an outer
+process-group cleanup, with no records written — ten-run sets are now launched
+detached (`setsid nohup`). `web/.data/` is gitignored, so this table, not the
+JSON, is the durable record.
+
 ## 2026-07-25 (evening) — six plan stages, and the instrument that gates them
 
 The plan's remaining functional stages landed in one pass. Every item below is
