@@ -151,6 +151,20 @@ function checkHtml(artifact: string, html: string): AcceptanceReport {
     });
   }
 
+  // An UNTERMINATED script is invisible to the extractor above, which requires a
+  // closing tag — so a `</script>` deleted by an edit produced no findings at all
+  // while the page was completely broken. Found by the PLAN 3.3 regression test
+  // on 2026-07-25.
+  const openTags = (html.match(/<script\b[^>]*>/gi) ?? []).length;
+  const closeTags = (html.match(/<\/script\s*>/gi) ?? []).length;
+  if (openTags > closeTags) {
+    findings.push({
+      severity: 'fatal',
+      code: 'unterminated-script',
+      message: `${openTags} <script> tag(s) but only ${closeTags} closing tag(s) — the rest of the document is swallowed as script text`,
+    });
+  }
+
   // A module body is legal JS that `new Function` rejects (top-level import /
   // export), so those are parsed only for balance, not compiled.
   for (const block of scripts) {
