@@ -422,6 +422,13 @@ export interface ChatCompressionInfo {
   newTokenCount: number;
   compressionStatus: CompressionStatus;
   triggerReason?: CompactionTriggerReason;
+  /**
+   * Absolute paths whose ENTIRE current content was re-embedded into the
+   * post-compact attachment (PLAN 5). The model can still see every byte of
+   * these, so the read cache must stay armed for them — clearing it would force
+   * a re-read of a file that is sitting in the prompt.
+   */
+  fullyRestoredFiles?: string[];
 }
 
 export type ServerGeminiChatCompressedEvent = {

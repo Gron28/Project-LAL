@@ -709,6 +709,10 @@ export class ChatCompressionService {
 
     let newTokenCount = originalTokenCount;
     let extraHistory: Content[] = [];
+    // Declared with extraHistory, not inside the compose block: the successful
+    // return reads it, and the degraded fallback path must be able to report an
+    // empty list rather than an undefined one.
+    const fullyRestoredFiles: string[] = [];
     let canCalculateNewTokenCount = false;
 
     if (!isSummaryEmpty) {
@@ -736,6 +740,10 @@ export class ChatCompressionService {
           {
             workspaceRoot: config.getTargetDir(),
             signal,
+            // PLAN 5: remember which files were embedded IN FULL, so the caller
+            // can leave the read cache armed for them instead of forcing a
+            // re-read of content that is sitting in the prompt.
+            onFullyRestoredFile: (filePath) => fullyRestoredFiles.push(filePath),
             maxFiles: tuning.maxRecentFiles,
             maxImages: tuning.maxRecentImages,
             // Restore plan-mode reminder + running-subagent snapshot so the
@@ -948,6 +956,7 @@ export class ChatCompressionService {
           newTokenCount,
           compressionStatus: CompressionStatus.COMPRESSED,
           triggerReason,
+          fullyRestoredFiles,
         },
       };
     }

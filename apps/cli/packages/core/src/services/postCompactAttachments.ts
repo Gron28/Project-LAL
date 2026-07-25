@@ -17,7 +17,7 @@
 
 import type { Content, Part } from '@google/genai';
 import { readFile, stat } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { resolve as resolvePath, sep as pathSep } from 'node:path';
 import { CHARS_PER_TOKEN } from './tokenEstimation.js';
 import { getFunctionResponseParts } from './compactionInputSlimming.js';
@@ -357,6 +357,16 @@ export async function readFileSizeAdaptive(
 export async function buildFileRestorationBlocks(
   filePaths: string[],
   signal?: AbortSignal,
+  /**
+   * Called with each path whose ENTIRE current content was embedded (PLAN 5).
+   *
+   * The distinction matters to the caller: an embedded file is one the model can
+   * still see every byte of after compaction, so forcing it to re-read that file
+   * is pure waste. A `reference` is only a filename, and re-reading it is
+   * genuinely required. Reported as a callback rather than a changed return type
+   * so existing callers and tests are unaffected.
+   */
+  onFullyEmbedded?: (filePath: string) => void,
 ): Promise<Content[]> {
   const references: string[] = [];
   const embeds: Array<{ path: string; content: string }> = [];
@@ -383,6 +393,7 @@ export async function buildFileRestorationBlocks(
     }
     embeds.push({ path: filePath, content: result.content });
     usedChars += result.content.length;
+    onFullyEmbedded?.(filePath);
   }
 
   const blocks: Content[] = [];
@@ -711,6 +722,12 @@ export interface ComposePostCompactOptions {
    */
   maxFiles?: number;
   /**
+   * Notified for each file whose full current content was embedded into the
+   * attachment block (PLAN 5). The caller uses it to keep the read cache armed
+   * for exactly those files instead of clearing it wholesale.
+   */
+  onFullyRestoredFile?: (filePath: string) => void;
+  /**
    * Max recent images to restore. Defaults to
    * `POST_COMPACT_MAX_IMAGES_TO_RESTORE`. Configurable via
    * `chatCompression.maxRecentImagesToRetain` (env
@@ -899,6 +916,47 @@ export function buildStateReminderParts(options: {
   return parts;
 }
 
+/**
+ * Active artifact drafts — PLAN 5's "active artifact drafts" line, and the half
+ * of PLAN 3.1 that only works if it survives compaction.
+ *
+ * When a stream dies mid-`write_file`, the generated characters are staged at
+ * `<target>.lal-partial` and the resume instructions are delivered as a turn
+ * error. A turn error is conversation, and compaction summarises conversation —
+ * so a compaction between the interruption and the retry silently deleted the
+ * only pointer to the staged work, and the model regenerated the file. The draft
+ * on disk is durable state, so it is re-derived here from disk rather than
+ * recovered from the transcript.
+ */
+export function buildActiveDraftsPart(filePaths: string[]): Part | null {
+  const drafts: Array<{ target: string; draft: string; chars: number }> = [];
+  for (const filePath of filePaths) {
+    const draft = `${filePath}.lal-partial`;
+    try {
+      const { size } = statSync(draft);
+      if (size > 0) drafts.push({ target: filePath, draft, chars: size });
+    } catch {
+      // No draft for this path — the ordinary case.
+    }
+  }
+  if (drafts.length === 0) return null;
+  return {
+    text: [
+      '<active-artifact-drafts>',
+      'A previous write to each of these files was interrupted. The characters that',
+      'were already generated are staged on disk. The target file itself is unchanged.',
+      'Read the draft and continue from its last COMPLETE line — do NOT regenerate',
+      'from the beginning. The runtime refuses a rewrite that is smaller than what is',
+      'already staged.',
+      ...drafts.map(
+        (d) =>
+          `- ${sanitizePathForDisplay(d.target)} — ${d.chars} staged characters at ${sanitizePathForDisplay(d.draft)}`,
+      ),
+      '</active-artifact-drafts>',
+    ].join('\n'),
+  };
+}
+
 export async function composePostCompactHistory(
   history: Content[],
   summary: string,
@@ -917,7 +975,11 @@ export async function composePostCompactHistory(
   const filePaths = extractRecentFilePaths(history, maxFiles).filter((p) =>
     isInsideWorkspace(p, workspaceRoot),
   );
-  const fileBlocks = await buildFileRestorationBlocks(filePaths, signal);
+  const fileBlocks = await buildFileRestorationBlocks(
+    filePaths,
+    signal,
+    options.onFullyRestoredFile,
+  );
 
   const images = extractRecentImages(history, maxImages);
   const imageBlock = buildImageRestorationBlock(images);
@@ -939,6 +1001,11 @@ export async function composePostCompactHistory(
   const postAckParts: Part[] = [
     ...buildStateReminderParts({ planModeActive, runningSubagents }),
   ];
+  // Before file bodies: a staged partial write is the single most expensive
+  // thing to forget, because forgetting it means regenerating the file that
+  // just exhausted a response.
+  const draftsPart = buildActiveDraftsPart(filePaths);
+  if (draftsPart) postAckParts.push(draftsPart);
   for (const block of fileBlocks) {
     for (const part of block.parts ?? []) postAckParts.push(part);
   }

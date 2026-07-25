@@ -150,6 +150,7 @@ import {
 } from '../confirmation-bus/types.js';
 import { partToString } from '../utils/partUtils.js';
 import { createHookOutput, SessionStartSource } from '../hooks/types.js';
+import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import { MessageDisplayDispatcher } from './message-display-dispatcher.js';
 
@@ -3301,8 +3302,38 @@ export class GeminiClient {
       // so prior read_file results that were summarised away would still
       // resolve to the file_unchanged placeholder. Clear so post-compaction
       // Reads re-emit bytes the model can no longer see in history.
+      //
+      // PLAN 5 — but not for files the attachment block re-embedded IN FULL.
+      // Those bytes ARE in the new prompt, so clearing their entries produced
+      // exactly the reported symptom: "after compaction the model still knew
+      // what it was doing, but the file-editing subsystem had forgotten the file
+      // was already read", and the next edit demanded a re-read of a file the
+      // model was already looking at. Conversation history and runtime working
+      // state are different things; this is the seam where they were conflated.
       debugLogger.debug('[FILE_READ_CACHE] clear after tryCompressChat');
-      this.config.getFileReadCache().clear();
+      const fileReadCache = this.config.getFileReadCache();
+      fileReadCache.clear();
+      for (const restoredPath of info.fullyRestoredFiles ?? []) {
+        try {
+          // Re-arm from the file's CURRENT stats. If it changed between
+          // restoration and here, the fingerprint differs and the next edit
+          // correctly demands a fresh read — the cache is never told the model
+          // has seen bytes it has not.
+          const stats = fs.statSync(restoredPath);
+          fileReadCache.recordRead(restoredPath, stats, {
+            full: true,
+            cacheable: true,
+          });
+        } catch {
+          // Deleted or unreadable since restoration: leaving it out of the cache
+          // is the safe direction — a re-read reports the real error.
+        }
+      }
+      if (info.fullyRestoredFiles?.length) {
+        debugLogger.debug(
+          `[FILE_READ_CACHE] re-armed ${info.fullyRestoredFiles.length} fully restored file(s) after compaction`,
+        );
+      }
       this.getChat().setLastPromptTokenCount(info.newTokenCount);
       // Re-send a full IDE context blob on the next regular message
       // compression may have summarized away the merged IDE context
