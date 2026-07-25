@@ -29,6 +29,7 @@ import type {
   PromptConfig,
   ToolConfig,
 } from '../../agents/runtime/agent-types.js';
+import { localModelLease } from '../../services/model-lease.js';
 import {
   AgentHeadless,
   ContextState,
@@ -1663,7 +1664,10 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
           typedStopOutput.getEffectiveReason(),
         );
         continueContext.set('hook_context', '');
-        await subagent.execute(continueContext, signal);
+        await localModelLease.run(
+          `agent-stop-hook:${agentType}`,
+          () => subagent.execute(continueContext, signal),
+        );
 
         if (signal?.aborted) return undefined;
       } catch (hookError) {
@@ -1870,8 +1874,22 @@ class AgentToolInvocation extends BaseToolInvocation<AgentParams, ToolResult> {
         }
       }
 
-      // Execute the subagent (blocking)
-      await subagent.execute(contextState, signal);
+      // Execute the subagent (blocking).
+      //
+      // PLAN 2.5 — under the model lease. The model may plan several subagents
+      // and that planning is correct; this box just cannot run their models at
+      // the same time. Each still gets its own isolated context, which is what a
+      // subagent is actually for. The wait is announced because an invisible
+      // queue is indistinguishable from a hang.
+      await localModelLease.run(
+        `agent:${agentType}`,
+        () => subagent.execute(contextState, signal),
+        (info) =>
+          updateOutput?.(
+            `Waiting for the model: ${info.running} agent(s) running, this one is #${info.queued} in the queue. ` +
+              `This box serves one model at a time; raise LAL_MAX_CONCURRENT_AGENTS to change that.`,
+          ),
+      );
 
       let stopHookWarning: string | undefined;
       if (hookSystem && !signal?.aborted) {

@@ -132,6 +132,18 @@ export function routeResearchToolCall(
   if (!trace.enabled) return name;
   const embedded = embeddedResearchCommand(args);
   if (name === 'run_shell_command' && embedded) return embedded.name;
+  // PLAN 2.5 — "research must not open real Firefox windows; fetch is headless."
+  // The computer-use driver opens a REAL window on the operator's desktop and
+  // steals focus. Reading a source needs none of that: web_fetch is an HTTP GET
+  // plus html-to-text. So a research turn that tries to launch a browser at a URL
+  // is redirected to the headless path.
+  if (
+    (name === 'launch_app' || name === 'page') &&
+    typeof args['url'] === 'string' &&
+    /^https?:\/\//i.test(args['url'].trim())
+  ) {
+    return 'web_fetch';
+  }
   if (name !== 'tool_search') return name;
   const query = typeof args['query'] === 'string' ? args['query'].trim() : '';
   if (!query) return name;
@@ -150,6 +162,12 @@ export function routeResearchToolArgs(
 ): Record<string, unknown> {
   if (originalName === 'tool_search' && routedName === 'web_search') {
     return { query: args['query'] };
+  }
+  if (
+    (originalName === 'launch_app' || originalName === 'page') &&
+    routedName === 'web_fetch'
+  ) {
+    return { url: args['url'], prompt: RESEARCH_FETCH_PROMPT };
   }
   if (originalName === 'run_shell_command') {
     const embedded = embeddedResearchCommand(args);

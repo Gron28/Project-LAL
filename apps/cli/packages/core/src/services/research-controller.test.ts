@@ -398,3 +398,33 @@ describe('research stop request (PLAN 4.2)', () => {
     expect(report).toContain('Do not make another search or fetch call');
   });
 });
+
+describe('research stays headless (PLAN 2.5)', () => {
+  it('redirects a browser launch at a URL to the headless fetch', () => {
+    const trace = createResearchTrace('p', true);
+    const args = { url: 'https://sqlite.org/isolation.html' };
+    expect(routeResearchToolCall(trace, 'launch_app', args)).toBe('web_fetch');
+    expect(routeResearchToolCall(trace, 'page', args)).toBe('web_fetch');
+    expect(routeResearchToolArgs('launch_app', 'web_fetch', args)).toMatchObject({
+      url: args.url,
+      prompt: expect.stringMatching(/current research question/i),
+    });
+  });
+
+  it('leaves a non-URL app launch alone — that is not a source read', () => {
+    const trace = createResearchTrace('p', true);
+    expect(routeResearchToolCall(trace, 'launch_app', { app: 'code' })).toBe(
+      'launch_app',
+    );
+    expect(
+      routeResearchToolCall(trace, 'launch_app', { url: 'file:///tmp/x.html' }),
+    ).toBe('launch_app');
+  });
+
+  it('does not redirect outside a research turn', () => {
+    const trace = createResearchTrace('p', false);
+    expect(
+      routeResearchToolCall(trace, 'launch_app', { url: 'https://example.com' }),
+    ).toBe('launch_app');
+  });
+});
