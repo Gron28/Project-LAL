@@ -11,7 +11,6 @@ import {
   isPrivateIp,
   isPrivateNetworkUrl,
 } from '../utils/fetch.js';
-import { runSideQuery } from '../utils/sideQuery.js';
 import { ToolErrorType } from './tool-error.js';
 import type {
   ToolCallConfirmationDetails,
@@ -27,6 +26,24 @@ import { createDebugLogger, type DebugLogger } from '../utils/debugLogger.js';
 
 const URL_FETCH_TIMEOUT_MS = 10000;
 const MAX_CONTENT_LENGTH = 100000;
+
+/**
+ * How much fetched page text is handed straight to the calling model.
+ *
+ * web_fetch used to run the fetched page through a full generation on the MAIN
+ * model (runSideQuery, pinned to config.getModel()) to summarise it before
+ * returning. On a single-GPU host that is ruinous: a research pass doing N
+ * fetches paid for N extra full generations, each with a page-sized prompt,
+ * serialised behind the same GPU lease the outer turn is already holding — the
+ * likeliest cause of research appearing to hang or fail outright (reported by
+ * the operator 2026-07-24).
+ *
+ * The content is now returned directly, exactly like read_file: the calling
+ * model is perfectly capable of extracting what it asked for, it already has the
+ * page in context, and no second model, second lease, or second failure mode is
+ * involved. 24k chars matches web_search's result budget.
+ */
+const DIRECT_CONTENT_MAX_CHARS = 24_000;
 const MAX_RESEARCH_REDIRECTS = 5;
 
 /**
@@ -184,41 +201,31 @@ class WebFetchToolInvocation extends BaseToolInvocation<
         `[WebFetchTool] Content length: ${textContent.length} characters`,
       );
 
-      const fallbackPrompt = `The user requested the following: "${this.params.prompt}".
-
-I have fetched the content from ${this.params.url}. Please use the following content to answer the user's request.
-
----
-${textContent}
----`;
+      const truncated = textContent.length > DIRECT_CONTENT_MAX_CHARS;
+      const body = truncated
+        ? textContent.slice(0, DIRECT_CONTENT_MAX_CHARS)
+        : textContent;
 
       this.debugLogger.debug(
-        `[WebFetchTool] Processing content with prompt: "${this.params.prompt}"`,
+        `[WebFetchTool] Returning ${body.length} chars directly (truncated=${truncated})`,
       );
 
-      const result = await runSideQuery(this.config, {
-        purpose: 'web-fetch',
-        // Pin to the main model — fast model loses too much fidelity on
-        // long, rich source material.
-        model: this.config.getModel(),
-        // Best-effort: the outer catch already converts processing failures
-        // into a tool error; retrying 7× just delays that fallback.
-        maxAttempts: 1,
-        contents: [{ role: 'user', parts: [{ text: fallbackPrompt }] }],
-        systemInstruction:
-          'Extract and summarize the requested information from the provided web content. ' +
-          'Be concise and accurate. Respond only with the requested information.',
-        abortSignal: signal,
-      });
-      const resultText = result.text || '';
-
-      this.debugLogger.debug(
-        `[WebFetchTool] Successfully processed content from ${this.params.url}`,
-      );
+      const resultText =
+        `Content of ${this.params.url}` +
+        (truncated
+          ? ` (first ${DIRECT_CONTENT_MAX_CHARS} of ${textContent.length} characters; ` +
+            `the page continues past this point)`
+          : '') +
+        `\n\nYou asked: "${this.params.prompt}"\n` +
+        `Answer that from the content below. If the answer is not here, say so ` +
+        `rather than guessing — do not refetch the same URL, it will return this ` +
+        `same content.\n\n---\n${body}\n---`;
 
       return {
         llmContent: resultText,
-        returnDisplay: `Content from ${this.params.url} processed successfully.`,
+        returnDisplay:
+          `Fetched ${body.length.toLocaleString()} chars from ${this.params.url}` +
+          (truncated ? ' (truncated)' : ''),
       };
     } catch (e) {
       const error = e as Error;
@@ -320,7 +327,7 @@ export class WebFetchTool extends BaseDeclarativeTool<
     super(
       WebFetchTool.Name,
       ToolDisplayNames.WEB_FETCH,
-      'Fetches content from a specified URL and processes it using an AI model\n- Takes a URL and a prompt as input\n- Supports content negotiation for markdown (reduces tokens by ~80%)\n- Fetches the URL content, converts HTML to text if needed\n- Processes the content with the prompt using a small, fast model\n- Returns the model\'s response about the content\n- Use this tool when you need to retrieve and analyze web content\n\nUsage notes:\n  - IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool instead of this one, as it may have fewer restrictions. All MCP-provided tools start with "mcp__".\n  - The URL must be a fully-formed valid URL\n  - The prompt should describe what information you want to extract from the page\n  - format parameter (optional): controls only the Accept header sent to the server. All content is normalized to plain text for LLM processing, regardless of format.\n  - "auto" (default): Prefers markdown via content negotiation, accepts HTML, text, or other content as fallback. Use when user does NOT specify a format.\n  - "markdown": Prefers text/markdown. Use when user explicitly asks for markdown content.\n  - "html": Prefers text/html. Content is still converted to plain text for LLM processing.\n  - "text": Prefers text/plain. Use when user explicitly asks for plain text.\n  - This tool is read-only and does not modify any files\n  - Results may be summarized if the content is very large\n  - Supports both public and private/localhost URLs using direct fetch',
+      'Fetches content from a specified URL and returns its text for you to read\n- Takes a URL and a prompt describing what you want from the page\n- Supports content negotiation for markdown (reduces tokens by ~80%)\n- Fetches the URL content, converts HTML to text if needed\n- Processes the content with the prompt using a small, fast model\n- Returns the model\'s response about the content\n- Use this tool when you need to retrieve and analyze web content\n\nUsage notes:\n  - IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool instead of this one, as it may have fewer restrictions. All MCP-provided tools start with "mcp__".\n  - The URL must be a fully-formed valid URL\n  - The prompt should describe what information you want to extract from the page\n  - format parameter (optional): controls only the Accept header sent to the server. All content is normalized to plain text for LLM processing, regardless of format.\n  - "auto" (default): Prefers markdown via content negotiation, accepts HTML, text, or other content as fallback. Use when user does NOT specify a format.\n  - "markdown": Prefers text/markdown. Use when user explicitly asks for markdown content.\n  - "html": Prefers text/html. Content is still converted to plain text for LLM processing.\n  - "text": Prefers text/plain. Use when user explicitly asks for plain text.\n  - This tool is read-only and does not modify any files\n  - Long pages are truncated, and the result says so; it is not silently summarised\n  - Supports both public and private/localhost URLs using direct fetch',
       Kind.Fetch,
       {
         properties: {

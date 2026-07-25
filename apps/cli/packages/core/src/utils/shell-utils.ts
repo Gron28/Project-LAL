@@ -48,6 +48,18 @@ const ENV_ASSIGNMENT_REGEX = /^[A-Za-z_][A-Za-z0-9_]*=/;
  * @returns The path to bash.exe if found, or 'bash' as fallback.
  */
 function findGitBashPath(): string {
+  return searchForBashExe() ?? 'bash';
+}
+
+/**
+ * Like {@link findGitBashPath}, but reports absence instead of guessing.
+ *
+ * The `'bash'` fallback is right when we already know we are inside a Git Bash
+ * session (MSYSTEM is set) and merely need something to spawn. It is wrong as a
+ * basis for *choosing* bash over cmd.exe, which needs proof that a real
+ * bash.exe exists — hence this variant.
+ */
+function searchForBashExe(): string | undefined {
   // Return cached result if available
   if (cachedBashPath) {
     return cachedBashPath;
@@ -99,9 +111,7 @@ function findGitBashPath(): string {
     }
   }
 
-  // Fallback to 'bash' and let the system handle it
-  cachedBashPath = 'bash';
-  return 'bash';
+  return undefined;
 }
 
 /**
@@ -130,6 +140,31 @@ export function getShellConfiguration(): ShellConfiguration {
         argsPrefix: ['-c'],
         shell: 'bash',
       };
+    }
+
+    // LAL_SHELL is the explicit override, and it wins over everything below.
+    const forced = process.env['LAL_SHELL']?.trim().toLowerCase();
+    if (forced === 'bash') {
+      return {
+        executable: findGitBashPath(),
+        argsPrefix: ['-c'],
+        shell: 'bash',
+      };
+    }
+    if (forced !== 'cmd' && forced !== 'powershell') {
+      // Prefer Git Bash on Windows when a real bash.exe is installed, even
+      // though MSYSTEM is unset — which is the normal case when `lal` is
+      // launched from cmd.exe. Requested by the operator 2026-07-24: the model
+      // handles POSIX tooling far better than cmd.exe's quoting and control
+      // flow, and cmd.exe cannot chain with `;` or use newlines at all, which
+      // the model keeps trying. Set LAL_SHELL=cmd to opt out.
+      //
+      // Deliberately gated on a verified executable: guessing 'bash' here would
+      // trade cmd.exe's awkwardness for a shell that does not exist.
+      const bashExe = searchForBashExe();
+      if (bashExe) {
+        return { executable: bashExe, argsPrefix: ['-c'], shell: 'bash' };
+      }
     }
 
     const comSpec = process.env['ComSpec'] || 'cmd.exe';

@@ -114,7 +114,12 @@ describe('WebFetchTool', () => {
       expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_FALLBACK_FAILED);
     });
 
-    it('should return WEB_FETCH_FALLBACK_FAILED on API processing failure', async () => {
+    it('returns page text directly and never calls a second model', async () => {
+      // web_fetch used to summarise every page with a full generation on the
+      // MAIN model, so a research pass paid for N extra generations serialised
+      // behind the GPU lease the outer turn already held. That made a model
+      // outage or a busy GPU a web_fetch failure. Now there is no second call
+      // to fail, and this test is what keeps it that way.
       vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(false);
       vi.spyOn(fetchUtils, 'fetchWithTimeout').mockResolvedValue({
         ok: true,
@@ -126,7 +131,9 @@ describe('WebFetchTool', () => {
       const params = { url: 'https://public.ip', prompt: 'summarize this' };
       const invocation = tool.build(params);
       const result = await invocation.execute(new AbortController().signal);
-      expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_FALLBACK_FAILED);
+      expect(result.error).toBeUndefined();
+      expect(String(result.llmContent)).toContain('Test content');
+      expect(mockGenerateContent).not.toHaveBeenCalled();
     });
 
     it('blocks a research redirect to a private network target', async () => {
@@ -288,18 +295,14 @@ describe('WebFetchTool', () => {
           ),
       } as Response);
 
-      mockGenerateContent.mockImplementation((options) => {
-        receivedContent = options.contents[0].parts[0].text;
-        return Promise.resolve({ text: 'Processed', usage: undefined });
-      });
-
       const tool = new WebFetchTool(mockConfig);
       const params = {
         url: 'https://api.github.com/repos/openai/codex/releases/tags/rust-v0.92.0',
         prompt: 'report the published date',
       };
       const invocation = tool.build(params);
-      await invocation.execute(new AbortController().signal);
+      const result = await invocation.execute(new AbortController().signal);
+      receivedContent = String(result.llmContent);
 
       expect(receivedContent).toContain('published_at');
       expect(receivedContent).toContain('2026-01-27T11:50:52Z');
@@ -318,15 +321,11 @@ describe('WebFetchTool', () => {
           Promise.resolve('# Hello World\n\nThis is markdown content.'),
       } as Response);
 
-      mockGenerateContent.mockImplementation((options) => {
-        receivedContent = options.contents[0].parts[0].text;
-        return Promise.resolve({ text: 'Processed', usage: undefined });
-      });
-
       const tool = new WebFetchTool(mockConfig);
       const params = { url: 'https://example.com', prompt: 'summarize' };
       const invocation = tool.build(params);
-      await invocation.execute(new AbortController().signal);
+      const result = await invocation.execute(new AbortController().signal);
+      receivedContent = String(result.llmContent);
 
       expect(receivedContent).toContain('# Hello World');
     });
@@ -339,11 +338,6 @@ describe('WebFetchTool', () => {
         text: () => Promise.resolve('Plain text content here'),
       } as Response);
 
-      mockGenerateContent.mockImplementation((options) => {
-        receivedContent = options.contents[0].parts[0].text;
-        return Promise.resolve({ text: 'Processed', usage: undefined });
-      });
-
       const tool = new WebFetchTool(mockConfig);
       const params = {
         url: 'https://example.com',
@@ -351,7 +345,8 @@ describe('WebFetchTool', () => {
         format: 'text' as const,
       };
       const invocation = tool.build(params);
-      await invocation.execute(new AbortController().signal);
+      const result = await invocation.execute(new AbortController().signal);
+      receivedContent = String(result.llmContent);
 
       expect(receivedContent).toContain('Plain text content here');
     });
