@@ -89,9 +89,36 @@ The two big mechanical jobs, in this order, each verified by `npm test` +
   - **The operator's data.** `~/.qwen` on this machine still holds 106 projects
     and a pending skill that nothing reads now. Merging or discarding it is an
     explicit decision, not a migration to run silently.
-- **7.1/7.2** apply the Stage 0.2 census and remove cloud providers, enterprise
-  channels, the desktop/mobile surface, SDKs, the computer-use driver, and the
-  `lab-agent` path.
+- **7.1/7.2** — partially applied 2026-07-25. Done: the absent-workspace
+  references (`webui`, `web-shell`, `chrome-extension`, `vscode-ide-companion`)
+  that made a non-`--cli-only` build impossible; the `qc-helper` skill, which
+  told the model to read 62 documentation paths that no longer exist; 11 test
+  files testing deleted GitHub workflows and absent packages.
+
+  **Not done, and here is the measurement, so it is not re-scoped by feel:**
+
+  - **Enterprise channels — attempted and reverted.** 155 files delete cleanly
+    (8 packages, `commands/channel/`, `serve/channel-*`), but channels are a
+    first-class concern of the serve daemon, not a bolt-on: **409 references
+    across all 5,302 lines of `run-qwen-serve.ts`**, spread through nearly every
+    250-line block — lifecycle, config, status, routing, shutdown. Its test is
+    7,635 lines with 331 more. The verification for the surgery IS the test
+    being rewritten by the same surgery. Breaking `lal serve` breaks what the
+    web app talks to. This needs a session of its own with nothing else in it.
+  - **SDK** (`packages/sdk-typescript`) is consumed by `acp-bridge` and every
+    channel command — it comes out *after* channels, not before.
+  - **Cloud provider auth** (`core/src/qwen/*`) reaches into `contentGenerator`,
+    `acpAgent` and `serve/auth`.
+  - **Computer-use driver** is listed for deletion here but
+    `~/.lal/settings.json` has `tools.computerUse.enabled: true`. Resolve the
+    contradiction with the operator before deleting.
+  - **Locales.** Removing the strict-parity machinery is what closes the two
+    frozen `mustTranslateKeys` failures (zh/zh-TW have no translations for 10
+    LAL-added commands).
+
+  **Trap for whoever does channels:** `acp-bridge`'s "channel" is an IPC
+  abstraction and `audio-capture`'s is an audio channel. A grep-driven deletion
+  eats both.
 
 ### 3. 2.4 — the execution kernel. The one stage never attempted.
 
