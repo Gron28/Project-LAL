@@ -15,8 +15,6 @@ import { DefaultLight } from './default-light.js';
 import { DefaultDark } from './default.js';
 import { ShadesOfPurple } from './shades-of-purple.js';
 import { XCode } from './xcode.js';
-import { QwenLight } from './qwen-light.js';
-import { QwenDark } from './qwen-dark.js';
 import { LALDark } from './lal-dark.js';
 import { LALLight } from './lal-light.js';
 import * as fs from 'node:fs';
@@ -75,8 +73,6 @@ class ThemeManager {
       GitHubDark,
       GitHubLight,
       GoogleCode,
-      QwenLight,
-      QwenDark,
       ShadesOfPurple,
       XCode,
       ANSI,
@@ -135,7 +131,7 @@ class ThemeManager {
    * Sets the active theme.
    * @param themeName The name of the theme to set as active.
    *   If themeName is 'auto', detects the terminal theme and selects
-   *   Qwen Dark or Qwen Light accordingly.
+   *   LAL Dark or LAL Light accordingly.
    * @returns True if the theme was successfully set, false otherwise.
    */
   setActiveTheme(themeName: string | undefined): boolean {
@@ -281,7 +277,7 @@ class ThemeManager {
 
     // Pin the LAL brand themes to the top of the picker.
     const brandThemeNames = new Set([LALDark.name, LALLight.name]);
-    const qwenThemes = builtInThemes.filter((theme) =>
+    const brandThemes = builtInThemes.filter((theme) =>
       brandThemeNames.has(theme.name),
     );
     const otherBuiltInThemes = builtInThemes.filter(
@@ -314,8 +310,8 @@ class ThemeManager {
       },
     );
 
-    // Combine Qwen themes first, then sorted others
-    return [...qwenThemes, ...sortedOtherThemes];
+    // Brand themes first, then sorted others.
+    return [...brandThemes, ...sortedOtherThemes];
   }
 
   /**

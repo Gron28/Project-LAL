@@ -729,7 +729,7 @@ const SETTINGS_SCHEMA = {
         label: 'Theme',
         category: 'UI',
         requiresRestart: false,
-        default: 'Qwen Dark' as string,
+        default: 'LAL Dark' as string,
         description: 'The color theme for the UI.',
         showInDialog: true,
       },
