@@ -203,6 +203,61 @@ export function researchCoverage(trace: ResearchTrace) {
   };
 }
 
+/**
+ * How many failed attempts, with zero successes, prove the tool is broken rather
+ * than the model unlucky. Two is enough: one failure is a bad URL, two in a row
+ * with nothing succeeding is infrastructure.
+ */
+const RESEARCH_BROKEN_PROVIDER_ATTEMPTS = 2;
+
+/**
+ * Distinguish "the model has not searched enough yet" from "searching does not
+ * work here" (PLAN 4.1, the `Search provider broken` row).
+ *
+ * The coverage gate counts only SUCCESSFUL calls — "failed calls are not
+ * evidence" — so when web_search or web_fetch is broken, coverage stays pinned
+ * at zero and the controller spends every remaining nudge, each a full model
+ * turn, demanding more of the thing that cannot work. That converts a broken
+ * tool into the slowest and most expensive failure the product has, and it is
+ * the operator's report of "I would run research, and it could not do it"
+ * (2026-07-24).
+ *
+ * Nudging is only useful when calls are landing. If they are not, stop and say
+ * so.
+ */
+export function researchProviderLooksBroken(trace: ResearchTrace): {
+  broken: boolean;
+  what: string;
+} {
+  const queriesFailing =
+    trace.queries.size === 0 &&
+    trace.attemptedQueries.size >= RESEARCH_BROKEN_PROVIDER_ATTEMPTS;
+  const fetchesFailing =
+    trace.fetchedSources.size === 0 &&
+    trace.attemptedSources.size >= RESEARCH_BROKEN_PROVIDER_ATTEMPTS;
+  if (queriesFailing && fetchesFailing) {
+    return { broken: true, what: 'web_search and web_fetch are both' };
+  }
+  if (queriesFailing) return { broken: true, what: 'web_search is' };
+  if (fetchesFailing) return { broken: true, what: 'web_fetch is' };
+  return { broken: false, what: '' };
+}
+
+export function researchBrokenProviderReport(trace: ResearchTrace): string {
+  const { what } = researchProviderLooksBroken(trace);
+  return (
+    `Research stopped: ${what} failing, not merely incomplete. ` +
+    `${trace.attemptedQueries.size} search(es) and ${trace.attemptedSources.size} ` +
+    `fetch(es) were attempted and ${trace.queries.size} / ${trace.fetchedSources.size} ` +
+    `succeeded. Continuing would repeat a call that does not work, so the ` +
+    `coverage gate is abandoned rather than enforced.\n\n` +
+    `This is an infrastructure problem, not a reasoning one. Report it plainly: ` +
+    `say what you could not reach and why, answer from what you already have if ` +
+    `that is honest, and label anything unverified as unverified. Do not present ` +
+    `an unresearched answer as researched.`
+  );
+}
+
 export function researchContinuation(trace: ResearchTrace): string {
   const coverage = researchCoverage(trace);
   return `Research coverage gate rejected synthesis: ${coverage.queryCount}/${RESEARCH_MIN_QUERIES} successful distinct searches and ${coverage.sourceCount}/${RESEARCH_MIN_FETCHED_SOURCES} successfully opened sources (${coverage.attemptedQueryCount} searches and ${coverage.attemptedSourceCount} fetches attempted). Continue the same investigation now. IMPORTANT TOOL DISTINCTION: call web_search for every internet query; tool_search only discovers tool names and never searches the internet. Use genuinely different web_search queries for uncovered sub-questions, open the strongest primary/reliable URLs with web_fetch, follow contradictions, and do not repeat a query. Failed calls are not evidence. Do not write the final synthesis until this gate passes.`;

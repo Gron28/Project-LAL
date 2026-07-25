@@ -13,6 +13,8 @@ import {
   recordResearchResults,
   researchContinuation,
   researchCoverage,
+  researchProviderLooksBroken,
+  researchBrokenProviderReport,
   researchSynthesisContinuation,
   routeResearchToolArgs,
   routeResearchToolCall,
@@ -189,5 +191,63 @@ describe('research controller', () => {
       url: 'https://sqlite.org/isolation.html',
     });
     expect(routed['prompt']).toMatch(/current research question/i);
+  });
+});
+
+describe('researchProviderLooksBroken', () => {
+  // PLAN 4.1 "Search provider broken → stop, report infrastructure problem".
+  // The coverage gate counts only successful calls, so a broken web_search
+  // pinned coverage at zero and the controller spent every remaining nudge —
+  // each a full model turn — demanding more of a tool that cannot work.
+  const trace = (over: {
+    attemptedQueries?: string[];
+    attemptedSources?: string[];
+    queries?: string[];
+  } = {}) => {
+    const t = createResearchTrace('p', true);
+    for (const q of over.attemptedQueries ?? []) t.attemptedQueries.add(q);
+    for (const u of over.attemptedSources ?? []) t.attemptedSources.add(u);
+    for (const q of over.queries ?? []) t.queries.add(q);
+    return t;
+  };
+
+  it('is not broken before enough attempts have failed', () => {
+    expect(
+      researchProviderLooksBroken(
+        trace({ attemptedQueries: ['a'] }),
+      ).broken,
+    ).toBe(false);
+  });
+
+  it('is not broken while some calls are succeeding', () => {
+    expect(
+      researchProviderLooksBroken(
+        trace({ attemptedQueries: ['a', 'b', 'c'], queries: ['a'] }),
+      ).broken,
+    ).toBe(false);
+  });
+
+  it('reports web_search broken when every search fails', () => {
+    const result = researchProviderLooksBroken(
+      trace({ attemptedQueries: ['a', 'b'] }),
+    );
+    expect(result.broken).toBe(true);
+    expect(result.what).toContain('web_search');
+  });
+
+  it('reports both broken when searches and fetches all fail', () => {
+    const result = researchProviderLooksBroken(
+      trace({ attemptedQueries: ['a', 'b'], attemptedSources: ['u1', 'u2'] }),
+    );
+    expect(result.broken).toBe(true);
+    expect(result.what).toContain('web_search and web_fetch');
+  });
+
+  it('names the failure as infrastructure, not reasoning', () => {
+    const report = researchBrokenProviderReport(
+      trace({ attemptedQueries: ['a', 'b'] }),
+    );
+    expect(report).toContain('infrastructure problem');
+    expect(report).toContain('unverified');
   });
 });

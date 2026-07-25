@@ -70,6 +70,8 @@ import {
   routeResearchToolCall,
   researchContinuation,
   researchCoverage,
+  researchProviderLooksBroken,
+  researchBrokenProviderReport,
   researchSynthesisContinuation,
   RESEARCH_CONTROLLER_INSTRUCTION,
   RESEARCH_MAX_NUDGES,
@@ -2765,6 +2767,18 @@ export class GeminiClient {
       ) {
         const coverage = researchCoverage(researchTrace);
         if (!coverage.passed) {
+          // Before spending a nudge, check whether the tools work at all. A
+          // broken provider cannot be fixed by asking the model again, and each
+          // nudge is a full model turn (PLAN 4.1 / 4.2).
+          const provider = researchProviderLooksBroken(researchTrace);
+          if (provider.broken) {
+            yield {
+              type: GeminiEventType.HookSystemMessage,
+              value: researchBrokenProviderReport(researchTrace),
+            };
+            normalCompletion = true;
+            return turn;
+          }
           const continuation = researchContinuation(researchTrace);
           if (researchTrace.nudges < RESEARCH_MAX_NUDGES && boundedTurns > 1) {
             researchTrace.nudges++;
