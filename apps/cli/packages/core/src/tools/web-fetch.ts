@@ -428,7 +428,11 @@ export class WebFetchTool extends BaseDeclarativeTool<
       },
       true, // isOutputMarkdown
       false, // canUpdateOutput
-      true, // shouldDefer — web fetching is infrequent
+      // shouldDefer — WAS true ("web fetching is infrequent"). It is not
+      // infrequent during research, and hiding it while the system prompt
+      // advertises it is what drove the model to the shell. See the long note in
+      // web-search.ts; both tools share one cause and must share the fix.
+      false,
       false, // alwaysLoad
       'web fetch url http download content',
     );

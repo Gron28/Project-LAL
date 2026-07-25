@@ -1,0 +1,1 @@
+2026-07-25T17:03:32.174Z [WARN] [WORKSPACE] [trace_id=9b2c0742b1ad1b14638d171e7c299899 span_id=b02c3414e956f2d5] Skipping unreadable directory: /home/gron/Desktop/local-ai-lab/apps/cli/workspace/my-project (Directory does not exist: /home/gron/Desktop/local-ai-lab/apps/cli/workspace/my-project)

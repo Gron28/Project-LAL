@@ -258,6 +258,7 @@ export interface ChatRecord {
     | 'agent_launch_prompt'
     | 'file_history_snapshot'
     | 'session_artifact_event'
+    | 'runtime_decision'
     | 'session_artifact_snapshot';
   /** Working directory at time of message */
   cwd: string;
@@ -296,6 +297,7 @@ export interface ChatRecord {
    * mutating the original UI list.
    */
   systemPayload?:
+    | RuntimeDecisionRecordPayload
     | ChatCompressionRecordPayload
     | SlashCommandRecordPayload
     | UiTelemetryRecordPayload
@@ -378,6 +380,23 @@ export interface ChatCompressionRecordPayload {
    * resume reconstruction.
    */
   compressedHistory: Content[];
+}
+
+/**
+ * A decision the RUNTIME made and told the model about — an evidence-gate
+ * rejection, a circuit-breaker refusal, an acceptance-validation verdict, a
+ * rerouted tool call.
+ *
+ * These were missing from the forensic export entirely, which made a real
+ * diagnosis on 2026-07-25 depend on the MODEL's narration of what happened to it
+ * ("The evidence gate is rejecting my synthesis...") rather than on the record.
+ * PLAN 1.2 requires a failed run to be explainable from its trace alone; a trace
+ * that shows only what the model did, and never what the runtime decided, cannot
+ * do that.
+ */
+export interface RuntimeDecisionRecordPayload {
+  /** The message the runtime handed to the model, verbatim. */
+  message: string;
 }
 
 export interface SlashCommandRecordPayload {
@@ -1227,6 +1246,24 @@ export class ChatRecordingService {
    * history clean while allowing resume to replay UI output for commands like
    * /about.
    */
+  /**
+   * Record a runtime decision. Never throws: losing a diagnostic record must not
+   * disturb the turn it describes.
+   */
+  recordRuntimeDecision(message: string): void {
+    try {
+      if (!message?.trim()) return;
+      this.appendRecord({
+        ...this.createBaseRecord('system'),
+        type: 'system',
+        subtype: 'runtime_decision',
+        systemPayload: { message },
+      });
+    } catch (error) {
+      debugLogger.error('Error saving runtime decision record:', error);
+    }
+  }
+
   recordSlashCommand(payload: SlashCommandRecordPayload): void {
     try {
       const record: ChatRecord = {

@@ -179,7 +179,11 @@ function usage(message: ExportMessage): string | undefined {
 }
 
 function extractText(message: ExportMessage): string {
-  if (!message.message?.parts) return '(empty)';
+  // `content` is a documented alternative to `parts` on ExportMessage, and reading
+  // only `parts` silently rendered any content-shaped message as "(empty)".
+  if (!message.message?.parts) {
+    return message.message?.content?.trim() || '(empty)';
+  }
   const text = message.message.parts
     .map((part) => ('text' in part ? part.text : ''))
     .filter(Boolean)

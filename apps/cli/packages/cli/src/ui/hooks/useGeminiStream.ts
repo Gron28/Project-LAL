@@ -2268,6 +2268,16 @@ export const useGeminiStream = (
             }
             case ServerGeminiEventType.HookSystemMessage:
               flushBufferedStreamEvents();
+              // Persist the runtime's decision, not just display it. Every gate
+              // rejection, circuit-breaker refusal, acceptance verdict and
+              // rerouted tool call arrives on this event, and none of them
+              // reached the forensic export — so diagnosing the 2026-07-25
+              // research failure meant trusting the MODEL's account of what the
+              // runtime had done to it. PLAN 1.2 requires a failed run to be
+              // explainable from its trace alone.
+              config
+                .getChatRecordingService()
+                ?.recordRuntimeDecision(event.value);
               // Display system message from Stop hooks with "Stop says:" prefix
               // First commit any pending AI response to ensure correct ordering
               if (pendingHistoryItemRef.current) {

@@ -697,13 +697,50 @@ export async function collectSessionData(
   // Get the export messages
   const messages = exportContext.getMessages();
 
+  // Merge in the runtime's own decisions (PLAN 1.2).
+  //
+  // The replayer reconstructs the CONVERSATION, so a `system`/`runtime_decision`
+  // record — an evidence-gate rejection, a circuit-breaker refusal, an acceptance
+  // verdict, a rerouted tool call — never reached the export. That made the
+  // transcript show only what the model did and never what the runtime decided,
+  // so diagnosing the 2026-07-25 research failure meant relying on the model's
+  // narration of its own rejection. Interleaved by timestamp so the decision
+  // appears where it happened rather than in a footnote.
+  const decisions: ExportMessage[] = [];
+  for (const record of conversation.messages) {
+    if (record.type !== 'system' || record.subtype !== 'runtime_decision') {
+      continue;
+    }
+    const payload = record.systemPayload as { message?: string } | undefined;
+    if (!payload?.message) continue;
+    decisions.push({
+      uuid: record.uuid,
+      parentUuid: record.parentUuid,
+      sessionId: conversation.sessionId,
+      timestamp: record.timestamp,
+      type: 'system',
+      // `parts` is the shape every formatter reads; `content` is carried too for
+      // consumers that prefer the flat form.
+      message: {
+        role: 'system',
+        parts: [{ text: `[runtime] ${payload.message}` }],
+        content: `[runtime] ${payload.message}`,
+      },
+    });
+  }
+  const allMessages = decisions.length
+    ? [...messages, ...decisions].sort((a, b) =>
+        String(a.timestamp).localeCompare(String(b.timestamp)),
+      )
+    : messages;
+
   // Extract metadata from conversation
   const metadata = await extractMetadata(conversation, config);
 
   return {
     sessionId: conversation.sessionId,
     startTime: conversation.startTime,
-    messages,
+    messages: allMessages,
     metadata,
   };
 }

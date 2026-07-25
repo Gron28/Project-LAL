@@ -190,10 +190,29 @@ export class WebSearchTool extends BaseDeclarativeTool<
         required: ['query'],
         additionalProperties: false,
       },
-      true,
+      true, // isOutputMarkdown
+      false, // canUpdateOutput
+      // shouldDefer — WAS true, which is the root cause of PLAN 2.1's shell
+      // fallback, confirmed from two field sessions on 2026-07-25.
+      //
+      // A deferred tool is hidden from the model's tool list until `tool_search`
+      // reveals it. Meanwhile the base system prompt says "Use web_search to
+      // discover candidate sources and web_fetch to inspect the important
+      // originals", and the research controller injects "In this session
+      // web_search and web_fetch are already available". Both statements were
+      // false on the first turn of every session.
+      //
+      // Told to use a tool it cannot see, the model did the only thing left: it
+      // passed the name to the shell — `web_search "monitores usados"`,
+      // `subprocess.run(['web_search', query])`. That is exactly PLAN 2.1's
+      // hypothesis 2 ("a tool it was told about in the system prompt is absent
+      // from the actual payload — verify they agree"), and it produced a research
+      // run whose every source was invisible to the evidence gate.
+      //
+      // The prompt advertises these unconditionally, so the registry must too.
+      // Two small schemas per turn is the entire cost.
       false,
-      true,
-      false,
+      false, // alwaysLoad
       'web search internet sources repositories github research',
     );
   }
