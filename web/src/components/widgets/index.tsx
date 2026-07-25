@@ -413,6 +413,109 @@ export function QuickBenchWidget({ ctx }: { ctx: WidgetCtx }) {
   );
 }
 
+
+/**
+ * Token usage analytics, read from the ledger added 2026-07-25.
+ *
+ * A widget rather than a replacement dashboard: this grid is user-arranged and the
+ * layout is persisted server-side (/api/dashboard), so overwriting page.tsx would
+ * have thrown away the operator's configuration to show one new number. Extending
+ * the registry is what the registry is for.
+ *
+ * Fetches on its own rather than riding `ctx.snap`, because usage is historical
+ * (a 30-day scan) while snap is a live system poll — different cadence, different
+ * lifetime.
+ */
+type UsageBucket = { key: string; total: number; requests: number };
+type UsageSummary = {
+  totals: { total: number; prompt: number; completion: number; requests: number };
+  byHour: UsageBucket[];
+  byWeekday: UsageBucket[];
+  byModel: UsageBucket[];
+  byDevice: UsageBucket[];
+  busiestHour: UsageBucket | null;
+  busiestWeekday: UsageBucket | null;
+};
+
+const compactTokens = (n: number): string =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n);
+
+function UsageBars({ buckets }: { buckets: UsageBucket[] }) {
+  const max = Math.max(1, ...buckets.map((b) => b.total));
+  return (
+    <div className="flex flex-col gap-[2px]">
+      {buckets.map((b) => (
+        <div key={b.key} className="flex items-center gap-1.5 text-[10px]">
+          <span className="w-10 shrink-0 truncate text-[var(--muted)]" title={b.key}>{b.key}</span>
+          <div className="h-1.5 flex-1 rounded-[var(--r-sm)] bg-[var(--surface-2)]">
+            <div
+              className="h-full rounded-[var(--r-sm)]"
+              style={{ width: `${(b.total / max) * 100}%`, background: b.total ? "var(--accent-ai)" : "transparent" }}
+            />
+          </div>
+          {/* An empty bucket shows a dash, not 0: "no activity" and "no data" must
+              not look the same. */}
+          <span className="w-10 shrink-0 text-right text-[var(--muted)] tabular-nums">
+            {b.total ? compactTokens(b.total) : "—"}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function UsageAnalyticsWidget({ settings }: { ctx: WidgetCtx; settings?: Record<string, unknown> }) {
+  const days = typeof settings?.["days"] === "number" ? (settings["days"] as number) : 30;
+  const view = typeof settings?.["view"] === "string" ? (settings["view"] as string) : "hour";
+  const [data, setData] = useState<UsageSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/lal/usage?days=${days}`, { cache: "no-store" })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return (await r.json()) as UsageSummary;
+      })
+      .then((d) => { if (!cancelled) { setData(d); setError(null); } })
+      // Show the failure. A usage panel silently rendering zeroes is how the
+      // previous telemetry drop stayed invisible for weeks.
+      .catch((e) => { if (!cancelled) { setError(e instanceof Error ? e.message : String(e)); setData(null); } });
+    return () => { cancelled = true; };
+  }, [days]);
+
+  if (error) return <div className="text-[10px] text-[var(--accent-danger)]">usage unavailable: {error}</div>;
+  if (!data) return empty;
+  if (!data.totals.requests) {
+    return (
+      <div className="py-2 text-center text-[10px] text-[var(--muted)]">
+        no usage recorded yet
+        <div className="mt-1 opacity-70">the ledger only collects from when it shipped</div>
+      </div>
+    );
+  }
+
+  const buckets =
+    view === "weekday" ? data.byWeekday : view === "model" ? data.byModel.slice(0, 8) : view === "device" ? data.byDevice.slice(0, 8) : data.byHour;
+
+  return (
+    <div className="flex h-full flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-2 text-[10px]">
+        <span className="text-[var(--muted)]">{data.totals.requests} req · {days}d</span>
+        <span className="font-semibold" style={{ color: "var(--accent-ai)" }}>{compactTokens(data.totals.total)} tok</span>
+      </div>
+      <div className="flex gap-2 text-[10px] text-[var(--muted)]">
+        <span>peak {data.busiestHour ? `${data.busiestHour.key}:00` : "—"}</span>
+        <span>·</span>
+        <span>{data.busiestWeekday?.key ?? "—"}</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <UsageBars buckets={buckets} />
+      </div>
+    </div>
+  );
+}
+
 export type WidgetDef = {
   title: string; minW: number; minH: number; defW: number; defH: number;
   component: (p: { ctx: WidgetCtx; settings?: Record<string, unknown> }) => React.ReactNode;
@@ -435,6 +538,12 @@ export const WIDGETS: Record<string, WidgetDef> = {
   "quick-chat": { title: "Quick chat", minW: 3, minH: 3, defW: 4, defH: 5, component: QuickChatWidget },
   "quick-train": { title: "Quick train", minW: 3, minH: 2, defW: 3, defH: 3, component: QuickTrainWidget },
   "quick-bench": { title: "Quick bench", minW: 3, minH: 2, defW: 3, defH: 3, component: QuickBenchWidget },
+  // Four instances can coexist with different `view` settings — hour / weekday /
+  // model / device — which is why the breakdown is a setting and not four widgets.
+  "usage-hours": { title: "Tokens by hour", minW: 3, minH: 3, defW: 3, defH: 5, component: UsageAnalyticsWidget, defaultSettings: { view: "hour", days: 30 } },
+  "usage-models": { title: "Tokens by model", minW: 3, minH: 2, defW: 3, defH: 3, component: UsageAnalyticsWidget, defaultSettings: { view: "model", days: 30 } },
+  "usage-weekdays": { title: "Tokens by weekday", minW: 3, minH: 2, defW: 3, defH: 3, component: UsageAnalyticsWidget, defaultSettings: { view: "weekday", days: 30 } },
+  "usage-devices": { title: "Tokens by device", minW: 3, minH: 2, defW: 3, defH: 3, component: UsageAnalyticsWidget, defaultSettings: { view: "device", days: 30 } },
 };
 
 export function widgetMinSize(type: string) {
