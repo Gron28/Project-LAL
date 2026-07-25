@@ -121,7 +121,112 @@ Two documents, and only two:
 
 `CHANGELOG.md` is the append-only engineering log.
 
-## Current local use
+## Getting started on any machine
+
+Three commands, identical on Windows, Linux and macOS:
+
+```bash
+git clone <this repo> && cd local-ai-lab
+npm --prefix web install
+npm --prefix apps/cli install
+npm run doctor
+```
+
+`npm run doctor` is the contract. It reports three separate tiers and the
+distinction is the point:
+
+- **REQUIRED** — Node 20+, npm, git, both dependency trees. Nothing runs without
+  these, on any platform.
+- **OPTIONAL** — ollama, python3, `llama/`, `models/`, bash. Each enables a
+  capability; absence degrades, it does not break.
+- **LINUX-ONLY** — `systemctl`, the AMD `HSA_OVERRIDE_GFX_VERSION`, tailscale.
+  On Windows these print `n/a`, not red. They are specific to the development
+  host and **an NVIDIA machine must not copy them.**
+
+Every missed item prints the command that fixes it. Only REQUIRED misses fail
+the exit code.
+
+## Two topologies, both supported
+
+**A — Attach to a host (the everyday setup).** The CLI runs on your machine and
+uses another machine's GPU. Nothing but Node is needed locally; no models, no
+llama.cpp, no Python.
+
+```text
+Windows laptop:  lal, in a local project     ── tools run HERE
+        │  Tailscale / LAN
+Linux main-pc:   web app :8770, models, GPU  ── inference runs HERE
+```
+
+**B — Standalone.** Everything on one machine. Needs a model source (ollama, or
+a GGUF plus a llama-server build) and enough VRAM. Start the host with:
+
+```bash
+npm --prefix web run build && npm --prefix web start     # any platform
+bash scripts/rebuild-local-ai-lab.sh                     # Linux, systemd-managed
+```
+
+The Linux script exists because this host runs the web app as a `--user` systemd
+unit; it builds a candidate, health-checks it, and only then activates it. On
+Windows, `npm start` is the whole story — there is no service to install.
+
+## Working across two machines
+
+The repository holds source only. Everything machine-shaped is untracked, so a
+clone carries no assumption about the machine that made it:
+
+| Not tracked | Why |
+|---|---|
+| `models/`, `llama/`, `out/`, `*.gguf` | 34 GB of weights and binaries |
+| `web/.data/` | runs, benchmarks, context profiles, usage ledger — local truth |
+| `node_modules/`, `.next/` | rebuilt per platform; native deps differ |
+| `web/public/lal/releases/` | ~60 MB archives, reproducible on demand |
+
+So the round trip is ordinary git, in both directions:
+
+```bash
+git pull --rebase        # take the other machine's work
+npm run doctor           # confirm this machine can run it
+npm --prefix web install # only when package.json moved
+```
+
+Two things to know before pushing from either side:
+
+1. **A push does not update a Windows client.** The connected CLI is a built
+   release, so it needs a version bump plus `scripts/release-lal-cli.sh`, then a
+   host redeploy. `./update-all.sh` does all of it on Linux.
+2. **Hardware settings live in data and environment, never in code.** Serving
+   context, GPU layers and quantisation come from `web/.data/context-profiles.json`,
+   which is untracked — so this box's 8 GB compromises cannot follow the repo onto
+   a machine that does not need them. `HSA_OVERRIDE_GFX_VERSION=10.3.0` is an AMD
+   gfx1032 workaround set in the environment, not a project setting.
+
+## What is portable, and what is this card's scar tissue
+
+Answered honestly, because the two look identical in a file listing.
+
+**Portable — the actual product.** The measure → diagnose → train → promote loop.
+HTML-001 and the suites. Forensic `/export`. The token ledger and analytics. Tool
+dispatch, loop control, the write-resume path, acceptance validation. All of it is
+plain Node and TypeScript with no hardware assumptions.
+
+**Scar tissue — exists only because of an RX 6650 XT (gfx1032, 8 GB).**
+
+- `scripts/finetune_hqq.py`: a streaming HQQ loader, chunked cross-entropy and
+  CPU-offloaded embeddings, written because bitsandbytes has no RDNA2 kernels and
+  8 GB will not hold a normal QLoRA. On a 24 GB NVIDIA card, standard Unsloth or
+  Axolotl is strictly better and this file should be ignored.
+- One-model-at-a-time serialisation and `LAL_MAX_CONCURRENT_AGENTS=1`. A bound on
+  one GPU, not a design principle — raise it on a bigger machine.
+- The long-context work (16k → 100k for Gemma 12B) buys headroom this card barely
+  has. A machine that fits the model has nothing to reclaim.
+- `-b/-ub 512` batch limits in `ensureServing`, added because larger cold prompts
+  tripped an amdgpu ring watchdog.
+
+**Not yet portable.** HTML-001 has not met its bar (9 of 10 unattended on
+Windows), so the reliability work is measured on Linux and asserted on Windows.
+
+## Current local use on the development host
 
 ### Complete update
 
@@ -170,9 +275,9 @@ guarded one-line model/run/replay/cleanup check. It refuses to interrupt live
 work and is intentionally not part of the ordinary static test suite.
 
 `./scripts/smoke-attach-replay.sh` checks the durable stream replay and resume
-cursor used by phone attach and `lal /attach`. See the
-[Windows/phone attach guide](docs/guides/windows-phone-attach-smoke.md) for the
-real-device smoke procedure.
+cursor used by phone attach and `lal /attach`. The real-device
+procedure for phone/Windows attach lives with the script itself; the separate
+guide was removed in the Stage 0 documentation collapse.
 
 The old `lab-agent` client is transitional. The intended client is `lal`; the
 recovery client will be retired once the full LAL flow is reliable.
