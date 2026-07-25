@@ -109,35 +109,11 @@ import {
 } from './daemon-status.js';
 import { DaemonMetricsRing, computeCpuPercent } from './daemon-metrics-ring.js';
 import { createLargePipeFrameObserver } from './large-pipe-frame-observer.js';
-import type {
-  ChannelWorkerSupervisor,
-  ChannelWorkerSnapshot,
-  CreateChannelWorkerSupervisorOptions,
-} from './channel-worker-supervisor.js';
-import { QWEN_SERVER_TOKEN_ENV } from './channel-worker-env.js';
-import { ChannelWebhookEnqueueError } from './channel-webhook-ipc.js';
-import { channelSelectionNames } from './channel-selection.js';
-import {
-  resolveChannelWorkspaceGroups,
-  type ChannelWorkspaceGroup,
-} from './channel-workspace-grouping.js';
-import { type ChannelWorkerGroupSnapshot } from './channel-worker-group.js';
-import type {
-  ChannelWorkerControlState,
-  ChannelWorkerManager,
-  ChannelWorkerSetResult,
-  ChannelWorkerStopResult,
-  CreateChannelWorkerManagerOptions,
-} from './channel-worker-manager.js';
+import { QWEN_SERVER_TOKEN_ENV } from './server-token-env.js';
 import {
   finalizeStartupProfile,
   profileCheckpoint,
 } from '../utils/startupProfiler.js';
-import type {
-  ServiceInfo,
-  ServiceInfoWorker,
-} from '../commands/channel/pidfile.js';
-import { sanitizeLogText } from '@lal/channel-base';
 import { isBrowserAutomationMcpAvailable } from './cdp-mcp-command.js';
 
 // Reverse MCP channel; enabled only by explicit option or env opt-in.
@@ -201,10 +177,6 @@ type RunQwenServeOptions = Omit<ServeOptions, 'token' | 'workspace'> & {
 };
 type WorkspaceSettingsWrite =
   import('./workspace-service/types.js').WorkspaceSettingsWrite;
-type ChannelWebhookConfigRuntime = {
-  loadChannelsConfig: typeof import('../commands/channel/runtime.js').loadChannelsConfig;
-  parseChannelWebhookConfig: typeof import('../commands/channel/config-utils.js').parseChannelWebhookConfig;
-};
 
 function isPositiveIntegerMs(value: number): boolean {
   return Number.isFinite(value) && Number.isInteger(value) && value > 0;
@@ -555,119 +527,10 @@ type EnvironmentRuntime = typeof import('../config/environment.js');
 type LoadedSettingsAdapterRuntime =
   typeof import('../config/loadedSettingsAdapter.js');
 type TrustedFoldersRuntime = typeof import('../config/trustedFolders.js');
-type ChannelServicePidfile = {
-  readServiceInfo(): ServiceInfo | null;
-  writeServeServiceInfo(opts: {
-    channels: string[];
-    servePid?: number;
-    workerPid?: number;
-    workers?: ServiceInfoWorker[];
-  }): void;
-  reserveServeServiceInfo(opts: {
-    channels: string[];
-    servePid?: number;
-  }): void;
-  removeServiceInfo(): void;
-  removeServeServiceInfo?(servePid?: number): boolean;
-};
-type ChannelWorkerRuntime = {
-  createChannelWorkerSupervisor(
-    opts: CreateChannelWorkerSupervisorOptions,
-  ): ChannelWorkerSupervisor;
-  channelServicePidfile: ChannelServicePidfile;
-  loadChannelsConfig: (typeof import('../commands/channel/runtime.js'))['loadChannelsConfig'];
-  createChannelWorkerGroup: (typeof import('./channel-worker-group.js'))['createChannelWorkerGroup'];
-  createChannelWorkerManager: (
-    opts: CreateChannelWorkerManagerOptions,
-  ) => ChannelWorkerManager;
-  findCliEntryPath(): string;
-};
 
-let channelWorkerRuntimePromise: Promise<ChannelWorkerRuntime> | undefined;
-async function loadChannelWorkerRuntime(): Promise<ChannelWorkerRuntime> {
-  channelWorkerRuntimePromise ??= Promise.all([
-    import('./channel-worker-supervisor.js'),
-    import('../commands/channel/pidfile.js'),
-    import('../commands/channel/runtime.js'),
-    import('../commands/channel/cli-entry-path.js'),
-    import('./channel-worker-group.js'),
-    import('./channel-worker-manager.js'),
-  ])
-    .then(
-      ([
-        supervisor,
-        pidfile,
-        channelRuntime,
-        cliEntryPath,
-        workerGroup,
-        workerManager,
-      ]) => ({
-        createChannelWorkerSupervisor: supervisor.createChannelWorkerSupervisor,
-        channelServicePidfile: pidfile,
-        loadChannelsConfig: channelRuntime.loadChannelsConfig,
-        createChannelWorkerGroup: workerGroup.createChannelWorkerGroup,
-        createChannelWorkerManager: workerManager.createChannelWorkerManager,
-        findCliEntryPath: cliEntryPath.findCliEntryPath,
-      }),
-    )
-    .catch((err: unknown) => {
-      channelWorkerRuntimePromise = undefined;
-      throw err;
-    });
-  return channelWorkerRuntimePromise;
-}
 
-export function createDisabledChannelWorkerSupervisor(): ChannelWorkerSupervisor {
-  const snapshot = {
-    enabled: false,
-    state: 'disabled' as const,
-    channels: [],
-  };
-  return {
-    async start() {},
-    async stop() {},
-    async restart() {
-      return { ...snapshot, channels: [] };
-    },
-    killAllSync() {},
-    snapshot: () => ({ ...snapshot, channels: [] }),
-    async enqueueWebhookTask() {
-      throw new ChannelWebhookEnqueueError(
-        'channel_worker_unavailable',
-        'Channel worker is not running.',
-      );
-    },
-  };
-}
 
-function writeServeChannelReservation(
-  channelServicePidfile: ChannelServicePidfile,
-  channels: string[],
-): void {
-  channelServicePidfile.reserveServeServiceInfo({
-    channels,
-    servePid: process.pid,
-  });
-}
 
-function channelServicePidfileConflictError(info: ServiceInfo): Error {
-  const owner = info.owner === 'serve' ? 'qwen serve' : 'qwen channel start';
-  return Object.assign(
-    new Error(
-      `Channel service is already running under ${owner} (PID ${info.pid}). Stop it before enabling daemon-managed channels.`,
-    ),
-    { code: 'channel_service_conflict', owner: info.owner, pid: info.pid },
-  );
-}
-
-function channelServiceStartingConflictError(): Error {
-  return Object.assign(
-    new Error(
-      'Channel service is already starting. Retry after the current startup finishes.',
-    ),
-    { code: 'channel_service_conflict' },
-  );
-}
 
 function normalizeInstallModelIds(
   req: ServeAuthProviderInstallRequest,
@@ -770,10 +633,6 @@ export interface RunQwenServeDeps {
    * QWEN_SERVE_RUNTIME_STARTUP_TIMEOUT_MS, then 120s. Use 0 to disable.
    */
   runtimeStartupTimeoutMs?: number;
-  channelWorkerSupervisorFactory?: (
-    opts: CreateChannelWorkerSupervisorOptions,
-  ) => ChannelWorkerSupervisor;
-  channelServicePidfile?: ChannelServicePidfile;
   workspaceRegistrationStore?: WorkspaceRegistrationStore;
 }
 
@@ -843,24 +702,6 @@ function loadSettingsRuntimeModules(): Promise<{
   return settingsRuntimePromise;
 }
 
-let channelWebhookConfigRuntimePromise:
-  | Promise<ChannelWebhookConfigRuntime>
-  | undefined;
-function loadChannelWebhookConfigRuntime(): Promise<ChannelWebhookConfigRuntime> {
-  channelWebhookConfigRuntimePromise ??= Promise.all([
-    import('../commands/channel/runtime.js'),
-    import('../commands/channel/config-utils.js'),
-  ])
-    .then(([channelRuntime, configUtils]) => ({
-      loadChannelsConfig: channelRuntime.loadChannelsConfig,
-      parseChannelWebhookConfig: configUtils.parseChannelWebhookConfig,
-    }))
-    .catch((err: unknown) => {
-      channelWebhookConfigRuntimePromise = undefined;
-      throw err;
-    });
-  return channelWebhookConfigRuntimePromise;
-}
 
 async function loadServeRuntimeModules() {
   const [
@@ -925,6 +766,11 @@ function advertisedMaxPendingPromptsPerSession(
   return value;
 }
 
+
+// NOTE: this is the ACP bridge's spawn-CHANNEL idle timeout, not the deleted
+// messaging-channel feature. Same word, unrelated subsystem — it was removed by
+// mistake during the PLAN 7.2 channel excision and restored. See the trap noted
+// in docs/PLAN.md.
 function channelIdleTimeoutMs(value: number | undefined): number {
   return value !== undefined && Number.isFinite(value) && value > 0
     ? Math.min(value, MAX_TIMEOUT_MS)
@@ -1171,10 +1017,6 @@ function createBootstrapServeApp(input: {
   permissionPolicy: PermissionPolicy | undefined;
   multiWorkspaceCapabilitiesRequireRuntime: boolean;
   getRuntimeError: () => string | undefined;
-  getChannelWorkerSnapshot: () => ReturnType<
-    ChannelWorkerSupervisor['snapshot']
-  >;
-  getChannelWorkerSnapshots: () => ChannelWorkerGroupSnapshot[];
   onHealthServed?: () => void;
 }): Application {
   const {
@@ -1189,8 +1031,6 @@ function createBootstrapServeApp(input: {
     permissionPolicy,
     multiWorkspaceCapabilitiesRequireRuntime,
     getRuntimeError,
-    getChannelWorkerSnapshot,
-    getChannelWorkerSnapshots,
     onHealthServed,
   } = input;
   const app = express();
@@ -1479,83 +1319,8 @@ function isChannelWebhookRequest(req: Request): boolean {
   );
 }
 
-function createDeferredChannelWebhookAuth(
-  resolveSource: (channelName: string) => ChannelWebhookConfigSource,
-  runtime: ChannelWebhookConfigRuntime,
-  daemonLog: Pick<DaemonLogger, 'warn'>,
-): RequestHandler {
-  return (req, res, next) => {
-    const match = /^\/channels\/([^/]+)\/webhooks\/([^/]+)\/?$/u.exec(req.path);
-    const channelName = decodeDeferredWebhookPathSegment(match?.[1]);
-    const source = decodeDeferredWebhookPathSegment(match?.[2]);
-    if (!channelName || !source) {
-      daemonLog.warn('deferred webhook auth failed', {
-        channelName: channelName ?? 'unknown',
-        source: source ?? 'unknown',
-        reason: 'invalid webhook path',
-      });
-      res.status(401).json({ error: 'Invalid webhook secret' });
-      return;
-    }
 
-    const configSource = resolveSource(channelName);
-    const secret = readDeferredWebhookSecret(
-      runtime,
-      configSource.workspaceCwd,
-      channelName,
-      source,
-      configSource.env,
-    );
-    if (!matchesWebhookSecret(req.get('x-qwen-webhook-secret'), secret)) {
-      daemonLog.warn('deferred webhook auth failed', {
-        channelName,
-        source,
-        reason: secret ? 'secret mismatch' : 'source not configured',
-      });
-      res.status(401).json({ error: 'Invalid webhook secret' });
-      return;
-    }
 
-    next();
-  };
-}
-
-function decodeDeferredWebhookPathSegment(
-  segment: string | undefined,
-): string | undefined {
-  if (segment === undefined) return undefined;
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return undefined;
-  }
-}
-
-function readDeferredWebhookSecret(
-  runtime: ChannelWebhookConfigRuntime,
-  workspace: string,
-  channelName: string,
-  source: string,
-  env?: Readonly<Record<string, string | undefined>>,
-): string | undefined {
-  try {
-    const rawConfig = runtime.loadChannelsConfig(workspace)[channelName];
-    if (typeof rawConfig !== 'object' || rawConfig === null) {
-      return undefined;
-    }
-    return runtime.parseChannelWebhookConfig(
-      channelName,
-      rawConfig as Record<string, unknown>,
-      env,
-    )?.sources[source]?.secret;
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    writeStderrLine(
-      `[webhook-secret] failed to read deferred webhook secret for ${sanitizeLogText(channelName, 128)}/${sanitizeLogText(source, 128)}: ${sanitizeLogText(reason, 512)}`,
-    );
-    return undefined;
-  }
-}
 
 function matchesWebhookSecret(
   candidate: string | undefined,
@@ -1693,97 +1458,6 @@ export async function runQwenServe(
       optsIn.cdpTunnelOverWs ??
       (!envFlagDisabled(cdpTunnelOverWsEnv) &&
         (cdpTunnelOverWsEnv !== undefined || chromeExtensionOriginAllowed)),
-  };
-  let channelRuntime = opts.channelSelection
-    ? await loadChannelWorkerRuntime()
-    : undefined;
-  let channelServicePidfile =
-    deps.channelServicePidfile ?? channelRuntime?.channelServicePidfile;
-  const ensureChannelRuntime = async (): Promise<ChannelWorkerRuntime> => {
-    channelRuntime ??= await loadChannelWorkerRuntime();
-    channelServicePidfile ??= channelRuntime.channelServicePidfile;
-    return channelRuntime;
-  };
-  let channelPidfileReserved = false;
-  const removeCurrentServePidfile = (): void => {
-    if (!channelServicePidfile) return;
-    if (!channelPidfileReserved) return;
-    if (channelServicePidfile.removeServeServiceInfo) {
-      if (channelServicePidfile.removeServeServiceInfo(process.pid)) {
-        channelPidfileReserved = false;
-      } else {
-        const info = channelServicePidfile.readServiceInfo();
-        if (
-          !info ||
-          info.owner !== 'serve' ||
-          info.pid !== process.pid ||
-          info.servePid !== process.pid
-        ) {
-          channelPidfileReserved = false;
-        }
-      }
-      return;
-    }
-    const info = channelServicePidfile.readServiceInfo();
-    if (
-      info?.owner === 'serve' &&
-      info.pid === process.pid &&
-      info.servePid === process.pid
-    ) {
-      channelServicePidfile.removeServiceInfo();
-      const remaining = channelServicePidfile.readServiceInfo();
-      channelPidfileReserved =
-        remaining?.owner === 'serve' &&
-        remaining.pid === process.pid &&
-        remaining.servePid === process.pid;
-    } else {
-      channelPidfileReserved = false;
-    }
-  };
-  const reserveChannelServicePidfile = (
-    selection: ServeChannelSelection,
-  ): void => {
-    if (!channelServicePidfile) {
-      throw new Error('Channel service pidfile runtime is not available.');
-    }
-    const channelPidfileNames = channelSelectionNames(selection);
-    const existingChannelService = channelServicePidfile.readServiceInfo();
-    if (existingChannelService) {
-      throw channelServicePidfileConflictError(existingChannelService);
-    }
-    try {
-      writeServeChannelReservation(channelServicePidfile, channelPidfileNames);
-      channelPidfileReserved = true;
-    } catch (err) {
-      if (err && typeof err === 'object' && 'code' in err) {
-        const code = (err as { code?: unknown }).code;
-        if (code === 'EEXIST') {
-          const info = channelServicePidfile.readServiceInfo();
-          if (info) {
-            throw channelServicePidfileConflictError(info);
-          }
-          try {
-            writeServeChannelReservation(
-              channelServicePidfile,
-              channelPidfileNames,
-            );
-            channelPidfileReserved = true;
-            return;
-          } catch (retryErr) {
-            if (
-              retryErr &&
-              typeof retryErr === 'object' &&
-              'code' in retryErr &&
-              (retryErr as { code?: unknown }).code === 'EEXIST'
-            ) {
-              throw channelServiceStartingConflictError();
-            }
-            throw retryErr;
-          }
-        }
-      }
-      throw err;
-    }
   };
   validateRateLimitOptions(opts);
 
@@ -2398,162 +2072,10 @@ export async function runQwenServe(
     daemonMetricsSampler?.dispose();
     daemonMetricsSampler = undefined;
   };
-  let channelWorkerManager: ChannelWorkerManager | undefined;
-  let channelWorkerManagerStarting: Promise<ChannelWorkerManager> | undefined;
-  let channelControlDraining = false;
-  let channelWorkspaceGroups: readonly ChannelWorkspaceGroup[] | undefined;
-  const channelWebhookEnvByWorkspace = new Map<
-    string,
-    Readonly<Record<string, string | undefined>>
-  >();
-  let channelWebhookConfigVersion = 0;
-  let refreshChannelWebhookConfigs: (() => void) | undefined;
-  let ensureChannelWorkerManager:
-    | (() => Promise<ChannelWorkerManager>)
-    | undefined;
-  const getChannelWebhookConfigSources = (): ChannelWebhookConfigSource[] => {
-    const app = runtimeApp ?? runtimeAppForCleanup;
-    const registry = app?.locals?.['workspaceRegistry'] as
-      | WorkspaceRegistry
-      | undefined;
-    return (channelWorkspaceGroups ?? []).map((group) => {
-      const env =
-        registry?.getByWorkspaceCwd(group.workspaceCwd)?.env.effectiveEnv ??
-        channelWebhookEnvByWorkspace.get(group.workspaceCwd);
-      return {
-        workspaceCwd: group.workspaceCwd,
-        ...(group.selection.mode === 'names'
-          ? { channelNames: group.selection.names }
-          : {}),
-        ...(env ? { env } : {}),
-      };
-    });
-  };
-  const resolveChannelWebhookConfigSource = (
-    channelName: string,
-  ): ChannelWebhookConfigSource => {
-    const source = getChannelWebhookConfigSources().find(
-      (source) =>
-        !source.channelNames || source.channelNames.includes(channelName),
-    );
-    if (source) return source;
-    const env = channelWebhookEnvByWorkspace.get(boundWorkspace);
-    return {
-      workspaceCwd: boundWorkspace,
-      ...(env ? { env } : {}),
-    };
-  };
-  let closeServerAfterChannelWorkerStartupFailure = false;
-  let runtimeFailureListenerClose: Promise<void> | undefined;
-  const getChannelWorkerSnapshot = (): ChannelWorkerSnapshot =>
-    channelWorkerManager?.primarySnapshot() ?? {
-      enabled: false,
-      state: 'disabled',
-      channels: [],
-    };
-  const getChannelWorkerSnapshots = (): ChannelWorkerGroupSnapshot[] =>
-    channelWorkerManager?.snapshots() ?? [];
-  const getChannelWorkerControl = (): ChannelWorkerControlState =>
-    channelWorkerManager?.state() ?? {
-      enabled: false,
-      selection: null,
-      transition: 'idle',
-      workers: [],
-    };
   const daemonDrainingError = () =>
     Object.assign(new Error('Daemon is shutting down.'), {
       code: 'daemon_draining',
     });
-  const setChannelWorkerSelection = async (
-    selection: ServeChannelSelection,
-  ): Promise<ChannelWorkerSetResult> => {
-    if (channelControlDraining) throw daemonDrainingError();
-    const manager = await ensureChannelWorkerManager?.();
-    if (!manager) throw new Error('Channel worker manager is unavailable.');
-    if (channelControlDraining) {
-      await manager.shutdown().catch(() => undefined);
-      throw daemonDrainingError();
-    }
-    return manager.setSelection(selection);
-  };
-  const stopChannelWorker = async (): Promise<ChannelWorkerStopResult> => {
-    if (channelControlDraining) throw daemonDrainingError();
-    const manager =
-      channelWorkerManager ?? (await channelWorkerManagerStarting);
-    if (channelControlDraining) {
-      await manager?.shutdown().catch(() => undefined);
-      throw daemonDrainingError();
-    }
-    if (!manager) {
-      return { changed: false, state: getChannelWorkerControl() };
-    }
-    return manager.stopSelection();
-  };
-  const reloadChannelWorker = async (): Promise<ChannelWorkerSnapshot> => {
-    if (channelControlDraining) throw daemonDrainingError();
-    const manager =
-      channelWorkerManager ?? (await channelWorkerManagerStarting);
-    if (channelControlDraining) {
-      await manager?.shutdown().catch(() => undefined);
-      throw daemonDrainingError();
-    }
-    if (!manager) {
-      return { enabled: false, state: 'disabled' as const, channels: [] };
-    }
-    try {
-      return await manager.reload();
-    } finally {
-      writeChannelWorkerPidfile();
-    }
-  };
-  // Rewrite the full worker list from the current group snapshots on every
-  // ready/exit. A synchronous full rewrite (rather than a read-modify-write of
-  // a single entry) keeps concurrent per-worker updates from losing each other.
-  const isLiveWorker = (snapshot: ChannelWorkerGroupSnapshot): boolean =>
-    snapshot.state === 'running' || snapshot.state === 'starting';
-  let channelWorkerPidfileUsesWorkers = workspaceInputs.length > 1;
-  const writeChannelWorkerPidfile = (): void => {
-    if (runtimeStartupError !== undefined) return;
-    if (!channelPidfileReserved || !channelServicePidfile) return;
-    const snapshots = getChannelWorkerSnapshots();
-    const workers: ServiceInfoWorker[] = snapshots.map((snapshot) => ({
-      workspaceId: snapshot.workspaceId,
-      workspaceCwd: snapshot.workspaceCwd,
-      channels: snapshot.channels,
-      // Drop a stale pid (worker exited/failed/stopped) so readers never signal
-      // a dead process — mirrors the pre-4b clear-on-exit behavior.
-      ...(isLiveWorker(snapshot) && snapshot.pid !== undefined
-        ? { workerPid: snapshot.pid }
-        : {}),
-    }));
-    const channels = [
-      ...new Set(snapshots.flatMap((snapshot) => snapshot.channels)),
-    ];
-    const primary = snapshots.find((snapshot) => snapshot.primary);
-    // Only surface the per-workspace worker list in multi-workspace mode; a
-    // single-workspace daemon keeps the byte-identical channels/workerPid shape.
-    if (workers.length > 1 || snapshots.some((snapshot) => !snapshot.primary)) {
-      channelWorkerPidfileUsesWorkers = true;
-    }
-    const includeWorkers =
-      channelWorkerPidfileUsesWorkers && workers.length > 0;
-    try {
-      channelServicePidfile.writeServeServiceInfo({
-        channels,
-        servePid: process.pid,
-        ...(primary && isLiveWorker(primary) && primary.pid !== undefined
-          ? { workerPid: primary.pid }
-          : {}),
-        ...(includeWorkers ? { workers } : {}),
-      });
-    } catch (err) {
-      daemonLog.warn(
-        `failed to write channel worker pidfile metadata: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  };
 
   const handleBridge =
     deps.bridge ??
@@ -3993,8 +3515,6 @@ export async function runQwenServe(
       primaryWorkspaceTrusted: trustedWorkspace,
       primaryRuntimeEnv,
       daemonLog,
-      getChannelWorkerSnapshot,
-      getChannelWorkerSnapshots,
       getChannelWorkerControl,
       isChannelControlDraining: () => channelControlDraining,
       isChannelControlInitializing: () =>
@@ -4129,8 +3649,6 @@ export async function runQwenServe(
     permissionPolicy,
     multiWorkspaceCapabilitiesRequireRuntime: workspaceInputs.length > 1,
     getRuntimeError: () => runtimeStartupError,
-    getChannelWorkerSnapshot,
-    getChannelWorkerSnapshots,
     onHealthServed: deferRuntimeUntilFirstHealth
       ? () => startRuntimeAfterHealth?.()
       : undefined,

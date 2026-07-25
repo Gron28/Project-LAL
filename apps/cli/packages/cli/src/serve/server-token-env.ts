@@ -1,5 +1,5 @@
-export const CHANNEL_DAEMON_WORKER_SENTINEL = 'QWEN_CHANNEL_DAEMON_WORKER';
-export const CHANNEL_WORKER_HEARTBEAT_INTERVAL_MS = 15_000;
+// Env var names for the serve daemon. Moved out of channel-worker-env.ts
+// (PLAN 7.2); the CHANNEL_* entries went with the feature.
 export const QWEN_DAEMON_TOKEN_ENV = 'QWEN_DAEMON_TOKEN';
 export const QWEN_DAEMON_URL_ENV = 'QWEN_DAEMON_URL';
 export const QWEN_DAEMON_WORKSPACE_ENV = 'QWEN_DAEMON_WORKSPACE';
