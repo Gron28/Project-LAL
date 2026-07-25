@@ -72,6 +72,7 @@ const MockedGeminiClientClass = vi.hoisted(() =>
       recordMessage: vi.fn(),
       recordMessageTokens: vi.fn(),
       recordToolCalls: vi.fn(),
+      recordRuntimeDecision: vi.fn(),
       getConversationFile: vi.fn(),
     });
   }),

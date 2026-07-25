@@ -386,6 +386,14 @@ describe('bootstrap import boundaries', () => {
         '../../scripts/cli-entry.js',
         path.join(entryDir, 'cli-entry.mjs'),
       );
+      // cli-entry imports this sibling for the managed-runtime egress policy,
+      // so the fixture is not a runnable copy of the wrapper without it. It is
+      // shipped for real installs (package.json "files", asserted by
+      // check-egress-acceptance.mjs); only this temp copy was missing it.
+      copyFileSync(
+        '../../scripts/lal-runtime-policy.mjs',
+        path.join(entryDir, 'lal-runtime-policy.mjs'),
+      );
       writeFileSync(
         path.join(entryDir, 'cli.js'),
         "process.stdout.write('fallback-cli\\n');\n",
