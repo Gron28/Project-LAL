@@ -8,7 +8,13 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { getProjectHash, QWEN_DIR, sanitizeCwd } from '../utils/paths.js';
+import {
+  getProjectHash,
+  LAL_DIR,
+  LEGACY_QWEN_DIR,
+  QWEN_DIR,
+  sanitizeCwd,
+} from '../utils/paths.js';
 import { FatalConfigError } from '../utils/errors.js';
 
 export { QWEN_DIR } from '../utils/paths.js';
@@ -151,16 +157,55 @@ export class Storage {
     return Storage.getGlobalQwenDir();
   }
 
+  /**
+   * Resolve the home directory name once per home path.
+   *
+   * A fresh install gets `.lal`. An install that predates the rename keeps
+   * using `.qwen` — silently relocating it would orphan its settings, saved
+   * projects and skills rather than migrate them, and the failure would look
+   * like amnesia rather than a move.
+   *
+   * `.lal` wins when both exist, which is the state this machine was in: the
+   * `lal` launcher already exports QWEN_HOME=$HOME/.lal, so anything started
+   * through it wrote to `.lal` while anything that bypassed it (the daemon's
+   * own debug logs, tip history) fell back here and wrote to `.qwen`. The
+   * launcher was load-bearing for correctness, which is why both directories
+   * were live and being appended to on the same day.
+   */
+  private static homeDirNameCache = new Map<string, string>();
+
+  private static resolveHomeDirName(homeDir: string): string {
+    const cached = Storage.homeDirNameCache.get(homeDir);
+    if (cached !== undefined) {
+      return cached;
+    }
+    let name = LAL_DIR;
+    if (!fs.existsSync(path.join(homeDir, LAL_DIR))) {
+      if (fs.existsSync(path.join(homeDir, LEGACY_QWEN_DIR))) {
+        name = LEGACY_QWEN_DIR;
+      }
+    }
+    Storage.homeDirNameCache.set(homeDir, name);
+    return name;
+  }
+
+  /** Test-only: forget the resolved home name so a fake homedir is re-read. */
+  static _resetHomeDirNameCacheForTest(): void {
+    Storage.homeDirNameCache.clear();
+  }
+
   static getGlobalQwenDir(): string {
-    const envDir = process.env['QWEN_HOME'];
+    // LAL_HOME is the name going forward; QWEN_HOME is still honoured because
+    // the launcher, the VS Code companion and existing shell profiles set it.
+    const envDir = process.env['LAL_HOME'] ?? process.env['QWEN_HOME'];
     if (envDir) {
       return Storage.resolvePath(envDir);
     }
     const homeDir = os.homedir();
     if (!homeDir) {
-      return path.join(os.tmpdir(), '.qwen');
+      return path.join(os.tmpdir(), LAL_DIR);
     }
-    return path.join(homeDir, QWEN_DIR);
+    return path.join(homeDir, Storage.resolveHomeDirName(homeDir));
   }
 
   static getMcpOAuthTokensPath(): string {

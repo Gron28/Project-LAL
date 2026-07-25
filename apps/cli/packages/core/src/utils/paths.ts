@@ -11,7 +11,21 @@ import * as crypto from 'node:crypto';
 import type { Config } from '../config/config.js';
 import { isNodeError } from './errors.js';
 
-export const QWEN_DIR = '.qwen';
+/** The product's on-disk home directory name. */
+export const LAL_DIR = '.lal';
+/**
+ * The inherited name. Still resolved for installs that predate the rename —
+ * see Storage.getGlobalQwenDir() — but never chosen for a fresh install.
+ */
+export const LEGACY_QWEN_DIR = '.qwen';
+/**
+ * The PROJECT-LOCAL config directory name (`<repo>/.qwen`) — deliberately NOT
+ * changed with the home directory. Flipping this would make the per-project
+ * settings and skills already sitting in users' repositories undiscoverable,
+ * which is a different migration with a different blast radius. The home
+ * directory move is handled in Storage.getGlobalQwenDir().
+ */
+export const QWEN_DIR = LEGACY_QWEN_DIR;
 export const GOOGLE_ACCOUNTS_FILENAME = 'google_accounts.json';
 
 /**
