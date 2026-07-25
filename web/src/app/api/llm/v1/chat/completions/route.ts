@@ -2,49 +2,15 @@ import { activatePublicModel, allModels, beginGeneration, contextProfileForModel
 import { appendHostObservationForClientDevice } from "@/lib/runs";
 import { recordUsage } from "@/lib/usage-ledger";
 import { acquireCliGpuLease, cliAuthenticatedDeviceId, cliAuthorized, recordCliAccess, streamWithRelease, unauthorizedResponse } from "@/lib/lal-cli";
+// PLAN 2.2 — the allowlist and the prefix rule live in ONE place, shared with
+// the CLI, so the two sides can no longer disagree about what a tool is called.
+import { canonicalToolName, isTerminalTool } from "@project-lal/protocol";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
 
 type Usage = { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown };
 type Logprob = { logprob?: unknown; token?: unknown; top_logprobs?: Array<{ token?: unknown; logprob?: unknown }> };
-// Tools from the computer-use driver reach the wire with this prefix; the
-// allowlist below is written in terms of the unprefixed verb.
-const COMPUTER_USE_PREFIX = "computer_use__";
-
-const LAL_TERMINAL_TOOLS = new Set([
-  "read_file",
-  "edit",
-  "write_file",
-  "run_shell_command",
-  // Orientation tools: without list/search the model cannot discover the
-  // project it is asked to change, which manifested as repeat-loops instead
-  // of tool calls.
-  "grep_search",
-  "glob",
-  "list_directory",
-  "todo_write",
-  // One-chat project orchestration. These are deliberately the only larger
-  // synthetic schemas admitted for managed terminals; teams/workflows/CUA
-  // remain outside this small-model boundary.
-  "tool_search",
-  "agent",
-  "task_stop",
-  "web_search",
-  "web_fetch",
-  // Browser acceptance tools remain lazy behind tool_search; admitting them
-  // here lets their eventual schemas and results stay in the same turn.
-  "launch_app",
-  "list_windows",
-  "get_window_state",
-  "page",
-  // "screenshot" used to sit here and matched nothing — no tool is registered
-  // under that name, so the entry admitted nothing while reading as though
-  // screen capture were available (caught by
-  // scripts/check_tool_allowlist_drift.mjs, 2026-07-24). Screen capture is
-  // delivered by get_window_state, which returns the PNG.
-]);
-
 // Budget guards, not documentation removal: a small local model needs the
 // real tool contract to emit correct native tool_calls, but inherited prose
 // must not consume most of a 32k turn.
@@ -105,9 +71,7 @@ function compactTools(value: unknown, dropped?: string[]): unknown {
     // Confirmed from a Windows session 2026-07-25. This is PLAN 2.1's fourth
     // hypothesis: "tools loaded lazily through tool_search are dropped by the
     // same filter when their schemas arrive, leaving the model to improvise."
-    const name = rawName.startsWith(COMPUTER_USE_PREFIX)
-      ? rawName.slice(COMPUTER_USE_PREFIX.length)
-      : rawName;
+    const name = canonicalToolName(rawName);
     // This is the product boundary, not merely a client preference: old
     // managed settings cannot quietly reintroduce agent teams, generic
     // clarification dialogs, MCP, or workflow tools into a small-model turn.
@@ -116,7 +80,7 @@ function compactTools(value: unknown, dropped?: string[]): unknown {
     // here without a word leaves the model to improvise — the leading
     // hypothesis for the Windows `'agent' is not recognized as a command`
     // report. The caller logs whatever lands in `dropped`.
-    if (!LAL_TERMINAL_TOOLS.has(name)) {
+    if (!isTerminalTool(rawName)) {
       dropped?.push(rawName);
       return [];
     }

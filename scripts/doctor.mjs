@@ -70,6 +70,36 @@ check(
   "Run: npm --prefix apps/cli install",
 );
 
+// The shared registry (PLAN 2.2) is consumed through a `file:` dependency. npm
+// resolves those by COPYING on some installs and symlinking on others, and a copy
+// goes stale silently: the gateway then enforces a tool allowlist from whenever
+// the copy was made, which is precisely the drift the single registry exists to
+// end. Compare the contents rather than the link type — a copy that happens to be
+// current is fine, and on Windows a copy may be the only option.
+function protocolCopyState() {
+  const source = path.join(root, "packages", "protocol", "src");
+  const linked = path.join(root, "web", "node_modules", "@project-lal", "protocol", "src");
+  if (!fs.existsSync(source)) return "packages/protocol is missing";
+  if (!fs.existsSync(linked)) return "not installed in web/";
+  const names = fs.readdirSync(source).filter((f) => f.endsWith(".ts"));
+  for (const name of names) {
+    const a = path.join(source, name);
+    const b = path.join(linked, name);
+    if (!fs.existsSync(b)) return `web/ is missing ${name}`;
+    if (fs.readFileSync(a, "utf8") !== fs.readFileSync(b, "utf8")) {
+      return `web/'s copy of ${name} is STALE`;
+    }
+  }
+  return null;
+}
+const protocolProblem = protocolCopyState();
+check(
+  "required",
+  "shared @project-lal/protocol is current in web/",
+  protocolProblem ? null : "in sync",
+  `${protocolProblem ?? ""} — run: npm --prefix web install  (the tool allowlist and wire contract live in packages/protocol; a stale copy silently enforces an old one)`,
+);
+
 // ── OPTIONAL ────────────────────────────────────────────────────────────────
 check(
   "optional",

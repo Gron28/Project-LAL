@@ -1,4 +1,6 @@
 // The versioned wire contract shared by the LAL host and terminal client.
+//
+// Tool identity is part of that contract — see ./tools.ts (PLAN 2.2).
 // Additive event kinds are minor changes; incompatible payload changes require a
 // protocol-version bump. Unknown kinds must always degrade visibly at clients.
 
@@ -151,4 +153,82 @@ export const KNOWN_EVENT_KINDS = new Set<string>([
 
 export function isKnownEventKind(k: string): boolean {
   return KNOWN_EVENT_KINDS.has(k);
+}
+
+// --------------------------------------------------------------------------
+// PLAN 2.2 — one registry is the only source of tool identity.
+//
+// The gateway used to keep its own hand-maintained `LAL_TERMINAL_TOOLS` set
+// inside the chat-completions route while the CLI kept the real tool names in
+// `tool-names.ts`. Two hand-maintained lists of the same thing drift, and the
+// drift was silent in the worst possible direction: the gateway DROPS any
+// advertised tool whose name it does not recognise, so the model was handed a
+// capability list nobody told it about. Both failures below were real:
+//
+//   - `screenshot` sat in the allowlist and matched no tool at all, so the entry
+//     admitted nothing while reading as though screen capture were available.
+//   - the computer-use driver advertises `computer_use__page`, and the allowlist
+//     named the bare verb `page`, so every browser tool `tool_search` loaded was
+//     deleted at the filter — while the system prompt instructed the model to
+//     load and use them (PLAN 2.1, hypothesis 4).
+//
+// This module is that single declaration. It lives in the shared protocol
+// package because it is exactly a host↔client contract: the host decides which
+// tools may cross the wire, and the client must not advertise what the host will
+// silently drop.
+
+/**
+ * Tools the managed terminal boundary admits.
+ *
+ * This is a PRODUCT boundary, not a capability inventory — excluding a tool is
+ * its job. Teams, workflows and the broader inherited surface are deliberately
+ * outside it, because a small local model handed sixty schemas emits none of
+ * them correctly.
+ */
+export const LAL_TERMINAL_TOOLS: readonly string[] = [
+  // File and shell work: the irreducible core.
+  "read_file",
+  "edit",
+  "write_file",
+  "run_shell_command",
+  // Orientation. Without list/search the model cannot discover the project it
+  // is asked to change, which manifested as repeat-loops instead of tool calls.
+  "grep_search",
+  "glob",
+  "list_directory",
+  "todo_write",
+  // One-chat project orchestration. Deliberately the only larger synthetic
+  // schemas admitted at this boundary.
+  "tool_search",
+  "agent",
+  "task_stop",
+  "web_search",
+  "web_fetch",
+  // Browser acceptance tools stay lazy behind tool_search; admitting them here
+  // lets their eventual schemas and results live in the same turn.
+  "launch_app",
+  "list_windows",
+  "get_window_state",
+  "page",
+];
+
+const TERMINAL_TOOL_SET = new Set(LAL_TERMINAL_TOOLS);
+
+/**
+ * The computer-use driver advertises its tools prefixed. The allowlist is
+ * written in terms of the bare verb, so the prefix is stripped before matching —
+ * in ONE place, shared by both sides, which is the point of this module.
+ */
+export const COMPUTER_USE_PREFIX = "computer_use__";
+
+/** The name to match against the allowlist for an as-advertised tool name. */
+export function canonicalToolName(advertisedName: string): string {
+  return advertisedName.startsWith(COMPUTER_USE_PREFIX)
+    ? advertisedName.slice(COMPUTER_USE_PREFIX.length)
+    : advertisedName;
+}
+
+/** Would the gateway admit a tool advertised under this name? */
+export function isTerminalTool(advertisedName: string): boolean {
+  return TERMINAL_TOOL_SET.has(canonicalToolName(advertisedName));
 }

@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // PLAN 2.2 — "one registry is the only source of tool identity".
 //
-// Until that refactor lands, the gateway keeps its own allowlist
-// (LAL_TERMINAL_TOOLS in the chat-completions route) and the CLI keeps the real
-// tool names. Two hand-maintained lists of the same thing drift, and the drift
-// is silent in the worst possible direction: the gateway drops any advertised
-// tool whose name it does not recognise, leaving the model holding a capability
-// list nobody told it about, which is the leading hypothesis for the Windows
-// report of `'agent' is not recognized as a command`.
+// The registry now exists: `packages/protocol/src/index.ts` declares the terminal
+// allowlist and the computer-use prefix rule ONCE, and the gateway imports it, so
+// the two-hand-maintained-lists failure mode is gone by construction.
+//
+// What this check still guards is the direction a single registry cannot fix on
+// its own: a name in the registry that resolves to no real tool. That admits
+// nothing while reading as though the capability existed — how "screenshot" sat
+// in the allowlist for months (found here 2026-07-24; screen capture is actually
+// delivered by get_window_state's PNG).
 //
 // Found by this check on first run (2026-07-24): "screenshot" was in the
 // allowlist and is not a tool. It is delivered by get_window_state's PNG.
@@ -22,8 +24,8 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-const GATEWAY_ROUTE =
-  'web/src/app/api/llm/v1/chat/completions/route.ts';
+// The one registry (PLAN 2.2). Previously the gateway route's inline copy.
+const GATEWAY_ROUTE = 'packages/protocol/src/index.ts';
 // Every file that declares canonical tool names the CLI can actually register.
 const NAME_SOURCES = [
   'apps/cli/packages/core/src/tools/tool-names.ts',
@@ -40,11 +42,11 @@ function read(relativePath) {
 }
 
 function parseAllowlist(source) {
-  const start = source.indexOf('LAL_TERMINAL_TOOLS = new Set([');
+  const start = source.indexOf('LAL_TERMINAL_TOOLS: readonly string[] = [');
   if (start === -1) {
     throw new Error(`${GATEWAY_ROUTE}: LAL_TERMINAL_TOOLS not found`);
   }
-  const end = source.indexOf(']);', start);
+  const end = source.indexOf('];', start);
   if (end === -1) {
     throw new Error(`${GATEWAY_ROUTE}: LAL_TERMINAL_TOOLS is unterminated`);
   }
