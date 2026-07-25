@@ -22,6 +22,25 @@ import { t } from '../../i18n/index.js';
 
 interface AppHeaderProps {
   version: string;
+  /**
+   * Collapse the banner to a single identity line.
+   *
+   * In virtual-scroll mode the header is PINNED outside the scroll area and its
+   * measured height is subtracted from the transcript's
+   * (`MainContent`: `availableTerminalHeight - vpHeaderHeight`), so it is not
+   * scrollback — it is a permanent tax on the chat. Measured: an 11-line ascii
+   * logo, ~4 header info lines, 2 project/shortcut lines and 3 Tips lines, about
+   * 20 rows. The operator reported the result as "60% header, 20% chat, 20%
+   * footer" on 2026-07-25.
+   *
+   * Legacy mode does not need this: there the header is the first item inside
+   * <Static>, so it scrolls away into terminal scrollback on its own.
+   *
+   * The full banner still renders on the startup screen — the logo is kept, as
+   * PLAN 7.4 requires; it just stops charging rent once there is a conversation
+   * to read.
+   */
+  compact?: boolean;
 }
 
 /**
@@ -66,7 +85,7 @@ function projectNameFromDir(targetDir: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : targetDir;
 }
 
-export const AppHeader = ({ version }: AppHeaderProps) => {
+export const AppHeader = ({ version, compact = false }: AppHeaderProps) => {
   const settings = useSettings();
   const config = useConfig();
   const uiState = useUIState();
@@ -75,8 +94,12 @@ export const AppHeader = ({ version }: AppHeaderProps) => {
   const model = config.getModelDisplayName();
   const targetDir = config.getTargetDir();
   const showBanner =
-    !config.getScreenReader() && !settings.merged.ui?.hideBanner;
-  const showTips = !(settings.merged.ui?.hideTips || config.getScreenReader());
+    !compact && !config.getScreenReader() && !settings.merged.ui?.hideBanner;
+  const showTips = !(
+    compact ||
+    settings.merged.ui?.hideTips ||
+    config.getScreenReader()
+  );
   const projectName = projectNameFromDir(targetDir);
   const reasoningEffort = config.getReasoningEffort?.();
   const branchName = uiState.branchName;
@@ -121,6 +144,19 @@ export const AppHeader = ({ version }: AppHeaderProps) => {
         </Box>
       )}
       {showTips && <Tips />}
+      {compact && (
+        // One line, so the transcript keeps the rows. Identity stays visible
+        // (project, branch, model) per the standing rule that LAL is never a
+        // black box — the full banner is one /clear away.
+        <Box marginLeft={2} marginRight={2}>
+          <Text color={theme.text.secondary}>
+            {projectName}
+            {branchName ? ` (${branchName})` : ''}
+            {`  ·  ${model}`}
+            {reasoningEffort ? `  ·  ${t('effort')}: ${reasoningEffort}` : ''}
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 };

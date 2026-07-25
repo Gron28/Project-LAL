@@ -44,10 +44,13 @@ vi.mock('ink', async () => {
   };
 });
 
+const appHeaderPropsSpy = vi.hoisted(() => vi.fn());
+
 vi.mock('./AppHeader.js', () => ({
-  AppHeader: ({ version }: { version: string }) => {
-    appHeaderSpy(version);
-    return <Text>{`APP_HEADER:${version}`}</Text>;
+  AppHeader: (props: { version: string; compact?: boolean }) => {
+    appHeaderSpy(props.version);
+    appHeaderPropsSpy(props);
+    return <Text>{`APP_HEADER:${props.version}`}</Text>;
   },
 }));
 
@@ -736,6 +739,30 @@ describe('<MainContent />', () => {
   });
 
   describe('virtual viewport path (ui.useTerminalBuffer)', () => {
+    it('collapses the pinned banner once there is history, and keeps it on startup', () => {
+      // In VP mode the header is pinned OUTSIDE the scroll area and its measured
+      // height is subtracted from the transcript, so ~20 rows of banner (11-line
+      // logo + info + tips) is a permanent tax on the chat, not scrollback. The
+      // operator saw it as "60% header, 20% chat, 20% footer".
+      appHeaderPropsSpy.mockClear();
+      renderMainContent(
+        createUIState({
+          useTerminalBuffer: true,
+          history: [{ id: 1, type: 'user', text: 'hello' }],
+        }),
+      );
+      expect(appHeaderPropsSpy).toHaveBeenCalled();
+      expect(appHeaderPropsSpy.mock.calls.at(-1)?.[0]?.compact).toBe(true);
+
+      // Startup screen keeps the full banner: the logo stays (PLAN 7.4), it just
+      // stops charging rent once there is a conversation to read.
+      appHeaderPropsSpy.mockClear();
+      renderMainContent(
+        createUIState({ useTerminalBuffer: true, history: [] }),
+      );
+      expect(appHeaderPropsSpy.mock.calls.at(-1)?.[0]?.compact).toBe(false);
+    });
+
     it('renders ScrollableList and skips <Static> entirely when useTerminalBuffer is true', () => {
       staticPropsSpy.mockClear();
       scrollableListPropsSpy.mockClear();

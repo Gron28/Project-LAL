@@ -386,7 +386,17 @@ export const MainContent = () => {
     return (
       <>
         <Box ref={vpHeaderRef} flexDirection="column" flexShrink={0}>
-          <AppHeader version={version} />
+          {/*
+            Pinned, not scrollback: vpHeaderHeight is subtracted from the
+            transcript height above. So the full banner collapses to one line as
+            soon as there is a conversation, instead of permanently costing ~20
+            rows. Legacy mode keeps the full banner because there it lives inside
+            <Static> and scrolls away by itself.
+          */}
+          <AppHeader
+            version={version}
+            compact={visibleHistoryItemsWithSourceCopyOffsets.length > 0}
+          />
           <DebugModeNotification />
           <Notifications />
         </Box>
