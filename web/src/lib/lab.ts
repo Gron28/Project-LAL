@@ -8,7 +8,7 @@ import { spawn, ChildProcess, execSync } from "node:child_process";
 import { gradeItem, stripThink, type BenchItem } from "./graders";
 import { resolvePlatformDirectories } from "./host-profile";
 import { ContextProfileStore, contextCandidates, contextHardwareFingerprint, makeContextProfile, readGgufContextLength } from "./context-profile";
-import type { ContextProfile } from "@project-lal/protocol";
+import type { ContextProfile } from "@lal/protocol";
 export type { BenchItem } from "./graders";
 export type ModelRuntimeSettings = {
   contextTokens: number;

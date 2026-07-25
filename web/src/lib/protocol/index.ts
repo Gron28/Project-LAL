@@ -4,7 +4,7 @@ export {
   isKnownEventKind,
   KNOWN_EVENT_KINDS,
   PROTOCOL_VERSION,
-} from "@project-lal/protocol";
+} from "@lal/protocol";
 
 export type {
   AdditionalRouteEvent,
@@ -17,4 +17,4 @@ export type {
   RunEnvelopeEvent,
   RunStatus,
   ToolLoopEvent,
-} from "@project-lal/protocol";
+} from "@lal/protocol";

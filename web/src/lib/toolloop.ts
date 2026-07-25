@@ -5,9 +5,9 @@
 import type { Executor } from "./tools";
 import { TOOL_DEFS, normalizeToolArgs, toolCallExample, validateToolArguments, type ToolDef } from "./tools";
 import { managedPrompt } from "./lal-prompts";
-import type { ToolLoopEvent } from "@project-lal/protocol";
+import type { ToolLoopEvent } from "@lal/protocol";
 
-export type { ToolLoopEvent } from "@project-lal/protocol";
+export type { ToolLoopEvent } from "@lal/protocol";
 
 export type ToolLoopMsg = {
   role: "system" | "user" | "assistant" | "tool";

@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { ContextProfile } from "@project-lal/protocol";
+import type { ContextProfile } from "@lal/protocol";
 
 export const CONTEXT_CANDIDATES = [32_768, 65_536, 131_072] as const;
 export const CONTEXT_FALLBACKS = [16_384, 8_192] as const;

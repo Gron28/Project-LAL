@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Copy packages/protocol into web/node_modules/@project-lal/protocol.
+// Copy packages/protocol into web/node_modules/@lal/protocol.
 //
-// Why a copy and not a link: `@project-lal/protocol` is declared as a `file:`
+// Why a copy and not a link: `@lal/protocol` is declared as a `file:`
 // dependency, and npm resolves those by copying on some installs. A symlink is
 // the obvious fix and does not work here — Turbopack cannot resolve a module
 // outside the project root, so `next build` fails with "Can't resolve
-// '@project-lal/protocol'" the moment the directory becomes a link.
+// '@lal/protocol'" the moment the directory becomes a link.
 //
 // So the copy stays, and this makes it deterministic. A stale copy is the
 // dangerous state: the gateway would enforce the tool allowlist (PLAN 2.2) from
@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(root, "packages", "protocol");
-const target = path.join(root, "web", "node_modules", "@project-lal", "protocol");
+const target = path.join(root, "web", "node_modules", "@lal", "protocol");
 
 if (!fs.existsSync(source)) {
   console.error(`[sync-protocol] missing ${source}`);

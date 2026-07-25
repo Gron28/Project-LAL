@@ -78,7 +78,7 @@ check(
 // current is fine, and on Windows a copy may be the only option.
 function protocolCopyState() {
   const source = path.join(root, "packages", "protocol", "src");
-  const linked = path.join(root, "web", "node_modules", "@project-lal", "protocol", "src");
+  const linked = path.join(root, "web", "node_modules", "@lal", "protocol", "src");
   if (!fs.existsSync(source)) return "packages/protocol is missing";
   if (!fs.existsSync(linked)) return "not installed in web/";
   const names = fs.readdirSync(source).filter((f) => f.endsWith(".ts"));
@@ -95,7 +95,7 @@ function protocolCopyState() {
 const protocolProblem = protocolCopyState();
 check(
   "required",
-  "shared @project-lal/protocol is current in web/",
+  "shared @lal/protocol is current in web/",
   protocolProblem ? null : "in sync",
   `${protocolProblem ?? ""} — run: npm --prefix web install  (the tool allowlist and wire contract live in packages/protocol; a stale copy silently enforces an old one)`,
 );

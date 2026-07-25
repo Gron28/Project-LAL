@@ -4,7 +4,7 @@ import { recordUsage } from "@/lib/usage-ledger";
 import { acquireCliGpuLease, cliAuthenticatedDeviceId, cliAuthorized, recordCliAccess, streamWithRelease, unauthorizedResponse } from "@/lib/lal-cli";
 // PLAN 2.2 — the allowlist and the prefix rule live in ONE place, shared with
 // the CLI, so the two sides can no longer disagree about what a tool is called.
-import { canonicalToolName, isTerminalTool } from "@project-lal/protocol";
+import { canonicalToolName, isTerminalTool } from "@lal/protocol";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;

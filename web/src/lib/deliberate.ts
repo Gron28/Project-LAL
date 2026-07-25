@@ -22,9 +22,9 @@ import type { Executor, ToolDef } from "./tools";
 import { ensureServing } from "./lab";
 import type { ApproveFn } from "./toolloop";
 import { runRetention } from "./retention";
-import type { DeliberateEvent, Role } from "@project-lal/protocol";
+import type { DeliberateEvent, Role } from "@lal/protocol";
 
-export type { DeliberateEvent, Role } from "@project-lal/protocol";
+export type { DeliberateEvent, Role } from "@lal/protocol";
 
 export type Sampling = { temperature?: number; topP?: number; topK?: number; repeatPenalty?: number };
 

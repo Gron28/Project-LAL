@@ -184,7 +184,7 @@ holds the editor panes, file tree, git panel, dir picker.
 | Path | LOC | What |
 |---|---|---|
 | `packages/cli/src/lal/` | 1,804 | Gateway client, SSE client, renderer, reattach, remote-run mirror, managed settings sync, catalog |
-| `packages/core/src/lal/` | 3 | Re-export bridge to `@project-lal/protocol` |
+| `packages/core/src/lal/` | 3 | Re-export bridge to `@lal/protocol` |
 | `packages/cli/src/ui/themes/lal-{dark,light}.ts` | — | Branding |
 | `scripts/lal-runtime-policy.mjs` | — | Forces `LAL_MANAGED=1`; disables inherited RUM and update checks |
 | `NOTICE-LAL.md`, `README-LAL.md` | — | Derivation notice |

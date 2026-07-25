@@ -15,9 +15,9 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { newId, saveConvo, setIdleHold, touchServing } from "./lab";
 import { runLedgerEvictionPlan } from "./retention";
-import { isKnownEventKind, type RunStatus } from "@project-lal/protocol";
+import { isKnownEventKind, type RunStatus } from "@lal/protocol";
 
-export type { RunStatus } from "@project-lal/protocol";
+export type { RunStatus } from "@lal/protocol";
 
 const RUNS_DIR = path.join(process.cwd(), ".data", "runs");
 fs.mkdirSync(RUNS_DIR, { recursive: true });

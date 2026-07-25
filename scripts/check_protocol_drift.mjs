@@ -32,13 +32,13 @@ try {
 
   for (const name of ["webFacade", "webRuns", "webStream", "cliBridge"]) {
     const text = read(files[name]);
-    requireText(name, text, "@project-lal/protocol");
+    requireText(name, text, "@lal/protocol");
     if (text.includes("GENERATED / MIRRORED FILE")) {
       throw new Error(`${files[name]} still contains a generated protocol mirror`);
     }
   }
 
-  console.log("shared protocol boundary OK — web and CLI consume @project-lal/protocol");
+  console.log("shared protocol boundary OK — web and CLI consume @lal/protocol");
 } catch (error) {
   console.error(`protocol boundary check failed: ${(error instanceof Error ? error.message : String(error))}`);
   process.exitCode = 1;
