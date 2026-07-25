@@ -189,6 +189,19 @@ function analyzeTrace(events) {
     .flatMap(ws => ws.filter(w => w.tool === 'write_file').slice(0, -1))
     .reduce((n, w) => n + (w.bytes || 0), 0);
 
+  // Condition 7, sourced from the markers the write tool now emits (PLAN 3.1).
+  // `interruptedWrites` counts turns where a stream died mid-write and the
+  // partial content was staged; the two `resume=` markers say whether the next
+  // write continued that work or threw it away.
+  // The whole trace, not just tool results: the staging notice arrives as a turn
+  // error from the content generator, while the resume markers arrive in the
+  // write tool's result.
+  const traceText = JSON.stringify(events);
+  const countOf = (needle) => traceText.split(needle).length - 1;
+  const interruptedWrites = countOf('.lal-partial');
+  const resumedFromDraft = countOf('resume=from-draft');
+  const discardedDrafts = countOf('resume=discarded-draft');
+
   // Condition 9: did the agent verify after its last write, before finishing?
   const lastWriteIdx = toolUses.map(t => t.name).lastIndexOf('write_file');
   const validatedAfterWrite = lastWriteIdx !== -1 && toolUses
@@ -222,6 +235,9 @@ function analyzeTrace(events) {
     }),
     retries,
     writes,
+    interruptedWrites,
+    resumedFromDraft,
+    discardedDrafts,
     regeneratedWrites: regenerated,
     regeneratedBytes: wastedBytes,
     validatedAfterWrite,
@@ -307,7 +323,9 @@ async function runOnce(i, opts) {
     4: !page.error && (page.consoleErrors || []).length === 0,
     5: probesRun > 0 && !probesFailed.some(n => /shuffle|reset|button/i.test(n)),
     6: probesRun > 0 && !probesFailed.some(n => /canvas|drawn|chart/i.test(n)),
-    7: null,                       // resume-not-restart: needs Stage 3 instrumentation
+    // Resume-not-restart. Null when no write was ever interrupted — the
+    // condition was not exercised, which is different from having passed it.
+    7: t.interruptedWrites === 0 ? null : t.resumedFromDraft > 0 && t.discardedDrafts === 0,
     8: t.regeneratedWrites === 0,
     9: t.validatedAfterWrite,
   };
@@ -329,6 +347,9 @@ async function runOnce(i, opts) {
       tokens: t.tokens?.total_tokens ?? null,
       regeneratedWrites: t.regeneratedWrites,
       regeneratedBytes: t.regeneratedBytes,
+      interruptedWrites: t.interruptedWrites,
+      resumedFromDraft: t.resumedFromDraft,
+      discardedDrafts: t.discardedDrafts,
       wallMs,
       apiMs: t.apiMs,
       turns: t.turns,

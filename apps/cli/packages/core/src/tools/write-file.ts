@@ -36,6 +36,11 @@ import { makeRelative, shortenPath, unescapePath } from '../utils/paths.js';
 import { getErrorMessage, isNodeError } from '../utils/errors.js';
 import { createPatchSmart, getDiffStat } from './diffOptions.js';
 import { checkPriorRead, StructuredToolError } from './priorReadEnforcement.js';
+import {
+  classifyAgainstDraft,
+  clearDraft,
+  resumeMarker,
+} from './resumable-draft.js';
 import { ToolNames, ToolDisplayNames } from './tool-names.js';
 import type {
   ModifiableDeclarativeTool,
@@ -472,6 +477,28 @@ class WriteFileToolInvocation extends BaseToolInvocation<
       }
     }
 
+    // PLAN 3.1 — reconcile against work an interrupted stream already generated.
+    // A `<target>.lal-partial` draft means a previous turn was cut off mid-write
+    // and its characters were staged. Refuse only the provable case: content that
+    // is both a restart AND smaller than what is already staged destroys accepted
+    // work. Everything else proceeds and is merely labelled.
+    const draftVerdict = classifyAgainstDraft(file_path, content);
+    if (draftVerdict.kind === 'refuse') {
+      debugLogger.warn('refused a write that would discard staged partial work', {
+        path: file_path,
+        staged: draftVerdict.stagedChars,
+        incoming: draftVerdict.incomingChars,
+      });
+      return {
+        llmContent: draftVerdict.message,
+        returnDisplay: `Error: refused — ${draftVerdict.stagedChars} staged characters would be lost. Resume from ${draftVerdict.draftPath}`,
+        error: {
+          message: draftVerdict.message,
+          type: ToolErrorType.FILE_WRITE_FAILURE,
+        },
+      };
+    }
+
     // Create parent directories AFTER the pre-write enforcement
     // check passes. Doing it before would leak intermediate
     // directories on the failure path (rejected new-file writes
@@ -549,6 +576,16 @@ class WriteFileToolInvocation extends BaseToolInvocation<
         llmSuccessMessageParts.push(
           `User modified the \`content\` to be: ${content}`,
         );
+      }
+
+      // The draft is consumed only now, after the real file is on disk — a write
+      // that threw must leave the staged work exactly where it was.
+      const marker = resumeMarker(draftVerdict);
+      if (marker) {
+        llmSuccessMessageParts.push(marker);
+        if (draftVerdict.kind === 'resumed' || draftVerdict.kind === 'discarded') {
+          clearDraft(draftVerdict.draftPath);
+        }
       }
 
       // Log file operation for telemetry (without diff_stat to avoid double-counting)
