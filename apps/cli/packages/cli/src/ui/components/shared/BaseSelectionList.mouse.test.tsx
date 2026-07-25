@@ -57,6 +57,9 @@ describe('BaseSelectionList with mouse enabled (integration)', () => {
     );
 
   beforeEach(() => {
+    // Mouse tracking is opt-IN since the selectable-text fix (PLAN 7.4). This
+    // suite is the "mouse enabled" case, so it has to say so explicitly.
+    vi.stubEnv('LAL_MOUSE', '1');
     mouseWrite = vi.fn();
     mockedUseStdout.mockReturnValue({
       stdout: { write: mouseWrite, isTTY: true, columns: 80, rows: 24 },

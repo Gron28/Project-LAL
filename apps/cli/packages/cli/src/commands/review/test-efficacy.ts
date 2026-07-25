@@ -42,6 +42,7 @@ import {
   readFileSync,
   rmSync,
   lstatSync,
+  unlinkSync,
 } from 'node:fs';
 import { dirname, join, isAbsolute, resolve, sep } from 'node:path';
 import { writeStdoutLine, writeStderrLine } from '../../utils/stdioHelpers.js';
@@ -311,14 +312,20 @@ function existsAtRev(cwd: string, rev: string, path: string): boolean {
  *
  * So walk every component from the worktree root down and refuse if any
  * ANCESTOR is a symlink — the target must be reachable through real directories
- * only. The final component being a symlink is fine: `rmSync` unlinks the link
- * itself, not what it points at, which is exactly what reverting an added
- * symlink should do. A missing component means there is nothing to remove
+ * only. The final component being a symlink is fine, and must be UNLINKED
+ * rather than removed: that is exactly what reverting an added symlink should
+ * do. This used to lean on `rmSync` for that, on the belief that it unlinks the
+ * link itself; it does not. On Node 24 `rmSync` stats through the link and
+ * throws ERR_FS_EISDIR when it points at a directory, so reverting an added
+ * symlink-to-a-directory failed outright. It failed closed — the target was
+ * never touched — but it failed. `unlinkSync` is the operation actually being
+ * described, so call it. A missing component means there is nothing to remove
  * (`force` rm is already a no-op there), so return quietly.
  */
 export function safeRmWithin(worktree: string, relPath: string): void {
   const parts = relPath.split(/[/\\]+/).filter((s) => s && s !== '.');
   let cur = worktree;
+  let targetStat;
   for (let i = 0; i < parts.length; i++) {
     cur = join(cur, parts[i]);
     let st;
@@ -333,6 +340,11 @@ export function safeRmWithin(worktree: string, relPath: string): void {
           `(ancestor ${parts.slice(0, i + 1).join('/')} is a symlink)`,
       );
     }
+    targetStat = st;
+  }
+  if (targetStat?.isSymbolicLink()) {
+    unlinkSync(cur);
+    return;
   }
   rmSync(cur, { force: true });
 }
