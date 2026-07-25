@@ -89,64 +89,41 @@ The two big mechanical jobs, in this order, each verified by `npm test` +
   - **The operator's data.** `~/.qwen` on this machine still holds 106 projects
     and a pending skill that nothing reads now. Merging or discarding it is an
     explicit decision, not a migration to run silently.
-- **7.1/7.2** — partially applied 2026-07-25. Done: the absent-workspace
-  references (`webui`, `web-shell`, `chrome-extension`, `vscode-ide-companion`)
-  that made a non-`--cli-only` build impossible; the `qc-helper` skill, which
-  told the model to read 62 documentation paths that no longer exist; 11 test
-  files testing deleted GitHub workflows and absent packages.
+- **7.1/7.2 — mostly applied 2026-07-25.**
 
-  **Not done, and here is the measurement, so it is not re-scoped by feel:**
+  Done: the enterprise **channel** surface (168 files: 8 packages,
+  `commands/channel/`, `serve/channel-*`, two routes, all config); the
+  general-purpose **SDK** (104 files, unblocked by the channel removal — its
+  only remaining consumers were channel commands); the absent-workspace
+  references (`webui`, `web-shell`, `chrome-extension`,
+  `vscode-ide-companion`) that made a non-`--cli-only` build impossible; the
+  `qc-helper` skill, which told the model to read 62 documentation paths that
+  no longer exist; 11 orphan test files.
 
-  - **Enterprise channels — attempted twice; WIP preserved on branch
-    `wip/channels-excision` (does not compile, 116 errors, all in the serve
-    daemon).** The second attempt found the unlock the first one missed, so
-    resume from the branch rather than from scratch:
+  Four modules were **rescued** from the channel namespace, not deleted:
+  `serve/pidfile.ts` (the daemon's own service pidfile — path and schema kept
+  verbatim so a running daemon is not orphaned), `serve/cli-entry-path.ts`,
+  `serve/server-token-env.ts`, and `utils/sanitizeLogText.ts` (the
+  log-injection defence on every stderr audit line).
 
-    - **The 7,635-line test is NOT the blocker.** Its channel coverage is not
-      diffuse: one `describe('runQwenServe channel worker supervisor')` block of
-      2,564 lines holds 286 of its 331 channel lines. Two cuts plus one webhook
-      test took that file to **zero** type errors, 7,635 -> 4,888 lines.
-    - **Four modules must be RESCUED, not deleted.** They live under channel
-      paths but are not channel-specific: `commands/channel/pidfile.ts` is the
-      serve daemon's own service pidfile (keep its schema and
-      `<home>/channels/service.pid` path verbatim — renaming orphans a running
-      daemon's pidfile, which is a separate change), `cli-entry-path.ts`,
-      `channel-worker-env.ts`'s non-CHANNEL exports, and `sanitizeLogText` from
-      `@lal/channel-base`, the log-injection defence on every stderr audit line
-      in the daemon.
-    - **The word-collision trap below is real and it bit me.**
-      `channelIdleTimeoutMs` is the ACP *bridge's* spawn-channel idle timeout,
-      sits beside `sessionIdleTimeoutMs`, and I deleted it before restoring it.
-      Roughly half the "channel" matches inside `runQwenServe` are bridge
-      concerns (`createSpawnChannelFactory`, `channelFactory`, `isChannelLive`,
-      "reverse tool channel") and must survive.
-    - Remaining when I stopped: ~13 call-site clusters in `runQwenServe`, then
-      `server.ts` (11), `daemon-status.ts` (3), `routes/daemon-status.ts` (2),
-      `routes/a2ui-action.ts` (1), `config/config.ts` (1), `commands/serve.ts`
-      (1), `daemon-status.test.ts` (1).
+  **Still open:**
 
-    Original measurement, unchanged: 155 files delete cleanly
-    (8 packages, `commands/channel/`, `serve/channel-*`), but channels are a
-    first-class concern of the serve daemon, not a bolt-on: **409 references
-    across all 5,302 lines of `run-qwen-serve.ts`**, spread through nearly every
-    250-line block — lifecycle, config, status, routing, shutdown. Its test is
-    7,635 lines with 331 more. The verification for the surgery IS the test
-    being rewritten by the same surgery. Breaking `lal serve` breaks what the
-    web app talks to. This needs a session of its own with nothing else in it.
-  - **SDK** (`packages/sdk-typescript`) is consumed by `acp-bridge` and every
-    channel command — it comes out *after* channels, not before.
-  - **Cloud provider auth** (`core/src/qwen/*`) reaches into `contentGenerator`,
-    `acpAgent` and `serve/auth`.
-  - **Computer-use driver** is listed for deletion here but
-    `~/.lal/settings.json` has `tools.computerUse.enabled: true`. Resolve the
-    contradiction with the operator before deleting.
-  - **Locales.** Removing the strict-parity machinery is what closes the two
-    frozen `mustTranslateKeys` failures (zh/zh-TW have no translations for 10
-    LAL-added commands).
+  - **Cloud provider auth** (`core/src/qwen/*`) — reaches into
+    `contentGenerator`, `acpAgent` and `serve/auth`. The next excision.
+  - **Computer-use driver** — listed for deletion here, but
+    `~/.lal/settings.json` has `tools.computerUse.enabled: true`. Needs an
+    owner decision before anything is removed.
+  - **Locales** — dropping zh/zh-TW strict parity is what closes the last two
+    failing CLI tests (10 LAL-added commands have no Chinese translations).
+    Also an owner decision.
+  - **Follow-up:** the rescued pidfile still writes to `<home>/channels/`,
+    which is now a misnomer. Renaming it is a migration, not a rename.
 
-  **Trap for whoever does channels:** `acp-bridge`'s "channel" is an IPC
-  abstraction and `audio-capture`'s is an audio channel. A grep-driven deletion
-  eats both.
+  **Trap, confirmed the hard way:** `acp-bridge`'s "channel" is an IPC
+  abstraction, `audio-capture`'s is an audio channel, and
+  `channelIdleTimeoutMs` is the ACP bridge's spawn-channel timeout. That last
+  one was deleted and restored mid-excision. A grep-driven deletion breaks the
+  bridge.
 
 ### 3. 2.4 — the execution kernel. The one stage never attempted.
 
@@ -949,11 +926,17 @@ reads as a cheap clone.
 
 ### 7.4 CLI usability defects
 
-- The chat region collapses to a ~40px strip between header and footer. Lean the
-  header/footer, or fold the header into the scrolling chat area. Keep the logo.
-- **Text cannot be selected or copied in the CLI.** Separate bug from the layout
-  squeeze, and called out as crucial.
-- The web UI's look does not match CLI branding — one paint pass, both surfaces.
+- **DONE — text selection.** `?1002h` mouse tracking was what stopped the
+  terminal painting a drag-selection. It is now opt-IN (`LAL_MOUSE=1`), so
+  select-and-copy works by default, and the behaviour is pinned by a test
+  ("ignores the wheel by default, so drag-to-select keeps working") — an
+  earlier attempt shipped this as opt-OUT and left the crucial behaviour broken
+  for anyone who had not read the commit.
+- **OPEN.** The chat region collapses to a ~40px strip between header and
+  footer. Lean the header/footer, or fold the header into the scrolling chat
+  area. Keep the logo.
+- **OPEN.** The web UI's look does not match CLI branding — one paint pass,
+  both surfaces.
 
 **Exit gate 7:** a fresh clone builds and runs with documented steps. No
 inherited brand name appears in code, UI, or release artifacts. HTML-001 still
