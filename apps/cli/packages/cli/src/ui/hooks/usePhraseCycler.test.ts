@@ -11,18 +11,23 @@ import {
   PHRASE_CHANGE_INTERVAL_MS,
 } from './usePhraseCycler.js';
 import * as i18n from '../../i18n/index.js';
+import { setTerminalRenderer } from '../utils/terminal-renderer.js';
 
 const MOCK_WITTY_PHRASES = ['Phrase 1', 'Phrase 2', 'Phrase 3'];
 
 describe('usePhraseCycler', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // See useTimer.test.ts: the renderer defaults to 'static', which disables
+    // phrase cycling entirely. These tests are about the cycling itself.
+    setTerminalRenderer('viewport');
     vi.spyOn(i18n, 'ta').mockReturnValue(MOCK_WITTY_PHRASES);
     vi.spyOn(i18n, 't').mockImplementation((key) => key);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    setTerminalRenderer('static');
   });
 
   it('should initialize with a witty phrase when not active and not waiting', () => {

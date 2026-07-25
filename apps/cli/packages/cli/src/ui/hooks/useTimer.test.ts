@@ -7,14 +7,33 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useTimer } from './useTimer.js';
+import { setTerminalRenderer } from '../utils/terminal-renderer.js';
 
 describe('useTimer', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // The renderer is module-level state that defaults to 'static', and
+    // useTimer refuses to run when animations are off. Every test below is
+    // about timing arithmetic, not about that gate, so pin the renderer
+    // rather than letting the default silently freeze the clock at 0.
+    setTerminalRenderer('viewport');
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    setTerminalRenderer('static');
+  });
+
+  it('stays frozen at 0 in a static terminal, however long it runs', () => {
+    setTerminalRenderer('static');
+    const { result } = renderHook(() => useTimer(true, 0));
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    // Deliberate: a static terminal (ssh/Termux) repaints on every tick, which
+    // is the flashing this gate exists to stop. Pinned here so the trade-off —
+    // no flashing, but also no elapsed time — is a decision, not a surprise.
+    expect(result.current).toBe(0);
   });
 
   it('should initialize with 0', () => {

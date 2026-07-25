@@ -8,14 +8,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'ink-testing-library';
 import { Text } from 'ink';
 import { GeminiSpinner } from './GeminiRespondingSpinner.js';
+import { setTerminalRenderer } from '../utils/terminal-renderer.js';
 
 describe('<GeminiSpinner />', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    setTerminalRenderer('static');
   });
 
   it('uses a low-frequency fixed-width indicator inside tmux', () => {
     vi.stubEnv('TMUX', '/tmp/tmux-1000/default,12345,0');
+    // The renderer defaults to 'static', and the !animationsEnabled branch
+    // short-circuits to '…' before the tmux branch is ever reached. This test
+    // is about the tmux indicator, so animations have to be on.
+    setTerminalRenderer('viewport');
 
     const { lastFrame } = render(<GeminiSpinner />);
 
