@@ -55,21 +55,30 @@ type MouseModeEntry = {
 const mouseModeRefs = new Map<NodeJS.WriteStream, MouseModeEntry>();
 
 /**
- * Escape hatch for terminal text selection (PLAN 7.4, called out as crucial).
+ * Whether to enable SGR mouse tracking at all. OFF unless explicitly asked for.
  *
- * SGR mouse tracking is what makes drag-to-select stop working: with ?1002h/?1003h
+ * Mouse tracking is exactly what prevents drag-to-select: with ?1002h/?1003h
  * active the terminal routes press-drag-release to the application instead of
- * painting a selection, so the transcript cannot be selected or copied. Most
- * terminals let shift+drag bypass it, but that is per-terminal, undiscoverable,
- * and not true everywhere.
+ * painting a selection, so the transcript cannot be copied. PLAN 7.4 records
+ * selectable text as crucial, and the operator has now reported it twice.
  *
- * `LAL_NO_MOUSE=1` denies mouse tracking outright, at the cost of wheel scrolling
- * and hover. Selection is worth more than the wheel to someone who needs to copy
- * output, and this leaves that trade to the operator instead of assuming it.
+ * The first attempt at this shipped `LAL_NO_MOUSE=1` as an opt-OUT, which was the
+ * wrong default: it does nothing unless you already know it exists, so the
+ * crucial behaviour stayed broken for anyone who had not read the commit. Copying
+ * output matters more than wheel-scrolling, and the keyboard still scrolls
+ * (PageUp/PageDown, arrows), so the wheel is the cheaper thing to lose.
+ *
+ * `LAL_MOUSE=1` opts back IN for wheel scrolling, click-to-expand and scrollbar
+ * dragging. `LAL_NO_MOUSE` is still honoured so anyone who set it keeps working.
+ * Note that many terminals (Windows Terminal included) let shift+drag bypass
+ * mouse reporting, but that is per-terminal and undiscoverable, which is why it
+ * cannot be the answer.
  */
-function mouseTrackingOptedOut(): boolean {
-  const value = process.env['LAL_NO_MOUSE']?.trim().toLowerCase();
-  return value === '1' || value === 'true' || value === 'yes';
+function mouseTrackingEnabled(): boolean {
+  const off = process.env['LAL_NO_MOUSE']?.trim().toLowerCase();
+  if (off === '1' || off === 'true' || off === 'yes') return false;
+  const on = process.env['LAL_MOUSE']?.trim().toLowerCase();
+  return on === '1' || on === 'true' || on === 'yes';
 }
 
 function effectiveTracking(entry: MouseModeEntry): MouseTracking | null {
@@ -173,7 +182,7 @@ export function useMouseEvents(
   const isVpMode = settings
     ? isViewportTerminal(settings.merged.ui?.useTerminalBuffer ?? false)
     : false;
-  const vpGateOpen = (isVpMode || bypassVpGate) && !mouseTrackingOptedOut();
+  const vpGateOpen = (isVpMode || bypassVpGate) && mouseTrackingEnabled();
 
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
