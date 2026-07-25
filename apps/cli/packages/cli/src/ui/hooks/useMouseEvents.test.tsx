@@ -89,6 +89,41 @@ describe('useMouseEvents', () => {
     stdin.removeAllListeners();
   });
 
+  // PLAN 7.4 — the operator called selectable/copyable CLI text crucial. SGR
+  // mouse tracking is precisely what prevents it: with ?1002h active the
+  // terminal routes press-drag-release to the application instead of painting a
+  // selection, so the transcript cannot be dragged over. LAL_NO_MOUSE refuses
+  // mouse tracking outright, trading the wheel and hover for selection.
+  describe('LAL_NO_MOUSE', () => {
+    const original = process.env['LAL_NO_MOUSE'];
+    afterEach(() => {
+      if (original === undefined) delete process.env['LAL_NO_MOUSE'];
+      else process.env['LAL_NO_MOUSE'] = original;
+    });
+
+    for (const value of ['1', 'true', 'yes', 'TRUE']) {
+      it(`writes no mouse-enable sequence when LAL_NO_MOUSE=${value}`, () => {
+        process.env['LAL_NO_MOUSE'] = value;
+        const { unmount } = renderHook(
+          () => useMouseEvents(() => {}, { isActive: true, bypassVpGate: true }),
+          { wrapper },
+        );
+        expect(stdout.write).not.toHaveBeenCalled();
+        unmount();
+      });
+    }
+
+    it('still enables mouse mode when LAL_NO_MOUSE is absent', () => {
+      delete process.env['LAL_NO_MOUSE'];
+      const { unmount } = renderHook(
+        () => useMouseEvents(() => {}, { isActive: true, bypassVpGate: true }),
+        { wrapper },
+      );
+      expect(stdout.write).toHaveBeenCalledWith(ENABLE_MOUSE);
+      unmount();
+    });
+  });
+
   it('keeps terminal mouse mode enabled until all subscribers are inactive', () => {
     const { rerender, unmount } = renderHook(
       ({ firstActive, secondActive }) =>

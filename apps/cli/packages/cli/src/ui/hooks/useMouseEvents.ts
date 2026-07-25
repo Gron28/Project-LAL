@@ -54,6 +54,24 @@ type MouseModeEntry = {
 
 const mouseModeRefs = new Map<NodeJS.WriteStream, MouseModeEntry>();
 
+/**
+ * Escape hatch for terminal text selection (PLAN 7.4, called out as crucial).
+ *
+ * SGR mouse tracking is what makes drag-to-select stop working: with ?1002h/?1003h
+ * active the terminal routes press-drag-release to the application instead of
+ * painting a selection, so the transcript cannot be selected or copied. Most
+ * terminals let shift+drag bypass it, but that is per-terminal, undiscoverable,
+ * and not true everywhere.
+ *
+ * `LAL_NO_MOUSE=1` denies mouse tracking outright, at the cost of wheel scrolling
+ * and hover. Selection is worth more than the wheel to someone who needs to copy
+ * output, and this leaves that trade to the operator instead of assuming it.
+ */
+function mouseTrackingOptedOut(): boolean {
+  const value = process.env['LAL_NO_MOUSE']?.trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes';
+}
+
 function effectiveTracking(entry: MouseModeEntry): MouseTracking | null {
   if (entry.any > 0) return 'any';
   if (entry.button > 0) return 'button';
@@ -155,7 +173,7 @@ export function useMouseEvents(
   const isVpMode = settings
     ? isViewportTerminal(settings.merged.ui?.useTerminalBuffer ?? false)
     : false;
-  const vpGateOpen = isVpMode || bypassVpGate;
+  const vpGateOpen = (isVpMode || bypassVpGate) && !mouseTrackingOptedOut();
 
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
