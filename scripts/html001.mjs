@@ -398,11 +398,66 @@ if (!opts.token) {
   process.exit(2);
 }
 
+function buildReport(records) {
+  const passes = records.filter(r => r.pass).length;
+  const num = (xs) => xs.filter(x => typeof x === 'number');
+  const mean = (xs) => num(xs).length ? Math.round(num(xs).reduce((a, b) => a + b, 0) / num(xs).length) : null;
+  return {
+    summary: {
+      benchmark: PROMPT_VERSION,
+      when: new Date().toISOString(),
+      host: { platform: process.platform, node: process.version },
+      model: records[0]?.detail.model ?? opts.model,
+      runs: records.length,
+      passes,
+      passRate: records.length ? passes / records.length : 0,
+      bar: '9 of 10 consecutive, unattended, on Windows',
+      meetsBar: records.length >= 10 && passes >= 9,
+      // True while the loop is still going, so a partial file is never mistaken
+      // for a finished benchmark.
+      complete: records.length === opts.runs,
+      plannedRuns: opts.runs,
+      unmeasuredConditions: records[0]?.unmeasured ?? [],
+      averages: {
+        wallMs: mean(records.map(r => r.metrics.wallMs)),
+        tokens: mean(records.map(r => r.metrics.tokens)),
+        toolFailures: mean(records.map(r => r.metrics.toolFailures)),
+        retries: mean(records.map(r => r.metrics.retries)),
+        regeneratedWrites: mean(records.map(r => r.metrics.regeneratedWrites)),
+        turns: mean(records.map(r => r.metrics.turns)),
+      },
+      conditionFailureCounts: [1,2,3,4,5,6,7,8,9].reduce((acc, k) => {
+        acc[k] = records.filter(r => r.conditions[k] === false).length; return acc;
+      }, {}),
+    },
+    records,
+  };
+}
+
+// Reports go to web/.data/html001/ — NOT web/.data/bench/, which is the benchmark
+// UI's results directory. Four run reports were written there on 2026-07-24 and
+// `/api/bench` served them as suite results, which blanked the page.
+const REPORT_DIR = path.join(REPO, 'web', '.data', 'html001');
+function writeReport(records, explicitOut) {
+  const target = explicitOut || path.join(REPORT_DIR, 'latest.json');
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, JSON.stringify(buildReport(records), null, 2));
+  } catch (e) {
+    process.stderr.write(`\n!!! could not write ${target}: ${e.message}\n`);
+  }
+  return target;
+}
+
 const records = [];
 for (let i = 1; i <= opts.runs; i++) {
   process.stderr.write(`\n=== HTML-001 run ${i}/${opts.runs} ===\n`);
   const r = await runOnce(i, opts);
   records.push(r);
+  // Write after EVERY run, not just at the end. A ten-run benchmark takes 15-20
+  // minutes; when one was killed by an impatient outer timeout on 2026-07-24 the
+  // completed runs were lost with it, because the report was only written once.
+  writeReport(records, opts.out);
   const failed = Object.entries(r.conditions).filter(([, v]) => v === false).map(([k]) => k);
   process.stderr.write(
     `${r.pass ? 'PASS' : 'FAIL'}  ${Math.round(r.metrics.wallMs / 1000)}s  ` +
@@ -414,35 +469,9 @@ for (let i = 1; i <= opts.runs; i++) {
   if (r.detail.validationError) process.stderr.write(`  validation: ${r.detail.validationError}\n`);
 }
 
-const passes = records.filter(r => r.pass).length;
-const num = (xs) => xs.filter(x => typeof x === 'number');
-const mean = (xs) => num(xs).length ? Math.round(num(xs).reduce((a, b) => a + b, 0) / num(xs).length) : null;
-const summary = {
-  benchmark: PROMPT_VERSION,
-  when: new Date().toISOString(),
-  host: { platform: process.platform, node: process.version },
-  model: records[0]?.detail.model ?? opts.model,
-  runs: records.length,
-  passes,
-  passRate: records.length ? passes / records.length : 0,
-  bar: '9 of 10 consecutive, unattended, on Windows',
-  meetsBar: records.length >= 10 && passes >= 9,
-  unmeasuredConditions: records[0]?.unmeasured ?? [],
-  averages: {
-    wallMs: mean(records.map(r => r.metrics.wallMs)),
-    tokens: mean(records.map(r => r.metrics.tokens)),
-    toolFailures: mean(records.map(r => r.metrics.toolFailures)),
-    retries: mean(records.map(r => r.metrics.retries)),
-    regeneratedWrites: mean(records.map(r => r.metrics.regeneratedWrites)),
-    turns: mean(records.map(r => r.metrics.turns)),
-  },
-  conditionFailureCounts: [1,2,3,4,5,6,7,8,9].reduce((acc, k) => {
-    acc[k] = records.filter(r => r.conditions[k] === false).length; return acc;
-  }, {}),
-};
-
-const report = { summary, records };
-if (opts.out) { fs.writeFileSync(opts.out, JSON.stringify(report, null, 2)); process.stderr.write(`\nwrote ${opts.out}\n`); }
+const report = buildReport(records);
+const passes = report.summary.passes;
+writeReport(records, opts.out);
 process.stdout.write(JSON.stringify(report, null, 2) + '\n');
 process.stderr.write(`\n=== ${passes}/${records.length} passed ===\n`);
 process.exit(passes === records.length ? 0 : 1);

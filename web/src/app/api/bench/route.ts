@@ -6,9 +6,22 @@ import { runBench, SUITES, getSuite, listBench, saveBench, deleteBench, pinBench
 export const dynamic = "force-dynamic";
 export const maxDuration = 1800;
 
-// GET -> all saved benchmark results (to seed the dashboard on load)
-export async function GET() {
-  return NextResponse.json({ results: listBench() });
+// GET               -> every saved result WITHOUT per-question evidence (~60 KB)
+// GET ?suite=gsm8k  -> that suite's results in full, evidence included
+//
+// The unfiltered full set is 1.27 MB — every suite × every model × every graded
+// response — and the page only ever renders the evidence of the suite currently
+// selected. The difficulty matrix and the per-question panel do need it, so it is
+// fetched per suite on demand rather than dropped.
+export async function GET(req: NextRequest) {
+  const suite = new URL(req.url).searchParams.get("suite");
+  const all = listBench();
+  if (suite) return NextResponse.json({ results: all.filter((r) => r.suite === suite) });
+  const slim = all.map((r) => {
+    const { results, ...rest } = r as Record<string, unknown> & { results?: unknown[] };
+    return { ...rest, evidenceCount: Array.isArray(results) ? results.length : 0 };
+  });
+  return NextResponse.json({ results: slim });
 }
 
 export async function POST(req: NextRequest) {

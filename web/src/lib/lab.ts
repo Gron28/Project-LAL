@@ -1197,12 +1197,34 @@ const benchKey = (suite: string, model: string) => (suite + "__" + model).replac
 export function saveBench(suite: string, result: Record<string, unknown>) {
   try { fs.writeFileSync(path.join(BENCH_DIR, benchKey(suite, String(result.model)) + ".json"), JSON.stringify({ ...result, suite, ts: Date.now() })); } catch {}
 }
+/**
+ * A saved suite result the benchmark UI can actually render.
+ *
+ * This exists because the directory is a plain folder of .json files and anything
+ * that lands in it used to be served as a result. The HTML-001 harness was pointed
+ * at `--out web/.data/bench/…` on 2026-07-24 and wrote four run reports with no
+ * `cats`, `score`, `total` or `model`; `/api/bench` returned them, and the
+ * benchmark page threw on `result.cats[cat]` and rendered nothing at all. A
+ * foreign file in a data directory must degrade to "not shown", never to a blank
+ * page — so shape is checked here, at the one place that reads the directory.
+ */
+function isRenderableBenchResult(r: unknown): boolean {
+  if (!r || typeof r !== "object") return false;
+  const b = r as Record<string, unknown>;
+  return typeof b.model === "string" && b.model !== ""
+    && typeof b.score === "number" && typeof b.total === "number"
+    && !!b.cats && typeof b.cats === "object"
+    && (b.results === undefined || Array.isArray(b.results));
+}
+
 export function listBench() {
   const out: Record<string, unknown>[] = [];
+  const skipped: string[] = [];
   try {
     for (const f of fs.readdirSync(BENCH_DIR))
       if (f.endsWith(".json")) { try {
         const r = JSON.parse(fs.readFileSync(path.join(BENCH_DIR, f), "utf8"));
+        if (!isRenderableBenchResult(r)) { skipped.push(f); continue; }
         // anti-goalpost guard: a pinned baseline whose suite has since been edited
         // (rev bumped) is flagged stale rather than silently compared against new items.
         if (r.pinned) {
@@ -1210,8 +1232,11 @@ export function listBench() {
           r.stale = curRev != null && r.pinnedRev != null && curRev !== r.pinnedRev;
         }
         out.push(r);
-      } catch {} }
+      } catch { skipped.push(f); } }
   } catch {}
+  // Named, not silent: a skipped file is either junk to remove or a real result
+  // with a bad shape, and only the operator can tell which.
+  if (skipped.length) console.warn(`[lal-bench] ignored ${skipped.length} non-result file(s) in .data/bench: ${skipped.join(", ")}`);
   return out.sort((a, b) => ((a.ts as number) || 0) - ((b.ts as number) || 0));
 }
 export function deleteBench(suite: string, model: string) {

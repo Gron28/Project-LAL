@@ -115,12 +115,39 @@ export default function Benchmark() {
   const [suiteList, setSuiteList] = useState<{ id: string; label: string; count: number }[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
+  // `runs` is the slim archive of every suite. Per-question evidence arrives only
+  // for the suite being looked at, keyed here so switching back is instant.
+  const [evidence, setEvidence] = useState<Record<string, Res[]>>({});
+  const [loadingSuite, setLoadingSuite] = useState(false);
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("view") === "lens") queueMicrotask(() => setView("lens"));
     fetch("/api/agent/models").then((r) => r.json()).then((j) => { setModels(j.models || []); setModel(j.current || j.models?.[0] || ""); });
     fetch("/api/bench").then((r) => r.json()).then((j) => { if (Array.isArray(j.results)) setRuns(j.results); }).catch(() => {});
   }, []);
+
+  // A click in the all-suites archive names a result whose evidence has not been
+  // fetched yet. Remember the intent and open it once the suite's payload lands,
+  // instead of opening a record with an empty evidence list.
+  const [pendingDetail, setPendingDetail] = useState<{ suite: string; model: string } | null>(null);
+  useEffect(() => {
+    if (!pendingDetail) return;
+    const rows = evidence[pendingDetail.suite];
+    if (!rows) return;
+    const hit = rows.find((item) => item.model === pendingDetail.model);
+    if (hit) setDetail(hit);
+    setPendingDetail(null);
+  }, [pendingDetail, evidence]);
+
+  useEffect(() => {
+    if (evidence[suite]) return;
+    setLoadingSuite(true);
+    fetch("/api/bench?suite=" + encodeURIComponent(suite))
+      .then((r) => r.json())
+      .then((j) => { if (Array.isArray(j.results)) setEvidence((prev) => ({ ...prev, [suite]: j.results })); })
+      .catch(() => {})
+      .finally(() => setLoadingSuite(false));
+  }, [suite, evidence]);
   const loadSuites = () => fetch("/api/suites").then((r) => r.json()).then((j) => {
     const suites = (j.suites || []) as { id: string; label: string; count: number }[];
     suites.sort((a, b) => {
@@ -140,7 +167,9 @@ export default function Benchmark() {
     try {
       const result: Res & { error?: string } = await fetch("/api/bench", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model, suite }) }).then((x) => x.json());
       if (!result.error) {
-        setRuns((prev) => [...prev.filter((item) => !(item.model === result.model && item.suite === result.suite)), result]);
+        const replace = (prev: Res[]) => [...prev.filter((item) => !(item.model === result.model && item.suite === result.suite)), result];
+        setRuns(replace);
+        setEvidence((prev) => ({ ...prev, [result.suite]: replace(prev[result.suite] ?? []) }));
         setDetail(result);
       }
     } finally { setRunning(false); }
@@ -148,17 +177,24 @@ export default function Benchmark() {
   const deleteResult = async (result: Res) => {
     if (!confirm(`Delete ${shortName(result.model)} from ${result.suite}?`)) return;
     await fetch(`/api/bench?suite=${encodeURIComponent(result.suite)}&model=${encodeURIComponent(result.model)}`, { method: "DELETE" }).catch(() => {});
-    setRuns((prev) => prev.filter((item) => !(item.model === result.model && item.suite === result.suite)));
+    const drop = (prev: Res[]) => prev.filter((item) => !(item.model === result.model && item.suite === result.suite));
+    setRuns(drop);
+    setEvidence((prev) => (prev[result.suite] ? { ...prev, [result.suite]: drop(prev[result.suite]) } : prev));
     if (detail?.model === result.model && detail?.suite === result.suite) setDetail(null);
   };
   const togglePin = async (result: Res) => {
     const pinned = !result.pinned;
     const response = await fetch("/api/bench", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ suite: result.suite, model: result.model, pinned }) });
-    if (response.ok) setRuns((prev) => prev.map((item) => item.model === result.model && item.suite === result.suite ? { ...item, pinned, stale: false } : item));
+    if (!response.ok) return;
+    const mark = (prev: Res[]) => prev.map((item) => item.model === result.model && item.suite === result.suite ? { ...item, pinned, stale: false } : item);
+    setRuns(mark);
+    setEvidence((prev) => (prev[result.suite] ? { ...prev, [result.suite]: mark(prev[result.suite]) } : prev));
   };
   const toggleModel = (name: string) => setHiddenModels((prev) => { const next = new Set(prev); if (next.has(name)) next.delete(name); else next.add(name); return next; });
 
-  const allSuiteRuns = runs.filter((result) => result.suite === suite);
+  // Prefer the evidence-bearing copy; fall back to the slim archive so the
+  // leaderboard and scores render before the per-question payload lands.
+  const allSuiteRuns = evidence[suite] ?? runs.filter((result) => result.suite === suite);
   const suiteRuns = allSuiteRuns.filter((result) => !hiddenModels.has(result.model));
   const cats = CAT_ORDER.filter((cat) => suiteRuns.some((result) => result.cats[cat]));
   const selectedSuite = suiteList.find((item) => item.id === suite);
@@ -325,13 +361,13 @@ export default function Benchmark() {
                 </Panel>
 
                 <Panel padding="none">
-                  <div className={head}><span className="text-[var(--accent-ai)]">◆</span> Question-level evidence <span className="ml-auto normal-case tracking-normal text-[9px] text-[var(--muted)]">{detail ? `${detail.results?.length ?? 0} responses · ${failures} failures` : "select a model row"}</span></div>
+                  <div className={head}><span className="text-[var(--accent-ai)]">◆</span> Question-level evidence <span className="ml-auto normal-case tracking-normal text-[9px] text-[var(--muted)]">{detail ? `${detail.results?.length ?? 0} responses · ${failures} failures` : loadingSuite ? "loading this suite's evidence…" : "select a model row"}</span></div>
                   {detail ? <div className="max-h-[58vh] overflow-auto text-xs">{(detail.results || []).map((item, i) => <div key={i} className="px-4 py-3 border-b border-[var(--border-soft)] last:border-0 grid grid-cols-[20px_48px_1fr] gap-2"><span style={{ color: item.ok ? "var(--accent-success)" : "var(--accent-danger)" }}>{item.ok ? "✓" : "✗"}</span><span className="text-[8px] uppercase tracking-widest text-[var(--muted)] pt-0.5">{item.cat}</span><span className="min-w-0"><span className="text-[var(--text-2)]">{item.q}</span><br /><span className="text-[var(--muted)]">→ {item.got || "(empty)"}</span>{item.detail && <><br /><span className="text-[10px] text-[var(--muted)] italic">{item.detail}</span></>}{item.shot && <a href={`/api/webshot?id=${item.shot}`} target="_blank" rel="noreferrer" className="block mt-2"><img src={`/api/webshot?id=${item.shot}`} alt="rendered benchmark output" className="max-h-44 rounded border border-[var(--border-soft)]" /></a>}</span></div>)}</div> : <div className="h-28 grid place-items-center text-[11px] text-[var(--muted)]">Select any leaderboard card or matrix row to inspect every prompt, response, grade, and rendered artifact.</div>}
                 </Panel>
               </>
             )}
 
-            {runs.length > 0 && <Panel padding="none"><div className={head}><Clock3 size={13} className="text-[var(--accent-ai)]" /> Complete evaluation archive <span className="ml-auto normal-case tracking-normal text-[9px] text-[var(--muted)]">all suites · nothing omitted by the current filter</span></div><div className="overflow-auto max-h-[540px]"><table className="w-full text-[10px]"><thead className="sticky top-0 z-10 bg-[var(--surface-1)]"><tr className="text-[var(--muted)] uppercase tracking-[0.12em]"><th className="text-left px-4 py-2.5">Suite</th><th className="text-left px-3 py-2.5">Model</th><th className="px-3 py-2.5">Score</th><th className="px-3 py-2.5">Speed</th><th className="px-3 py-2.5">Latency</th><th className="px-3 py-2.5">Saved</th></tr></thead><tbody>{[...runs].reverse().map((result) => <tr key={`${result.suite}-${result.model}`} onClick={() => { setSuite(result.suite); setDetail(result); }} className="border-t border-[var(--border-soft)] hover:bg-[var(--surface-2)] cursor-pointer"><td className="px-4 py-2.5 text-[var(--text-2)]">{result.suite}</td><td className="px-3 py-2.5">{shortName(result.model)}</td><td className="px-3 py-2.5 text-center">{result.score}/{result.total} · {pct(result.score, result.total)}%</td><td className="px-3 py-2.5 text-center">{result.tokSec ?? "—"} tok/s</td><td className="px-3 py-2.5 text-center">{result.latencyMs ? `${result.latencyMs}ms` : "—"}</td><td className="px-3 py-2.5 text-center">{result.ts ? new Date(result.ts).toLocaleString() : "—"}</td></tr>)}</tbody></table></div></Panel>}
+            {runs.length > 0 && <Panel padding="none"><div className={head}><Clock3 size={13} className="text-[var(--accent-ai)]" /> Complete evaluation archive <span className="ml-auto normal-case tracking-normal text-[9px] text-[var(--muted)]">all suites · nothing omitted by the current filter</span></div><div className="overflow-auto max-h-[540px]"><table className="w-full text-[10px]"><thead className="sticky top-0 z-10 bg-[var(--surface-1)]"><tr className="text-[var(--muted)] uppercase tracking-[0.12em]"><th className="text-left px-4 py-2.5">Suite</th><th className="text-left px-3 py-2.5">Model</th><th className="px-3 py-2.5">Score</th><th className="px-3 py-2.5">Speed</th><th className="px-3 py-2.5">Latency</th><th className="px-3 py-2.5">Saved</th></tr></thead><tbody>{[...runs].reverse().map((result) => <tr key={`${result.suite}-${result.model}`} onClick={() => { setSuite(result.suite); setDetail(null); setPendingDetail({ suite: result.suite, model: result.model }); }} className="border-t border-[var(--border-soft)] hover:bg-[var(--surface-2)] cursor-pointer"><td className="px-4 py-2.5 text-[var(--text-2)]">{result.suite}</td><td className="px-3 py-2.5">{shortName(result.model)}</td><td className="px-3 py-2.5 text-center">{result.score}/{result.total} · {pct(result.score, result.total)}%</td><td className="px-3 py-2.5 text-center">{result.tokSec ?? "—"} tok/s</td><td className="px-3 py-2.5 text-center">{result.latencyMs ? `${result.latencyMs}ms` : "—"}</td><td className="px-3 py-2.5 text-center">{result.ts ? new Date(result.ts).toLocaleString() : "—"}</td></tr>)}</tbody></table></div></Panel>}
           </>
         )}
       </div>
