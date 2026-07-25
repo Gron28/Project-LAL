@@ -97,7 +97,35 @@ The two big mechanical jobs, in this order, each verified by `npm test` +
 
   **Not done, and here is the measurement, so it is not re-scoped by feel:**
 
-  - **Enterprise channels — attempted and reverted.** 155 files delete cleanly
+  - **Enterprise channels — attempted twice; WIP preserved on branch
+    `wip/channels-excision` (does not compile, 116 errors, all in the serve
+    daemon).** The second attempt found the unlock the first one missed, so
+    resume from the branch rather than from scratch:
+
+    - **The 7,635-line test is NOT the blocker.** Its channel coverage is not
+      diffuse: one `describe('runQwenServe channel worker supervisor')` block of
+      2,564 lines holds 286 of its 331 channel lines. Two cuts plus one webhook
+      test took that file to **zero** type errors, 7,635 -> 4,888 lines.
+    - **Four modules must be RESCUED, not deleted.** They live under channel
+      paths but are not channel-specific: `commands/channel/pidfile.ts` is the
+      serve daemon's own service pidfile (keep its schema and
+      `<home>/channels/service.pid` path verbatim — renaming orphans a running
+      daemon's pidfile, which is a separate change), `cli-entry-path.ts`,
+      `channel-worker-env.ts`'s non-CHANNEL exports, and `sanitizeLogText` from
+      `@lal/channel-base`, the log-injection defence on every stderr audit line
+      in the daemon.
+    - **The word-collision trap below is real and it bit me.**
+      `channelIdleTimeoutMs` is the ACP *bridge's* spawn-channel idle timeout,
+      sits beside `sessionIdleTimeoutMs`, and I deleted it before restoring it.
+      Roughly half the "channel" matches inside `runQwenServe` are bridge
+      concerns (`createSpawnChannelFactory`, `channelFactory`, `isChannelLive`,
+      "reverse tool channel") and must survive.
+    - Remaining when I stopped: ~13 call-site clusters in `runQwenServe`, then
+      `server.ts` (11), `daemon-status.ts` (3), `routes/daemon-status.ts` (2),
+      `routes/a2ui-action.ts` (1), `config/config.ts` (1), `commands/serve.ts`
+      (1), `daemon-status.test.ts` (1).
+
+    Original measurement, unchanged: 155 files delete cleanly
     (8 packages, `commands/channel/`, `serve/channel-*`), but channels are a
     first-class concern of the serve daemon, not a bolt-on: **409 references
     across all 5,302 lines of `run-qwen-serve.ts`**, spread through nearly every
