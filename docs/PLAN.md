@@ -285,15 +285,38 @@ exactly. The cause is elsewhere.
 
 Remaining hypotheses, to be tested against a captured trace, not reasoned about:
 
-- The model emits tool-shaped **text** that a parser converts to a shell command.
-- The model chooses `run_shell_command` on its own because a tool it was told
+- ~~The model emits tool-shaped **text** that a parser converts to a shell
+  command.~~ **RULED OUT 2026-07-25.** No such converter exists: nothing in
+  `openaiContentGenerator/` emits `run_shell_command`, and both field traces show
+  the model issuing a genuine `run_shell_command` tool call whose `command`
+  argument happened to start with a tool name. The conversion runs the other
+  way — `embeddedResearchCommand` rewrites shell→tool.
+- ~~The model chooses `run_shell_command` on its own because a tool it was told
   about in the system prompt is absent from the actual payload (the prompt and
-  the allowlist are separately maintained — verify they agree).
-- A Windows-only path in the dispatch chain that Linux never exercises.
-- Tools loaded lazily through `tool_search` are dropped by the same line-94
-  filter when their schemas arrive, leaving the model to improvise.
+  the allowlist are separately maintained — verify they agree).~~
+  **CONFIRMED 2026-07-25. This was the root cause, and it went unchecked for a
+  day because the check was never run.** `web_search`, `web_fetch` and
+  `send_message` were all registered `shouldDefer: true`, which hides a tool from
+  the model's list until `tool_search` reveals it, while `prompts.ts`,
+  `research-controller.ts` and `promptAddendum.ts` instructed the model to use
+  them by name. Told to use an invisible tool, the model passed the name to the
+  shell: `web_search "monitores usados"`, `subprocess.run(['web_search', q])`.
+  Now enforced by `scripts/check_prompt_tool_visibility.mjs` in `npm test` —
+  which found the third instance (`send_message`, the mandatory final action of
+  every teammate subagent) on its first run.
+- ~~A Windows-only path in the dispatch chain that Linux never exercises.~~
+  **RULED OUT as the cause of this symptom 2026-07-25:** both reproductions are
+  on Linux. Windows-specific shell defects were real and separate (bash
+  preference, `ComSpec`, the BOM in `install.ps1`) and are fixed.
+- ~~Tools loaded lazily through `tool_search` are dropped by the same line-94
+  filter when their schemas arrive, leaving the model to improvise.~~
+  **CONFIRMED and fixed in lal.34** (§2.1e): the computer-use driver advertises
+  `computer_use__<verb>` and the allowlist named the bare verb.
 
 **Deliverable:** a written root cause plus a failing test that reproduces it.
+**Done** — root cause above, `tools/web-tools-visibility.test.ts` plus the
+`npm test` check. All four hypotheses are now closed with evidence; two were real
+and both were name-agreement failures between a prompt and a registry.
 
 ### 2.1a Root cause found — llama.cpp emits a constant `tool_call.id`
 
@@ -556,9 +579,12 @@ the decision is never reached. That is consistent with the timing (~24s into the
 heaviest generation, when `/health` is slowest to answer) and with the absence
 of any crash evidence.
 
-Not proven, and worth confirming cheaply before trusting it: instrument the five
-clauses and log which one trips. Until then the guard stays as defence in depth
-for the callers that *do* restart deliberately.
+~~Not proven, and worth confirming cheaply before trusting it: instrument the five
+clauses and log which one trips.~~ **INSTRUMENTED 2026-07-25.** `ensureServing`
+now evaluates each clause separately and logs the first one that trips
+(`[lal-serve] restarting llama-server for "<model>": <reason>`), so the next
+restart names its own cause instead of being attributed by reasoning. The guard
+stays as defence in depth for the callers that *do* restart deliberately.
 
 **The fix, independent of which clause it was:**
 

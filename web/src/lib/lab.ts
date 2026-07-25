@@ -806,7 +806,32 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
   // previous Gemma after a cancelled Hive run.
   await unloadOllamaAll();
   clearOllamaServing();
-  if (srv.model === model && requestedLoras === loadedLoras && srv.ctx >= ctx && srv.proc && srv.proc.exitCode === null && (await health())) return;
+  // PLAN 3.2 asked for exactly this: "instrument the five clauses and log which
+  // one trips". The in-flight guard fixed HTML-001 8/10 -> 10/10, but WHICH clause
+  // decided to restart was never proven, so the attribution ("most likely the
+  // health() fix") is still reasoning rather than evidence. Each clause is now
+  // evaluated separately and the first failing one is named. Cheap: five boolean
+  // comparisons and one log line on a path that is about to spawn a process.
+  const fastPathChecks: Array<[string, () => boolean | Promise<boolean>]> = [
+    ['model differs', () => srv.model === model],
+    ['lora set differs', () => requestedLoras === loadedLoras],
+    ['serving context too small', () => srv.ctx >= ctx],
+    ['no server process', () => Boolean(srv.proc)],
+    ['server process exited', () => !srv.proc || srv.proc.exitCode === null],
+    ['health probe failed', async () => await health()],
+  ];
+  let trippedClause: string | null = null;
+  for (const [reason, check] of fastPathChecks) {
+    if (!(await check())) {
+      trippedClause = reason;
+      break;
+    }
+  }
+  if (!trippedClause) return;
+  console.warn(
+    `[lal-serve] restarting llama-server for "${model}": ${trippedClause} ` +
+    `(have model=${srv.model} ctx=${srv.ctx} exit=${srv.proc?.exitCode ?? 'none'}; want ctx>=${ctx})`,
+  );
 
   // Past this line we are going to kill and relaunch the server. If anything is
   // still streaming, that kill destroys a generation in progress — on
