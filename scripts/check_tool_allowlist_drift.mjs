@@ -29,6 +29,9 @@ const NAME_SOURCES = [
   'apps/cli/packages/core/src/tools/tool-names.ts',
   'apps/cli/packages/core/src/tools/computer-use/schemas.ts',
 ];
+// Where the computer-use driver decides the name it actually advertises.
+const COMPUTER_USE_REGISTRATION =
+  'apps/cli/packages/core/src/tools/computer-use/index.ts';
 
 function read(relativePath) {
   const absolute = path.join(root, relativePath);
@@ -76,7 +79,51 @@ try {
     (name, index) => allowlist.indexOf(name) !== index,
   );
 
+  // The check above only proves a name exists SOMEWHERE. That is a proxy, and it
+  // passed on 2026-07-24 while the product was broken: the allowlist named the
+  // bare verbs (page, launch_app) but the driver advertises them PREFIXED
+  // (computer_use__page), so every browser tool tool_search loaded was dropped
+  // at the gateway filter while system.md told the model to use them. Verify the
+  // ADVERTISED form, which is the thing that matters.
+  const registration = read(COMPUTER_USE_REGISTRATION);
+  const prefixMatch = registration.match(/`([a-z_]+__)\$\{upstreamName\}`/);
+  const computerUseVerbs = [...read(NAME_SOURCES[1]).matchAll(/["']([a-z0-9_]+)["']/g)]
+    .map((m) => m[1]);
+  const allowlistedVerbs = allowlist.filter((name) =>
+    computerUseVerbs.includes(name),
+  );
+
   const problems = [];
+
+  if (allowlistedVerbs.length > 0) {
+    if (!prefixMatch) {
+      problems.push(
+        `${COMPUTER_USE_REGISTRATION}: could not determine the advertised name ` +
+          `prefix, but ${GATEWAY_ROUTE} allowlists computer-use verbs ` +
+          `(${allowlistedVerbs.join(', ')}). If the driver stopped prefixing, ` +
+          `the gateway's stripping is now wrong in the other direction.`,
+      );
+    } else {
+      const advertisedPrefix = prefixMatch[1];
+      const gateway = read(GATEWAY_ROUTE);
+      const declared = gateway.match(
+        /COMPUTER_USE_PREFIX\s*=\s*["']([a-z0-9_]+)["']/,
+      );
+      if (!declared) {
+        problems.push(
+          `${GATEWAY_ROUTE} allowlists computer-use verbs but declares no ` +
+            `COMPUTER_USE_PREFIX, so names arriving as ` +
+            `"${advertisedPrefix}<verb>" will be dropped.`,
+        );
+      } else if (declared[1] !== advertisedPrefix) {
+        problems.push(
+          `prefix mismatch: the driver advertises "${advertisedPrefix}<verb>" ` +
+            `(${COMPUTER_USE_REGISTRATION}) but ${GATEWAY_ROUTE} strips ` +
+            `"${declared[1]}". Every computer-use tool would be dropped.`,
+        );
+      }
+    }
+  }
   if (unresolvable.length > 0) {
     problems.push(
       `${GATEWAY_ROUTE} allows ${unresolvable.length} name(s) that are not ` +
@@ -92,7 +139,9 @@ try {
 
   console.log(
     `tool allowlist: ${allowlist.length} entries, all resolvable against ` +
-      `${NAME_SOURCES.length} name sources`,
+      `${NAME_SOURCES.length} name sources; ${allowlistedVerbs.length} ` +
+      `computer-use verb(s) match the advertised ` +
+      `"${prefixMatch ? prefixMatch[1] : '?'}" prefix`,
   );
 } catch (error) {
   console.error(`tool allowlist drift: ${error.message}`);
