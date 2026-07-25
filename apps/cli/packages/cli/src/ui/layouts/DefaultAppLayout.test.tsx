@@ -45,8 +45,17 @@ vi.mock('../components/messages/BtwMessage.js', () => ({
   BtwMessage: () => <Text>BtwMessage</Text>,
 }));
 
+const stickyTodoMockState = vi.hoisted(() => ({ lineCount: 1 }));
+
 vi.mock('../components/StickyTodoList.js', () => ({
-  StickyTodoList: () => <Text>StickyTodoList</Text>,
+  StickyTodoList: () => (
+    <Text>
+      {Array.from(
+        { length: stickyTodoMockState.lineCount },
+        (_, i) => `StickyTodoList ${i + 1}`,
+      ).join('\n')}
+    </Text>
+  ),
 }));
 
 vi.mock('../components/agent-view/AgentTabBar.js', () => ({
@@ -120,6 +129,7 @@ function frameHeight(frame: string): number {
 describe('DefaultAppLayout', () => {
   beforeEach(() => {
     dialogManagerMockState.lineCount = 1;
+    stickyTodoMockState.lineCount = 1;
   });
 
   it('renders sticky todo list before the composer in the main view', () => {
@@ -240,5 +250,53 @@ describe('DefaultAppLayout', () => {
     expect(output).not.toContain('StickyTodoList');
     expect(output).toContain('AgentChatView');
     expect(output).toContain('AgentComposer');
+  });
+});
+
+describe('DefaultAppLayout footer bounding (PLAN 7.4)', () => {
+  beforeEach(() => {
+    dialogManagerMockState.lineCount = 1;
+    stickyTodoMockState.lineCount = 1;
+    mockedUseAgentViewState.mockReturnValue({
+      activeView: 'main',
+      agents: new Map(),
+    });
+  });
+
+  // NOTE ON WHAT CANNOT BE TESTED HERE. The symptom is "the composer is pushed
+  // off a real terminal", but ink-testing-library renders the whole tree to a
+  // string without enforcing a viewport, so `expect(output).toContain('Composer')`
+  // passes whether or not the cap exists. That assertion was written, observed to
+  // pass with the fix REMOVED, and deleted rather than kept as a green tick over
+  // an unverified claim. What is verifiable is the clipping behaviour below —
+  // that the rows above the composer are the ones bounded — and that is what the
+  // fix actually changes. Real-viewport behaviour still needs a human looking at
+  // a terminal.
+
+  it('clips the rows above the composer rather than the composer itself', () => {
+    stickyTodoMockState.lineCount = 40;
+
+    const { lastFrame } = renderLayout({ ...baseUIState, terminalHeight: 20 });
+    const output = lastFrame() ?? '';
+
+    // 30% of 20 rows, so only a handful of the 40 todo lines survive. Losing a
+    // todo row is cosmetic; losing the input is not.
+    const shownTodoLines = (output.match(/StickyTodoList \d+/g) ?? []).length;
+    expect(shownTodoLines).toBeGreaterThan(0);
+    expect(shownTodoLines).toBeLessThan(40);
+    expect(output.indexOf('Composer')).toBeGreaterThan(
+      output.indexOf('StickyTodoList 1'),
+    );
+  });
+
+  it('does not clip a footer that already fits', () => {
+    stickyTodoMockState.lineCount = 2;
+
+    const { lastFrame } = renderLayout({ ...baseUIState, terminalHeight: 40 });
+    const output = lastFrame() ?? '';
+
+    expect(output).toContain('StickyTodoList 1');
+    expect(output).toContain('StickyTodoList 2');
+    expect(output).toContain('Composer');
   });
 });

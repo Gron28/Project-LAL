@@ -33,6 +33,16 @@ export const DefaultAppLayout: React.FC = () => {
   const hasAgents = agents.size > 0;
   const isAgentTab = activeView !== 'main' && agents.has(activeView);
   const stickyTodoWidth = Math.min(uiState.mainAreaWidth, 64);
+  /**
+   * Ceiling on the informational rows above the composer, as a share of the
+   * terminal. Three rows minimum so a pinned todo is still legible on a very
+   * short terminal; 30% so the transcript keeps the majority of the screen even
+   * when the footer has everything showing at once.
+   */
+  const preComposerMaxHeight = Math.max(
+    3,
+    Math.floor((uiState.terminalHeight || 24) * 0.3),
+  );
   const stickyTodoMaxVisibleItems = getStickyTodoMaxVisibleItems(
     uiState.terminalHeight,
   );
@@ -90,21 +100,49 @@ export const DefaultAppLayout: React.FC = () => {
               </Box>
             ) : (
               <>
-                {shouldShowStickyTodos && (
-                  <StickyTodoList
-                    todos={uiState.stickyTodos!}
-                    width={stickyTodoWidth}
-                    maxVisibleItems={stickyTodoMaxVisibleItems}
-                  />
-                )}
-                {uiState.btwItem && (
-                  <Box marginX={2} width={uiState.mainAreaWidth}>
-                    <BtwMessage
-                      btw={uiState.btwItem.btw}
-                      containerWidth={uiState.mainAreaWidth}
+                {/*
+                  Informational rows that sit ABOVE the input, bounded so they
+                  can never push the composer down. This is the failure the
+                  LiveAgentPanel comment below already describes ("long output
+                  could push the composer + panel off-screen"), reached from the
+                  other direction: `controlsHeight` is MEASURED from this footer
+                  and `availableTerminalHeight` subtracts it with no floor
+                  (AppContainer), so an unbounded footer starves the transcript
+                  to a strip — the collapse recorded in PLAN 7.4.
+
+                  Capping the region above the composer fixes both ends at once,
+                  because `measureElement` reports the CLIPPED height: the
+                  footer's claim on the height budget is bounded by the same
+                  number, with no separate plumbing.
+
+                  Deliberately NOT a cap on the whole footer: children overflow
+                  a column box from the bottom, so clipping the container would
+                  eventually clip the composer itself and leave the user typing
+                  into an invisible box. Losing a todo row is cosmetic; losing
+                  the input is not.
+                */}
+                <Box
+                  flexDirection="column"
+                  flexShrink={0}
+                  maxHeight={preComposerMaxHeight}
+                  overflow="hidden"
+                >
+                  {shouldShowStickyTodos && (
+                    <StickyTodoList
+                      todos={uiState.stickyTodos!}
+                      width={stickyTodoWidth}
+                      maxVisibleItems={stickyTodoMaxVisibleItems}
                     />
-                  </Box>
-                )}
+                  )}
+                  {uiState.btwItem && (
+                    <Box marginX={2} width={uiState.mainAreaWidth}>
+                      <BtwMessage
+                        btw={uiState.btwItem.btw}
+                        containerWidth={uiState.mainAreaWidth}
+                      />
+                    </Box>
+                  )}
+                </Box>
                 <Composer />
               </>
             )}
