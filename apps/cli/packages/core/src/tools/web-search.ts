@@ -74,6 +74,14 @@ function gatewayOrigin(): string {
 function headerSafe(value: string): string {
   return (
     value
+      // A UTF-8 BOM that has already been decoded through a legacy code page
+      // arrives as three legible characters, not as U+FEFF. Strip the known
+      // renderings of EF BB BF when they lead the string: cp437/cp850 gives
+      // "\u2229\u00bb\u00bf" and cp1252/latin-1 gives "\u00ef\u00bb\u00bf". Only
+      // U+2229 is above the ByteString limit, so filtering by code point alone
+      // would leave "\u00bb\u00bf" glued to the device name and the host would
+      // record that as the machine's identity.
+      .replace(/^(?:\u2229|\u00ef)\u00bb\u00bf/, '')
       // Strip BOM / zero-width marks anywhere, not just at index 0.
       .replace(/[\uFEFF\u200B-\u200D\u2060]/g, '')
       // Drop anything a header value cannot carry: non-Latin-1, plus CR/LF and

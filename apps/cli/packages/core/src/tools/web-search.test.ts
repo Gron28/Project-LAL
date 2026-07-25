@@ -70,11 +70,19 @@ describe('WebSearchTool', () => {
       }
     });
 
-    it('strips the U+2229 form the BOM takes through code page 437', async () => {
+    it('strips the whole code-page-437 BOM, leaving no Latin-1 residue', async () => {
       process.env['LAL_DEVICE_NAME'] = '\u2229\u00bb\u00bfAT-DESIGN';
       const headers = await capturedHeaders();
-      expect(headers['x-lal-device-name']).not.toContain('\u2229');
-      expect(headers['x-lal-device-name']).toContain('AT-DESIGN');
+      // Only U+2229 exceeds the ByteString limit, so a code-point filter alone
+      // would leave "\u00bb\u00bf" attached and the host would store that as the
+      // device's name.
+      expect(headers['x-lal-device-name']).toBe('AT-DESIGN');
+    });
+
+    it('strips the cp1252 rendering of the BOM too', async () => {
+      process.env['LAL_DEVICE_NAME'] = '\u00ef\u00bb\u00bfAT-DESIGN';
+      const headers = await capturedHeaders();
+      expect(headers['x-lal-device-name']).toBe('AT-DESIGN');
     });
 
     it('keeps a legitimate accented host name usable', async () => {
