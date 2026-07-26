@@ -37,6 +37,7 @@ node_modules/
 
 # Local session config and CLI test-run side-effect directories
 /.qwen/
+/.local-windows/
 /apps/cli/packages/cli/custom/
 /apps/cli/packages/cli/first/
 /apps/cli/packages/cli/from-env/

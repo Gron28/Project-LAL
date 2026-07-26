@@ -160,6 +160,28 @@ The Linux script exists because this host runs the web app as a `--user` systemd
 unit; it builds a candidate, health-checks it, and only then activates it. On
 Windows, `npm start` is the whole story — there is no service to install.
 
+### Isolated Windows development
+
+After installing both dependency trees, run `start-local-windows.cmd` from
+Explorer or a terminal. It starts the source web app on
+`http://127.0.0.1:8771` and then starts an isolated copy of the Windows CLI
+runtime with repository-scoped state under `.local-windows/`.
+
+This launcher does not modify user-level LAL state or the machine PATH. If
+Ollama is installed it starts a loopback-only daemon when needed, reuses the
+existing Windows Ollama model store under `~/.ollama/models`, and stops only the
+daemon it started. It neither downloads models nor stops an Ollama daemon that
+was already running. Windows llama.cpp serving still has Linux-specific process
+and binary assumptions.
+
+Use `start-local-windows.cmd -DryRun` to verify prerequisites and isolation
+without starting the web app or CLI.
+
+The launcher opens the isolated CLI after the web host is ready. On first use,
+it copies the installed Windows runtime into `.local-windows/runtime/`;
+subsequent local sessions use only that copy. See [WINDOWS.md](WINDOWS.md) for
+the complete Windows workflow and verification commands.
+
 ## Working across two machines
 
 The repository holds source only. Everything machine-shaped is untracked, so a
