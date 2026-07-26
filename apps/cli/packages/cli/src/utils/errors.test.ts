@@ -5,12 +5,12 @@
  */
 
 import { vi, type Mock, type MockInstance } from 'vitest';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import {
   OutputFormat,
   FatalInputError,
   ToolErrorType,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   AlreadyReportedError,
   _resetExitLatchForTest,
@@ -31,9 +31,9 @@ const debugLoggerSpy = vi.hoisted(() => ({
 }));
 
 // Mock the core modules
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const original =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
 
   return {
     ...original,
@@ -691,9 +691,14 @@ describe('errors', () => {
           'process.exit called with code: 53',
         );
 
-        expect(mockWriteStderrLine).toHaveBeenCalledWith(
-          'Reached max session turns for this session. Increase the number of turns by specifying maxSessionTurns in settings.json.',
-        );
+        // Asserted by meaning rather than as one frozen literal: the exact
+        // wording has already drifted once, and a whole-string match turns any
+        // improvement to the guidance into a spurious failure.
+        const written = mockWriteStderrLine.mock.calls[0]?.[0] as string;
+        expect(written).toMatch(/Reached the configured max session turns/);
+        expect(written).toMatch(/model\.maxSessionTurns in settings\.json/);
+        expect(written).toMatch(/--max-session-turns/);
+        expect(written).toMatch(/repeating itself rather than progressing/);
       });
     });
 
@@ -709,19 +714,16 @@ describe('errors', () => {
           'process.exit called with code: 53',
         );
 
-        expect(mockWriteStderrLine).toHaveBeenCalledWith(
-          JSON.stringify(
-            {
-              error: {
-                type: 'FatalTurnLimitedError',
-                message:
-                  'Reached max session turns for this session. Increase the number of turns by specifying maxSessionTurns in settings.json.',
-                code: 53,
-              },
-            },
-            null,
-            2,
-          ),
+        const payload = JSON.parse(
+          mockWriteStderrLine.mock.calls[0]?.[0] as string,
+        );
+        expect(payload.error.type).toBe('FatalTurnLimitedError');
+        expect(payload.error.code).toBe(53);
+        expect(payload.error.message).toMatch(
+          /Reached the configured max session turns/,
+        );
+        expect(payload.error.message).toMatch(
+          /repeating itself rather than progressing/,
         );
       });
     });
@@ -749,7 +751,7 @@ describe('errors', () => {
         );
 
         const written = mockWriteStderrLine.mock.calls[0]?.[0] as string;
-        expect(written).toMatch(/Reached max session turns for this session\./);
+        expect(written).toMatch(/Reached the configured max session turns/);
         expect(written).toMatch(/--json-schema is active/);
         expect(written).toMatch(/permissions\.deny.*--exclude-tools/);
       });

@@ -31,7 +31,7 @@ const getDependencyVersion = (name) => {
   // Remove npm tag suffix (e.g., "0.1.0@latest" -> "0.1.0")
   return versionWithoutPrefix.replace(/@.+$/, '');
 };
-const webuiVersion = getDependencyVersion('@qwen-code/webui');
+const webuiVersion = getDependencyVersion('@lal/webui');
 const reactUmdVersion = '18.2.0';
 const reactDomUmdVersion = '18.2.0';
 

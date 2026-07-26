@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 // Re-import via the relative source path so this test exercises the
 // in-tree implementation even before dist/ is rebuilt (the
-// @qwen-code/qwen-code-core package main points at dist/ on a fresh
+// @lal/core package main points at dist/ on a fresh
 // branch). The provider was deleted from the CLI side in this PR and not
 // rebuilt in core's test folder until now.
 import { AuthType } from '../../../core/contentGenerator.js';

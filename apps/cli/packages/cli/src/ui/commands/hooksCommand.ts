@@ -16,7 +16,7 @@ import type {
   HookRegistryEntry,
   SessionHookEntry,
   HookEventName,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { supportsMatchers } from '../components/hooks/constants.js';
 import { normalizeMatcher } from '../components/hooks/matcherGrouping.js';
 

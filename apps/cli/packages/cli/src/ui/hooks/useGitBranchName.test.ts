@@ -15,13 +15,13 @@ import {
 } from 'vitest';
 import { act } from 'react';
 import { renderHook } from '@testing-library/react';
-import { resolveBranchName, watchRepoBranch } from '@qwen-code/qwen-code-core';
+import { resolveBranchName, watchRepoBranch } from '@lal/core';
 import { useGitBranchName } from './useGitBranchName.js';
 
 // The hook is a thin wrapper over core's gitDirect helpers; the direct-read
 // logic itself is covered by core's gitDirect.test.ts. Here we mock those two
 // functions and exercise the hook's wiring and lifecycle.
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   resolveBranchName: vi.fn(),
   watchRepoBranch: vi.fn(),
 }));

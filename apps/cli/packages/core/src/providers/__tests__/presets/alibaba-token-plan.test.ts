@@ -16,7 +16,7 @@ import {
   getDefaultModelIds,
   resolveBaseUrl,
   providerMatchesCredentials,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 describe('token plan provider', () => {
   it('creates a Token Plan install plan', () => {

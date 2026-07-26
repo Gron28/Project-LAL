@@ -5,23 +5,21 @@
  */
 
 import type { Argv, CommandModule } from 'yargs';
-import type { ServeChannelSelection } from '../serve/types.js';
-import { normalizeServeChannelSelection } from '../serve/channel-selection.js';
 // Type-only imports — no runtime cost. The serve module pulls in express +
 // body-parser + qs + the daemon transport stack; static-importing it from
 // here would tax every `qwen` invocation (interactive, mcp, channel, etc.)
 // with ~50ms of cold ESM resolution. The runtime import is deferred to the
 // handler below so it only loads when the user actually runs `qwen serve`.
 import { writeStderrLine } from '../utils/stdioHelpers.js';
-import { DEFAULT_RING_SIZE } from '@qwen-code/acp-bridge/eventBus';
-import { DEFAULT_COMPACTED_REPLAY_MAX_BYTES } from '@qwen-code/acp-bridge/replayWindowLimits';
+import { DEFAULT_RING_SIZE } from '@lal/acp-bridge/eventBus';
+import { DEFAULT_COMPACTED_REPLAY_MAX_BYTES } from '@lal/acp-bridge/replayWindowLimits';
 import {
   ApprovalMode,
   MCP_BUDGET_WARN_FRACTION,
   openBrowserSecurely,
   parsePositiveIntegerEnv,
   shouldLaunchBrowser,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { loadSettings } from '../config/settings.js';
 import { HEADLESS_YOLO_NO_SANDBOX_WARNING } from '../utils/headlessSafetyWarnings.js';
 
@@ -236,12 +234,6 @@ export const serveCommand: CommandModule<unknown, ServeArgs> = {
         description:
           'Forward the experimental LSP opt-in to spawned agent sessions.',
       })
-      .option('channel', {
-        type: 'string',
-        array: true,
-        description:
-          'Experimental: start a daemon-managed channel worker for the named channel. Repeat to select multiple channels, or use --channel all.',
-      })
       .option('web', {
         type: 'boolean',
         default: true,
@@ -403,15 +395,6 @@ export const serveCommand: CommandModule<unknown, ServeArgs> = {
           'prefer the QWEN_SERVER_TOKEN env var for any non-trivial ' +
           'deployment.',
       );
-    }
-    let channelSelection: ServeChannelSelection | undefined;
-    try {
-      channelSelection = normalizeServeChannelSelection(argv.channel);
-    } catch (err) {
-      writeStderrLine(
-        `qwen serve: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      process.exit(1);
     }
     // Validate budget + mode combination at boot, before we
     // lazy-load the serve module. Yargs already constrains `choices`
@@ -608,7 +591,6 @@ export const serveCommand: CommandModule<unknown, ServeArgs> = {
         ...(rateLimitRead !== undefined ? { rateLimitRead } : {}),
         ...(rateLimitWindowMs !== undefined ? { rateLimitWindowMs } : {}),
         ...(argv.experimentalLsp === true ? { experimentalLsp: true } : {}),
-        ...(channelSelection !== undefined ? { channelSelection } : {}),
       });
       // Open the Web Shell in a browser once the listener is up (best-effort;
       // never throws — see maybeOpenWebShellBrowser).

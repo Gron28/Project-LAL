@@ -44,10 +44,13 @@ vi.mock('ink', async () => {
   };
 });
 
+const appHeaderPropsSpy = vi.hoisted(() => vi.fn());
+
 vi.mock('./AppHeader.js', () => ({
-  AppHeader: ({ version }: { version: string }) => {
-    appHeaderSpy(version);
-    return <Text>{`APP_HEADER:${version}`}</Text>;
+  AppHeader: (props: { version: string; compact?: boolean }) => {
+    appHeaderSpy(props.version);
+    appHeaderPropsSpy(props);
+    return <Text>{`APP_HEADER:${props.version}`}</Text>;
   },
 }));
 
@@ -736,6 +739,33 @@ describe('<MainContent />', () => {
   });
 
   describe('virtual viewport path (ui.useTerminalBuffer)', () => {
+    it('puts the hero in the scroll list and gives the transcript the full height', () => {
+      // PLAN 7.4. The header used to render in a pinned box whose measured height
+      // was SUBTRACTED from the scroll container, so ~20 rows of banner were a
+      // permanent tax on the chat ("60% header, 20% chat, 20% footer"). As the
+      // first row of the transcript it scrolls away instead, and the list gets
+      // every available row.
+      scrollableListPropsSpy.mockClear();
+      renderMainContent(
+        createUIState({
+          useTerminalBuffer: true,
+          availableTerminalHeight: 30,
+          history: [{ id: 1, type: 'user', text: 'hello' }],
+        }),
+      );
+
+      const props = scrollableListPropsSpy.mock.calls.at(-1)?.[0];
+      expect(props).toBeTruthy();
+      // No rows withheld for a pinned header.
+      expect(props.containerHeight).toBe(30);
+      // The hero is row 0 of the transcript, ahead of the history.
+      expect(props.data.length).toBe(2);
+      expect('__appHeader' in props.data[0]).toBe(true);
+      expect(props.keyExtractor(props.data[0])).toBe('app-header');
+      // Static: the banner never changes, so it must not re-render on scroll.
+      expect(props.isStaticItem(props.data[0])).toBe(true);
+    });
+
     it('renders ScrollableList and skips <Static> entirely when useTerminalBuffer is true', () => {
       staticPropsSpy.mockClear();
       scrollableListPropsSpy.mockClear();

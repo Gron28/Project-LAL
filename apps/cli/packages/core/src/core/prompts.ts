@@ -378,7 +378,8 @@ When you encounter an obstacle, do not use destructive actions as a shortcut to 
  *
  * Asks the summary model to wrap its chain-of-thought in an `<analysis>`
  * block (stripped before the result enters history) and then emit a
- * `<state_snapshot>` XML envelope with 9 sub-sections aligned to
+ * `<state_snapshot>` XML envelope with explicit task and evidence sections
+ * aligned to
  * claude-code's compaction format: primary_request_and_intent,
  * key_technical_concepts, files_and_code_sections, errors_and_fixes,
  * problem_solving, all_user_messages, pending_tasks, current_work,
@@ -402,6 +403,14 @@ Then produce the final summary as the EXACT XML structure below. Be dense. Omit 
         <!-- Capture all of the user's explicit requests and intents in detail. Quote the user's exact phrasing where intent is at stake. -->
     </primary_request_and_intent>
 
+    <latest_user_request>
+        <!-- The newest non-tool user request verbatim. This outranks older goals when they conflict. -->
+    </latest_user_request>
+
+    <constraints_and_decisions>
+        <!-- Explicit user constraints plus architecture/product decisions already made. Do not invent either. -->
+    </constraints_and_decisions>
+
     <key_technical_concepts>
         <!-- List all important technical concepts, technologies, and frameworks discussed. -->
     </key_technical_concepts>
@@ -414,6 +423,14 @@ Then produce the final summary as the EXACT XML structure below. Be dense. Omit 
         <!-- List every error encountered and how it was fixed. Include the verbatim error message when it was quoted to the agent. Pay special attention to specific user feedback on the error, especially if the user told you to do something differently. -->
     </errors_and_fixes>
 
+    <verified_evidence>
+        <!-- Only claims backed by successful tool results: files actually changed, commands/tests actually run, sources actually fetched, and failures actually observed. Never convert an intention or model statement into evidence. -->
+    </verified_evidence>
+
+    <completed_work>
+        <!-- Completed items must cite verified_evidence. If no mechanical evidence exists, keep the item pending. -->
+    </completed_work>
+
     <problem_solving>
         <!-- Document problems solved and any ongoing troubleshooting efforts. -->
     </problem_solving>
@@ -425,6 +442,10 @@ Then produce the final summary as the EXACT XML structure below. Be dense. Omit 
     <pending_tasks>
         <!-- Outline any pending tasks that the user has explicitly asked the agent to work on but that are not yet complete. -->
     </pending_tasks>
+
+    <blockers>
+        <!-- Genuine blockers and the evidence supporting them. Tool errors with an available alternate strategy are not blockers. -->
+    </blockers>
 
     <current_work>
         <!-- Describe in detail precisely what the agent was working on immediately before this summary was requested, paying special attention to the most recent messages from both user and assistant. Include file names and code snippets where applicable. -->

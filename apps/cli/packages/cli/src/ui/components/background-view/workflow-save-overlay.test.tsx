@@ -9,14 +9,14 @@ import { act } from '@testing-library/react';
 import { render } from 'ink-testing-library';
 
 vi.mock('../../hooks/useKeypress.js', () => ({ useKeypress: vi.fn() }));
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
   return { ...actual, saveWorkflowScript: vi.fn() };
 });
 
 import { useKeypress, type Key } from '../../hooks/useKeypress.js';
-import { saveWorkflowScript, type Config } from '@qwen-code/qwen-code-core';
+import { saveWorkflowScript, type Config } from '@lal/core';
 import { WorkflowSaveOverlay } from './workflow-save-overlay.js';
 
 const mockedUseKeypress = vi.mocked(useKeypress);

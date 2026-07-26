@@ -84,9 +84,9 @@
           }
         },
         "enableAutoUpdate": {
-          "description": "Enable automatic update checks and installations on startup.",
+          "description": "Allow automatic update checks and installations on startup.",
           "type": "boolean",
-          "default": true
+          "default": false
         },
         "showSessionRecap": {
           "description": "Auto-show a one-line \"where you left off\" recap when returning to the terminal after being away. Off by default. Use /recap to trigger manually regardless of this setting.",
@@ -228,7 +228,7 @@
         "theme": {
           "description": "The color theme for the UI.",
           "type": "string",
-          "default": "Qwen Dark"
+          "default": "LAL Dark"
         },
         "autoModeAcknowledged": {
           "description": "True once the user has seen the first-time information message about the AUTO approval mode. Set automatically; not intended for manual configuration.",
@@ -371,6 +371,15 @@
           "type": "boolean",
           "default": false
         },
+        "terminalRenderer": {
+          "description": "Auto uses a stable managed viewport on capable terminals and a non-animated, scrollback-safe renderer elsewhere. Options: auto, viewport, static",
+          "enum": [
+            "auto",
+            "viewport",
+            "static"
+          ],
+          "default": "auto"
+        },
         "showScrollbar": {
           "description": "Show the auto-hiding scrollbar in the in-app scrollable viewport (Virtualized History). The bar appears while scrolling and fades out when idle. Disable to hide it entirely.",
           "type": "boolean",
@@ -483,9 +492,9 @@
       "type": "object",
       "properties": {
         "usageStatisticsEnabled": {
-          "description": "Enable collection of usage statistics",
+          "description": "Legacy compatibility setting. LAL does not send inherited usage statistics.",
           "type": "boolean",
-          "default": true
+          "default": false
         }
       }
     },
@@ -825,9 +834,9 @@
           "default": true
         },
         "enableAutoSkill": {
-          "description": "Enable background review for reusable project skills after tool-heavy sessions.",
+          "description": "Background review that writes reusable project skills after tool-heavy sessions. Off by default: it spends a model turn and creates files on its own.",
           "type": "boolean",
-          "default": true
+          "default": false
         },
         "autoSkillConfirm": {
           "description": "Ask for confirmation before auto-generated skills are added to the skill library. When off, auto-skills are saved immediately.",
@@ -1126,29 +1135,6 @@
           "description": "Per-message budget (characters) for the combined output of one batch of tool calls; the largest results are offloaded to disk when exceeded. Set to -1 to disable.",
           "type": "number",
           "default": 200000
-        },
-        "computerUse": {
-          "description": "Cross-platform desktop automation via the cua-driver native driver (trycua/cua). On first invocation a pinned, signed + notarized binary (~20MB) is downloaded into ~/.qwen/computer-use/ and the user is walked through macOS Accessibility / Screen Recording permissions if needed. Exposes cua-driver's full tool surface (click, type_text, scroll, drag, press_key, get_window_state, page, launch_app, and more).",
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "description": "When enabled (default), the cua-driver computer_use__* tools are registered as deferred built-ins. Set to false to prevent the driver from being downloaded or spawned.",
-              "type": "boolean",
-              "default": true
-            },
-            "idleTimeoutMs": {
-              "description": "Milliseconds to keep the cua-driver process alive after the last computer_use__* call. The default is 300000 (5 minutes). Set to 0 to keep it running until qwen-code exits.",
-              "type": "number",
-              "default": 300000,
-              "minimum": 0,
-              "maximum": 2147483647
-            },
-            "maxImageDimension": {
-              "description": "Longest-edge pixel cap applied to cua-driver screenshots (via set_config's max_image_dimension). -1 (default) keeps cua-driver's built-in default (1568); 0 disables resizing (full resolution); a positive value caps the longest edge. Lower caps cut vision-token cost at the expense of fine detail. Overridable via the QWEN_COMPUTER_USE_MAX_IMAGE_DIMENSION env var.",
-              "type": "number",
-              "default": -1
-            }
-          }
         }
       }
     },

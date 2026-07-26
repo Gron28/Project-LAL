@@ -20,11 +20,11 @@
  * triaging it here breaks CI loudly instead of degrading silently.
  *
  * Lives in its own file so it can `import` the real `AuthType` enum without
- * fighting the heavy `vi.mock('@qwen-code/qwen-code-core', ...)` block in
+ * fighting the heavy `vi.mock('@lal/core', ...)` block in
  * `acpAgent.test.ts`.
  */
 import { describe, expect, it } from 'vitest';
-import { AuthType } from '@qwen-code/qwen-code-core';
+import { AuthType } from '@lal/core';
 import {
   AUTH_PREFLIGHT_ENV_KEYS,
   AUTH_PREFLIGHT_WAIVED_AUTH_TYPES,

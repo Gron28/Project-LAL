@@ -201,9 +201,19 @@ function cleanupOldHeapSnapshots(
 
   for (const filePath of snapshots.slice(maxSnapshots)) {
     try {
-      fs.rmSync(filePath, { force: true });
+      // `rmSync(..., { force: true })` decides whether a path exists by
+      // resolving it, so a BROKEN symlink reads as "already gone": the call
+      // succeeds, removes nothing, and the dangling entry survives every
+      // future run while still counting against maxSnapshots. lstat does not
+      // follow, so unlink links directly and leave rm for real files.
+      if (fs.lstatSync(filePath).isSymbolicLink()) {
+        fs.unlinkSync(filePath);
+      } else {
+        fs.rmSync(filePath, { force: true });
+      }
     } catch {
       // Cleanup is best effort; one stuck file should not block the rest.
+      // (lstat throwing here just means it is genuinely gone.)
     }
   }
 }

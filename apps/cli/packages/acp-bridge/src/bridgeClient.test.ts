@@ -46,7 +46,7 @@ import {
   ClientMcpRegistrar,
   ToolNames,
   type ClientMcpFrame,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { BridgeClient } from './bridgeClient.js';
 import {

@@ -1,7 +1,563 @@
 # Changelog / engineering log
 
+## 2026-07-25 (late) — HTML-001: 10/10 on Linux, and what the passes exposed
+
+The number the plan gates everything behind. Ten consecutive unattended runs of
+`html-001/v1` against `qwen35-9b`, after eight stages of behaviour change that had
+never been measured. Every run passed; zero condition failures.
+
+| | 2026-07-24 baseline | 2026-07-25 | |
+|---|---|---|---|
+| runs / passes | 6 / 6 | **10 / 10** | 6/6 was never a ten-run set — its own summary says `meetsBar: false` |
+| wall (mean) | 112.9 s | 114.7 s | +1.6% — noise |
+| tokens (mean) | 126,385 | 123,766 | −2.1% |
+| tool failures (mean) | 2 | 1 | halved |
+| retries (mean) | 1 | 1 | unchanged |
+| regenerated writes | 0 | 0 | unchanged |
+| turns (mean) | 9 | 8 | −1 |
+
+Per run: 114s/117k, 113s/134k, 88s/68k, 100s/117k, 107s/102k, 109s/118k,
+125s/156k, 131s/109k, 136s/176k, 125s/140k. Spread is wide (68k–176k tokens,
+88s–136s) and the slow tail is the last four runs — worth watching, not yet a
+trend.
+
+**Nothing here got worse.** Which makes the three things the *passing* runs
+exposed the actual finding:
+
+- **The constant `tool_call` id is live and it suppressed legitimate work.**
+  Three runs logged `Duplicate provider tool call id "ZsSt4SkIFMRz0HtqT7MTlimNvzlKM896"`
+  — the same literal id in every run, in every session, because llama.cpp emits a
+  constant. In runs 1 and 3 what it swallowed was `read_file` on the `index.html`
+  the model had just written: the benchmark prompt says *"verify the file works
+  before saying it is complete"*, the model went to re-read its own file, and the
+  dedupe silently ate the verification. The runs passed because the page was
+  already correct. Dedupe on a constant id cannot distinguish a loop from a
+  deliberate second look.
+- **`web_fetch` rejects `file://`.** Run 1: the model, which can now see
+  `web_fetch` at all (2.1's fix), reached for it to render the local file and got
+  `The 'url' must be a valid URL starting with http:// or https://`. Making the
+  tool visible made its wrong-shape-for-local-verification problem visible too.
+  The model has no working way to *look at* an HTML file it wrote.
+- **Six `run_shell_command` permission denials across five runs**, all the same
+  shape: `xdg-open`, `open`, `python3 -m http.server`, `which chromium`. The model
+  spends turns trying to open a browser it cannot have in a headless session.
+  Expected under `--approval-mode=auto-edit`; still pure waste, and the same
+  instinct as the `web_fetch` attempt above.
+
+**Two gaps this number does not close, stated plainly:**
+
+- **It is Linux.** The bar is *9 of 10 on Windows, unattended*, and Windows is
+  where the original failures were seen. This run does not satisfy the bar as
+  written; it establishes the Linux figure.
+- **Condition 7 is `null` in all ten runs — unmeasured, not passing.** Stage 3.1
+  made the write stash enforceable and the record now carries `interruptedWrites`
+  / `resumedFromDraft` / `discardedDrafts`. All three were 0 every run, and
+  `html001.mjs:328` correctly scores condition 7 as `null` when no write was ever
+  interrupted. Ten clean runs cannot exercise a resume path; only fault injection
+  (killing a stream mid-write) can. The prior "conditions 7 and 8 are now real
+  measurements" note in the plan was true of 8 and wrong about 7, and is corrected.
+
+Process notes: the first attempt was killed two minutes in by an outer
+process-group cleanup, with no records written — ten-run sets are now launched
+detached (`setsid nohup`). `web/.data/` is gitignored, so this table, not the
+JSON, is the durable record.
+
+## 2026-07-25 (evening) — six plan stages, and the instrument that gates them
+
+The plan's remaining functional stages landed in one pass. Every item below is
+unit-tested; **none has an HTML-001 number yet**, and that is now the single next
+action rather than a footnote.
+
+**The benchmark page was blanked by my own harness output.** `web/.data/bench/` is
+a plain folder of .json files that `listBench()` served wholesale, and four
+HTML-001 run reports were written there on 2026-07-24. They carry no `cats` /
+`score` / `model`, so the page threw at `result.cats[cat]`, and a render error in
+a client component blanks the entire route. Four files took out the measurement
+surface the plan gates every deletion behind. Fixed at three layers: `listBench`
+validates shape and logs what it skips; the harness writes to
+`web/.data/html001/`; and it now writes after every run instead of once at the
+end, so an interrupted ten-run set no longer loses everything (`complete: false`
+marks a partial). Separately the payload went 1,227,563 -> 40,053 bytes by
+fetching per-question evidence per suite on demand.
+
+**3.1 — the write stash is enforced, not advertised.** Staging existed; nothing
+checked it, so a regeneration was indistinguishable from a resume — which is why
+condition 7 was `null`. Three outcomes now, each on a fact: `resumed` (content
+begins with every complete staged line), `refuse` (a restart *smaller* than what
+is staged, once per path — if the model insists, progress beats purity), and
+`discarded` (a larger divergent rewrite, allowed but labelled). Deliberately not
+clever: no attempt to splice a continuation, because a wrong splice corrupts a
+file, which is worse than the regeneration it would save.
+
+**4.2 — research completes on evidence.** The 6-search/4-source quota was wrong in
+both directions: four pages from one site satisfied it, while a question settled by
+two strong sources was forced through four more model turns. Now breadth (3
+distinct searches), independence (2+ origins, subdomains folded together), and
+marginal return (a plateau of 3 fetches adding no new origin, never at zero
+sources — that is a broken provider, which is a different code path). Citations
+must name origins actually opened, because a URL from memory reads as verified.
+"Stop" outranks the gate, the nudge budget and the provider check — and can no
+longer arm the controller it was trying to switch off ("stop researching" contains
+the word "research").
+
+**5 — working state stops dying with the conversation.** The reported "after
+compaction the file-editing subsystem had forgotten the file was already read" was
+`client.ts` clearing the entire FileReadCache. Correct for files summarised away;
+wrong for the up-to-five files the attachment block re-embeds IN FULL, whose bytes
+are in the new prompt. Those entries are now re-armed from current stats, so a
+file that changed in between still demands a fresh read. Also: staged
+`.lal-partial` drafts are re-derived from disk into the attachment, because the
+resume pointer arrived as a turn error and compaction summarises turn errors — a
+compaction between an interruption and its retry deleted it.
+
+**6 — a completion claim is a proposal.** An acceptance-criteria registry, so
+adding a workflow means adding criteria rather than another branch in the turn
+loop. The web-artifact check is static by choice: a headless browser would mean a
+~200 MB download on a Windows clone to validate a 100-line page. It checks what is
+decidable from source — scripts parse (V8 via `new Function`, compiled not run),
+every looked-up id exists, no empty handler, no stub, no remote asset — and always
+prints what it did NOT check. The id check earns its keep: "complete but the
+buttons do nothing" is usually `getElementById('shuffle')` against markup spelling
+it `shuffleBtn`.
+
+**2.2 — one registry.** Tool identity moved to `packages/protocol`, imported by
+the gateway. Two build facts learned the hard way: a symlink breaks `next build`
+(Turbopack cannot resolve outside the project root) and the raw-TS package cannot
+re-export across its own files. So the copy stays and `sync-protocol.mjs` makes it
+deterministic, with a doctor check because a stale copy compiles fine and enforces
+an old allowlist.
+
+**2.5 — subagents are context isolation.** `ModelLease` admits
+`LAL_MAX_CONCURRENT_AGENTS` (default 1) and announces the queue; an invisible
+queue is indistinguishable from a hang. Reentrancy via AsyncLocalStorage, because
+at a limit of 1 a subagent spawning a subagent would wait for itself — a deadlock,
+not a slowdown. Research now redirects a browser launch at a URL to headless
+fetch.
+
+**3.3 — revision-aware editing.** Whitespace-drifted anchors match (unique only —
+an ambiguous drifted match edits a place nobody looked at). A patch that
+introduces a defect the file did not already have is refused, reusing the Stage 6
+criteria: a fact about two revisions, not a guess about intent. A pre-existing
+defect is not held against the edit, or repair becomes impossible. `replace_all`
+blast radius bounded — and the first cut was too strict, failing a legitimate
+existing test, so the rebalance is recorded in the constant.
+
+Writing the 3.3 tests found a real hole in the 6 checker: an unterminated
+`<script>` produced **no findings at all**, because the extractor requires a
+closing tag. The checker was fixed, not the test.
+
+**7.2 — the repo's own test command was broken.** `vitest run` at `apps/cli` root
+failed before collecting a test, because the config lists a project directory this
+fork does not have. Every test was only reachable from inside a package, which is
+how three failures sat in the tree unnoticed earlier this week. Plus 20 npm
+scripts pointing at absent directories; two were only caught because the removal
+refused to proceed while a survivor still called a deleted one.
+
+**7.4 — onboarding.** A fresh clone on either machine: three commands and
+`npm run doctor`. The README now states which capabilities are portable and which
+are scar tissue from an 8 GB gfx1032 — they look identical in a file listing, and
+`finetune_hqq.py` is strictly worse than Unsloth on a card that fits the model.
+
+Not attempted: **2.4, the execution kernel.** Collapsing four parallel
+implementations blind, with no current HTML-001 number, is the most dangerous
+change available here. It waits for the bar.
+
+15,461 core tests pass, 0 failures. 118 tests added today.
+
+## 2026-07-25 (later) — Gemma 12B: 100k context, and the runtime upgrade paid for it
+
+Two changes stacked, measured on the same box the same day: the managed Ollama
+context raised 16,384 -> 102,400, and the Ollama runtime upgraded 0.30.10 -> 0.32.3.
+
+**The weights did not change.** `ollama pull gemma4:12b` returned the identical
+manifest (ID 4eb23ef187e2 before and after), so the hoped-for "much faster Gemma
+12B" does not exist under that tag today. Every measured gain below belongs to the
+runtime, not to new weights. Worth recording precisely, because attributing a
+runtime win to a model upgrade would have set up the next decision to fail.
+
+  gemma4:12b, RX 6650 XT 8 GB, desktop running, 64-token generation:
+
+              ollama 0.30.10        ollama 0.32.3
+  16k   tok/s 14.0                  14.9
+        split 23%/77% CPU/GPU       12%/88%
+        size  8.7 GB                7.9 GB
+  100k  tok/s 10.2-10.8             11.4
+        split 32%/68% CPU/GPU       23%/77%
+        size  9.1 GB                8.3 GB
+
+The cleanest way to state the result: **100k context on 0.32.3 costs exactly what
+16k cost on 0.30.10** — 23%/77% either way. The runtime upgrade paid for the entire
+context increase in GPU-residency terms, and returned ~0.8 GB of footprint at both
+context sizes. Generation is ~7% faster at both. The context penalty itself barely
+moved (27% -> 24%), which is the honest read: the runtime got more of the model onto
+the GPU, it did not make long context cheap.
+
+Net against the original state, 16k on 0.30.10 at 14.0 tok/s: 6.25x the context for
+19% of generation speed.
+
+Also fixed, the hard way: the Ollama installer DELETES /usr/local/lib/ollama before
+extracting the new one. The first upgrade attempt died at 92.4% of the download
+("Recv failure: Connection reset by peer"), leaving the box with cuda_v12/cuda_v13
+and no ROCm backend, and no /opt/rocm to fall back on. It kept working only because
+the running server held the deleted files open — a `systemctl restart ollama` would
+have returned Ollama CPU-only, answering every request several times slower, on a
+box whose entire purpose is GPU inference. `set -e` aborting before the restart is
+the only reason that did not happen. scripts/upgrade-ollama-and-gemma.sh now
+retries the download, PROVES a rocm/hip backend exists before restarting, and
+asserts "GPU" in `ollama ps` afterwards so a silent CPU downgrade fails loudly.
+
+Still unmeasured: prompt-eval time on a genuinely long prompt. All timings here use
+a short prompt and therefore measure generation only. With ~23% of the model on
+CPU, filling 100k tokens costs real time before the first token appears.
+
+## 2026-07-25 — web_search was dead on Windows: a BOM in an HTTP header (lal.34)
+
+Root-caused from the operator's forensic export of a failed research run: 31 of 38
+tool calls failed, every web_search among them, with
+
+    Cannot convert argument to a ByteString because the character at index 0
+    has a value of 8745 which is greater than 255
+
+8745 is U+2229 — byte 0xEF, the first byte of a UTF-8 BOM, decoded through code
+page 437 by the Windows console before Node saw it. install.ps1 wrote
+~/.lal/device-name and ~/.lal/platform with [Text.Encoding]::UTF8, which EMITS a
+BOM; lal.cmd read them into LAL_DEVICE_NAME / LAL_PLATFORM; web-search.ts
+forwarded them as headers; fetch throws on any code unit > 255 BEFORE sending.
+
+So web_search never left the machine. That is why the request logging added the
+day before recorded nothing, and why the backend tested healthy by curl while
+being unusable from the client. Proof it was those exact writes: the host's device
+records show mojibake on `name` and `platform` — the only two fields written with
+UTF8 — while `device-id`, written as ASCII, is clean. The exported system prompt
+opens with `ï»¿You are LAL` for the same reason.
+
+With search dead the model fell back to GUESSING recipe URLs one at a time, which
+produced the visible symptoms: 402s from paywalled sites, 404s from invented
+paths, and Food Network returning a Warner Bros. corporate page.
+
+Fixed:
+1. Every outgoing header is sanitised — the mis-decoded BOM stripped as a unit in
+   both legacy renderings (cp437 "∩»¿", cp1252 "ï»¿"), restricted to Latin-1,
+   CR/LF removed. This is what rescues already-provisioned machines. Note U+FEFF
+   alone would not have caused the crash: String.trim() strips it.
+2. install.ps1 writes all four files BOM-less; the idiom was already in the file
+   for settings.json.
+3. web_fetch treats an empty body as a failure. food.com, reddit and youtube each
+   returned HTTP 200 with no extractable text and were reported as successful
+   empty fetches, then counted toward research coverage.
+4. The gateway allowlist is prefix-aware. The computer-use driver advertises
+   computer_use__page / computer_use__launch_app while the allowlist named the
+   bare verbs, so every browser tool tool_search loaded was dropped at the filter
+   — while system.md tells the model to load and use exactly those tools. PLAN
+   2.1's fourth hypothesis, confirmed, and the reason the agent cannot browse.
+
+Also fixed a regression shipped in lal.31/lal.32 without being noticed: the
+Windows bash preference overrode an explicitly-PowerShell ComSpec. Three
+shell.test.ts failures were in the tree at release time because targeted tests
+were run instead of the suite. Now 9,246 pass across 280 files before release.
+
+Two checks were found to be passing while their defect was live, and both were
+tightened: the header test asserted "does not contain U+2229" and passed against
+the residue "»¿AT-DESIGN"; the allowlist drift check asked whether a name existed
+anywhere rather than whether it matched the ADVERTISED form. Both now assert the
+real property, and the drift check was verified by deliberately breaking it.
+
+## 2026-07-24 (evening) — Tier 2 and Tier 4: nine field-reported defects, released as lal.31
+
+Driven by the operator's field report from Windows: "tool calling in general"
+failing, web_search and web_fetch unusable, research unable to run, file writes
+and shell flaky. Measurement was handed back to the operator; no benchmark was
+run in this batch.
+
+**web_fetch ran a full generation per fetch.** Every page went through
+`runSideQuery` pinned to the MAIN model before returning, so a research pass paid
+for N extra page-sized generations serialised behind the GPU lease the outer turn
+already held — and any model hiccup turned an already-successful fetch into
+WEB_FETCH_FALLBACK_FAILED. Page text now returns directly, like read_file, capped
+at 24k chars with explicit truncation.
+
+**Research forced a broken provider three more times.** The coverage gate counts
+only successful calls, so a failing web_search pinned coverage at zero and the
+controller spent every nudge — each a full model turn — demanding more searching.
+`researchProviderLooksBroken` now separates "hasn't searched enough" from
+"searching doesn't work here" (2+ attempts, 0 successes) and stops with an honest
+infrastructure report. PLAN 4.1 specified this row and it had never been built.
+
+**The write stash was written and never read.** Truncated writes reported "saved
+… instead of being discarded" and no code path ever opened the file, so the next
+turn regenerated everything. Salvaged content is now staged to
+`<target>.lal-partial` with resume instructions naming the last COMPLETE line;
+the target file is never touched.
+
+**Windows got cmd.exe forever.** getShellConfiguration only chose Git Bash when
+MSYSTEM was set, which never happens launching from CMD — so the operator, who
+uses CMD, always got a shell that cannot chain with `;`, cannot take newlines,
+and whose single quotes do not quote, all of which the model keeps attempting. A
+verified bash.exe is now preferred; LAL_SHELL=cmd|powershell|bash overrides.
+
+**The CLI reported a version it was not running.** CLI_CLIENT_VERSION was a
+hardcoded '0.1.0-lal.28' while package.json was at lal.30. Every host device
+record — the only remote diagnostic when Windows breaks — named the wrong build,
+and hours were spent reasoning from it. Now injected from package.json at bundle
+time.
+
+**Gateway allowlist drift is now a failing check**
+(scripts/check_tool_allowlist_drift.mjs, wired into web's `npm test`). It caught
+`screenshot` on first run: allowlisted, matched no registered tool, and read as
+though screen capture were available. Real capability is get_window_state.
+
+**web_search now logs every outcome** to the service journal (ok /
+provider-refused / threw / unauthorized, with caller, client version, elapsed
+ms). There was previously no way to tell whether a client search even arrived,
+which made two separate diagnoses guesses.
+
+Two process corrections worth recording. `project-lal.service` was reported dead
+with an orphan serving 8770; it is a `--user` unit and the process was its own
+MainPID — `systemctl`/`journalctl` had been queried in the system scope, and the
+absence was reported as a defect. Twice. Absence of evidence from one query is
+not evidence.
+
+Not attempted, and stated as such: one execution kernel, revision-aware editing,
+compaction-surviving state, runtime-decided completion (each multi-session), CLI
+text selection, bounded subagent concurrency. The "research opens real Firefox"
+item does not reproduce — graders.ts already runs headless and nothing in the
+research path launches a browser.
+
+## 2026-07-24 (later still) — Three fixes, handed back for measurement
+
+No benchmark run: after the previous entry showed six runs could not resolve the
+effects being chased, measurement moved to the operator and the budget went to
+implementation.
+
+**A reused `tool_call.id` was deleting tool calls.** `normalizeModelToolCallIds`
+keyed same-turn replay detection on the provider's raw id. llama-server b9835
+emits one id for every call it ever makes, so the first call in a turn claimed it
+and every sibling was silently dropped — no error, no response, one debug line.
+The model asked for three reads, got one answer, and re-asked. A meaningful part
+of the "looping" in this system is the runtime discarding the model's work.
+Detection now keys on id + name + args; a sibling whose id is taken gets a fresh
+id rather than a `__qwen_dup_N` collision that reattaches results to the wrong
+call. `getToolCallDedupIdentity` stays keyed on `providerCallId` deliberately —
+wire replay and semantic repeat are two jobs for two layers, and collapsing them
+is what made the reverted gateway rewrite catastrophic.
+
+**Headless had no approval policy (PLAN 4.3).** `lal -p "write a file"` could not
+write the file: non-interactive DEFAULT denied edit and write_file along with
+shell, so every headless run was read-only unless the caller knew to pass
+`--approval-mode=auto-edit`. Decided with the user: a run given work and stating
+no posture gets workspace writes; shell stays withheld behind
+`--approval-mode=yolo`. The posture is printed rather than inferred. An explicit
+`--approval-mode=default` is still honoured, and a bare non-TTY `lal` with no
+prompt is untouched.
+
+**Tools the session will refuse are no longer offered (PLAN 2.3).** The deny list
+was consulted only at call time, so the model was advertised
+`run_shell_command`, spent a turn calling it, and was refused — 7 of 13 tool
+failures in the six runs measured earlier. `client.setTools` now filters
+declarations through the permission manager. Also: the gateway's silent
+`return []` for tools outside `LAL_TERMINAL_TOOLS` now logs the dropped names.
+
+Unmeasured predictions on the record: the 7 shell denials go to 0, and parallel
+batches stop losing calls. Both are cheap to falsify.
+
+## 2026-07-24 (later) — Loop control enforces, and the real loop suppressor is found
+
+`coreToolScheduler.ts`: the circuit breaker now **withdraws** a tool for the
+session at `REPEATED_FAILURE_LIMIT` instead of rewording the error, and
+`_schedule` answers further calls itself — before validation, confirmation or
+dispatch, so a withdrawn tool costs zero side effects and zero GPU. Added the
+missing sibling of the `Kind.Edit` exact-repeat guard: identical
+read / search / fetch / execute / agent calls are refused, keyed on
+`(mutationEpoch, tool, args)`, where the epoch advances on every dispatched
+workspace mutation so `edit → test → edit → test` still runs both tests while
+`test → test` does not. 3 regression tests; 4,494 pass in `core` + `tools`.
+
+Measured, 6 runs: 6/6 pass, median tokens 133k → 114k, mean 263k → 126k, worst
+run 948k → 192k, worst turn count 33 → 12. **None of that is attributable to
+this change.** Neither guard fired once in six runs. The mean collapsed because
+the baseline's single 948k cascade did not recur, and that cascade was seeded by
+the crossed `tool_call.id`, untouched here. Tool failures 14 → 13 and retries
+7 → 7 are flat, and the "no run above 150k" target regressed (2 runs vs 1).
+
+Nothing fired because `turn.ts:223` already implements the same guard upstream,
+having independently reached the same design — identity of
+`providerCallId + name + args`, reset after a mutation. Repeats die there before
+reaching the scheduler. **It is keyed on `providerCallId`, so it works only
+because llama.cpp reuses one id forever; unique ids make every identity distinct
+and switch it off silently.** That, not the id rewrite, is the mechanism behind
+the 509s / 1.55M-token blowup recorded earlier today. The new scheduler guard is
+the id-independent replacement, and the gate on repairing ids is now a GPU-free
+test: feed unique `providerCallId`s through `turn.ts`, assert the scheduler
+catches what `turn.ts` no longer does. See PLAN 2.1c.
+
+Also measured: the largest remaining waste is not looping. 7 of 13 tool failures
+are `run_shell_command` permission denials — turns spent discovering it cannot
+start an HTTP server or find a browser. The breaker cannot reach it; the model
+makes 1-3 attempts and stops, under the limit of 3. That is Stage 2.2/2.3 work:
+stop offering a tool the session will never permit.
+
+## 2026-07-24 — One plan, one map, and the first HTML-001 baseline
+
+Documentation collapsed from 38 plans/notes/designs into `docs/PLAN.md` (the
+only plan) and `docs/ARCHITECTURE.md` (what exists). Decisions preserved in
+PLAN Appendix A; all 25 Windows-testing findings mapped to a stage in
+Appendix B.
+
+Deletion census (PLAN 0.2): of ~575k LOC in `apps/cli`, provably dead code is
+~1,200 lines. Reduction is a product decision, not a cleanup. Three earlier
+"deletion candidate" labels — `serve/`, `i18n/`, `acp-integration/` — were
+disproved by the esbuild metafile; all three are actively bundled.
+
+HTML-001 harness added (`npm run bench:html001`). First baseline on this host:
+
+    model qwen35-9b   8/10 pass   avg 97s, 122k tokens, 7 turns
+    regenerated writes 0/10       condition 7 unmeasured (needs Stage 3)
+
+Both failures are the same defect, and it is the Windows truncation bug
+reproduced on Linux at ~600 characters: llama-server stops mid-`write_file`,
+the gateway logs `failed to pipe response … UND_ERR_SOCKET`, and the run ends
+with no file. No GPU reset, no segfault, no OOM — `ensureServing()` has an
+unconditional `SIGKILL` + `pkill -9` restart path with no in-flight guard, and
+a `health()` probe with no timeout whose catch turns any error into "dead".
+See PLAN 3.2. The interrupted content *is* stashed to
+`~/.lal/tmp/<hash>/recovered-tool-calls/` — nothing reads it back yet.
+
+Fixed and re-measured the same day: **10/10**, with zero mid-run llama-server
+relaunches and zero UND_ERR_SOCKET errors (before: 8/10, two of each). The fix
+is an in-flight generation refcount so a restart drains instead of killing, a
+`health()` that needs three consecutive failures and a 2s timeout before it may
+declare death, and a `pkill -9 -f` that no longer runs while we hold a tracked
+child. The three callers that reached for kill -9 directly — the vision model
+swap, the sub-agent model override, and lens teardown — now park politely.
+
+Honest reading: ten clean runs against a 20% failure rate happens by luck about
+one time in nine, so the relaunch count is the real evidence, not the pass rate.
+The drain guard's refusal path never fired, which points at the health()
+change as the one that mattered. Which fast-path clause was tripping is still
+unproven — see PLAN 3.2.
+
+Circuit breaker added (PLAN 4.1): repeated failures are counted per (tool,
+error kind); at the limit the tool is declared unusable instead of the model
+rewording the same denied command. Tool failures per run 4 -> ~1 median, 6/6
+pass. The turn-cap message now names the real limit and says a cap is often a
+symptom of a stalled loop (PLAN 4.4).
+
+Root cause found for the tool-routing bug (PLAN 2.1a): llama.cpp b9835 returns
+the SAME tool_call id for every call ever emitted. Tool identities then cross —
+`edit` reporting a run_shell_command permission denial, `write_file` reporting a
+URL validation error. The obvious gateway fix (rewrite ids uniquely) was
+implemented, measured, and REVERTED: 509s/1.55M tokens/37 failures against
+110s/130k/1. The constant id had been silently deduplicating the model's
+repeated calls, so unique ids unmasked a pre-existing loop. Fix order is loop
+control first, id repair second (PLAN 2.1b).
+
+Also found: headless `lal -p` cannot write files at all without
+`--approval-mode=auto-edit`, and auto-edit permits edits but not shell — so the
+agent can write a file and never verify it (PLAN 4.3).
+
 A running log of what got built, what broke, and what was learned — kept honest on
 purpose, including the runs that didn't work. Newest first.
+
+## 2026-07-22 — Unified model profiles, observable research, usable model acquisition
+
+Runtime `0.1.0-lal.28` makes Qwen 3.5 9B the practical high-context daily
+driver and closes several gaps that made the CLI and web application disagree
+or appear functional while doing no real work.
+
+- The Models page is now a first-class model control surface: it scans the real
+  GGUF and Ollama stores, distinguishes the saved default from the resident
+  model, loads/unloads models explicitly, and edits per-model context, output
+  limit, temperature, top-p, top-k, repeat penalty, GPU layers, and thinking.
+  The same durable profile is consumed by Web Chat, Web Code, the authenticated
+  inference gateway, and running LAL terminals. Web clients reconcile every two
+  seconds; the gateway enforces the current profile on every request; terminals
+  retain the last known profile for disconnected use. An explicit per-session
+  model or mode choice remains a session override.
+- Context is no longer a single misleading 32K label. The UI and APIs separately
+  expose requested, verified, active, and model-native limits. Qwen 3.5 9B was
+  exercised with real prompts at 60,046 and 100,051 input tokens, including
+  needle recall. Both completed with the stable long-context llama.cpp profile.
+  The earlier 131K production flags reproduced an AMD Vulkan reset at only
+  13,824 tokens, so 100K is the current measured ceiling—not an extrapolated
+  claim. Long-context launches now use the tested 256-token batch, quantized
+  K/V cache, flash attention, and single-sequence settings.
+- Deep research is now a runtime-controlled workflow rather than a prompt that
+  can be satisfied by narration. `/research` and explicit web-research requests
+  require observable searches and opened sources, count only successful tool
+  results, reject premature synthesis, route common small-model tool-name
+  mistakes, require linked evidence, and stop through bounded recovery instead
+  of looping forever. Web search uses the authenticated host gateway and exposes
+  failures rather than inventing results.
+- The web Models surface now searches pinned Hugging Face revisions, inspects
+  hash-addressed GGUF files and license metadata, starts resumable host download
+  jobs, reports progress/errors, verifies size and SHA-256 before publication,
+  and rescans the inventory when a job completes. A visible Models navigation
+  entry replaces the previously hidden/broken acquisition path.
+- CLI context preservation, post-compaction attachment recovery, tool-result
+  validation, oversized edit protection, bounded sub-agent/research recovery,
+  and terminal rendering were hardened. Linux uses a stable alternate-screen
+  renderer with idle redraw suppression and an explicit `--safe-terminal`
+  fallback, addressing repeated stale/blank-line flooding without changing the
+  Windows renderer. Headless `lal -p` turns no longer start extract/dream
+  agents after the requested answer; those maintenance jobs remain interactive
+  background work and can no longer delay a one-shot process exit.
+
+Known limits remain explicit: the 100K result is verified on the current host
+and model, not a universal guarantee; native Linux/macOS connected-client
+archives and signed release manifests are still pending; HIVE, benchmarking,
+training, and cross-device native-run parity remain behind their reliability
+gates. The canonical current-state inventory is
+`docs/status/project-lal-current-state.md`.
+
+## 2026-07-20 — Compaction/write-loop fixes on small context windows, interrupted-stream salvage
+
+Runtime `0.1.0-lal.27` fixes the failure loop local models with small context
+windows (e.g. a 32K-token Qwen) hit when asked to write a large file in one shot:
+the model would generate 300+ lines into a single `write_file` call, hit the
+provider's `max_tokens` limit mid-JSON, and the truncated 20K+ char failed payload
+would get appended to chat history almost verbatim — bloating context to 85%+
+capacity with no room left to recover, so the model retried the exact same
+monolithic-write strategy and failed the same way again. Three fixes, in order of
+where the failure chain breaks:
+
+- **Auto-compaction now fires early enough on small windows to matter.**
+  `chatCompressionService`'s threshold math scaled a single 20K-token summary
+  reserve across every window size; on a 32K window that pushed the effective
+  ceiling negative, so compaction fell back to an 85%-full proportional trigger —
+  by then there was no output budget left to recover in. `getCompactionBudget`
+  now tiers the summary reserve and every buffer by window size (≤32K: compacts
+  around 58% full; ≤65K: around 65%; larger windows: unchanged), and the
+  compression side-query's own `maxOutputTokens` scales with it instead of
+  always requesting a 20K-token summary a small window can't afford.
+- **Oversized tool payloads no longer poison the compaction summary.**
+  `compactionInputSlimming` already stripped inline images/documents before
+  sending history to the summarizer, but a 20K-char failed `write_file` `content`
+  argument (or a large `edit` `new_string`, or shell output) passed through
+  untouched. Any functionCall string argument or functionResponse `output` over
+  2,000 chars is now replaced with a small `{content_ref, content_chars,
+  content_preview}` stub before it reaches the side-query.
+- **`write_file` now rejects oversized model-authored content before executing,**
+  capped at 8,000 chars (`MAX_MODEL_WRITE_CHARS`), telling the model to write a
+  skeleton and build the rest up with incremental `edit`/append calls instead.
+  The rejection is a normal parameter-validation error, which means it flows
+  through `coreToolScheduler`'s existing retry-loop circuit breaker for free — a
+  model that keeps retrying the same oversized write against the same file
+  escalates to a hard stop after a few attempts, no new breaker needed.
+  Human-edited content (`modified_by_user`) is exempt.
+
+Also folds in earlier uncommitted fixes that were built and packaged but never
+shipped: an interrupted tool-call stream (rate limit, timeout, dropped
+connection) mid-`write_file` used to silently discard everything already
+generated once `finish_reason` never arrived; the largest in-flight tool call's
+buffered arguments are now salvaged to
+`~/.qwen/tmp/<project-hash>/recovered-tool-calls/` before the stream error
+propagates. `web_search` now falls back to the Windows installer's paired
+`~/.lal/client-host` file when `LAL_GATEWAY_URL` is unset, instead of reporting
+search as unavailable. And the standalone-package asset allowlist now includes
+`NOTICE-LAL.md`, which `prepare-package.js` has always copied into `dist/` but
+the allowlist (added when asset-scan hardening landed) never listed — silently
+breaking every standalone build since, only caught once the release script was
+actually re-run end to end for this version.
 
 ## 2026-07-19 — Tool-call reliability and terminal visibility fixes
 

@@ -8,7 +8,7 @@ import type {
   Extension,
   Config,
   ExtensionScope,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 /**
  * Top-level tabs of the extensions manager dialog, aligned with the Claude Code

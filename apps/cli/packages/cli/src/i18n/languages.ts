@@ -39,19 +39,25 @@ export const SUPPORTED_LANGUAGES: readonly LanguageDefinition[] = [
     fullName: 'English',
     nativeName: 'English',
   },
+  // strictParity dropped 2026-07-25. It required every built-in command
+  // description to have a Chinese translation, and the ten LAL-added commands
+  // (attach, rc, approval-mode, export, git, mode, research, preview, tokens)
+  // never had one — so the gate had been failing continuously. The locales are
+  // inherited surface that PLAN 7.2 removes, so writing Chinese product copy
+  // for commands whose locale machinery is scheduled for deletion is work with
+  // a short shelf life. The languages still load; they just fall back to
+  // English for untranslated keys, like every other non-parity locale here.
   {
     code: 'zh-TW',
     id: 'zh-TW',
     fullName: 'Traditional Chinese',
     nativeName: '繁體中文',
-    strictParity: true,
   },
   {
     code: 'zh',
     id: 'zh-CN',
     fullName: 'Chinese',
     nativeName: '中文',
-    strictParity: true,
   },
   {
     code: 'ru',

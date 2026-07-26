@@ -16,7 +16,7 @@ import {
   type ExtensionScope,
   SettingScope,
   checkForExtensionUpdate,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { getErrorMessage } from '../../../../utils/errors.js';
 import { ExtensionUpdateState } from '../../../state/extensions.js';
 import {

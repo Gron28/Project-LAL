@@ -9,7 +9,7 @@ import { promises as fsp, realpathSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { WorkspaceContext } from '@qwen-code/qwen-code-core';
+import { WorkspaceContext } from '@lal/core';
 import { canonicalizeWorkspace, resolveWithinWorkspace } from './paths.js';
 // `isFsError` is a runtime guard called below — must stay a value
 // import. `FsError` is type-only here (typed `catch` variable); same

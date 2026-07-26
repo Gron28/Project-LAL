@@ -13,10 +13,10 @@ import {
   OutputFormat,
   NativeLspService,
   Storage,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { loadCliConfig, parseArguments, type CliArgs } from './config.js';
 import type { Settings } from './settings.js';
-import * as ServerConfig from '@qwen-code/qwen-code-core';
+import * as ServerConfig from '@lal/core';
 import { isWorkspaceTrusted } from './trustedFolders.js';
 import { resetMcpApprovalsForTesting } from './mcpApprovals.js';
 
@@ -160,7 +160,7 @@ vi.mock('command-exists', () => ({
   },
 }));
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actualServer = await importOriginal<typeof ServerConfig>();
   const SkillManagerMock = vi.fn();
   SkillManagerMock.prototype.startWatching = vi
@@ -1711,6 +1711,20 @@ describe('loadCliConfig telemetry', () => {
     expect(config.getTelemetryEnabled()).toBe(false);
   });
 
+  it('keeps inherited usage statistics disabled even for a legacy opt-in', async () => {
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+
+    const defaultConfig = await loadCliConfig({}, argv);
+    expect(defaultConfig.getUsageStatisticsEnabled()).toBe(false);
+
+    const legacyOptInConfig = await loadCliConfig(
+      { privacy: { usageStatisticsEnabled: true } },
+      argv,
+    );
+    expect(legacyOptInConfig.getUsageStatisticsEnabled()).toBe(false);
+  });
+
   it('should set telemetry to true when --telemetry flag is present', async () => {
     process.argv = ['node', 'script.js', '--telemetry'];
     const argv = await parseArguments();
@@ -1983,12 +1997,10 @@ describe('loadCliConfig telemetry', () => {
 });
 
 describe('mergeExcludeTools', () => {
-  const defaultExcludes = [
-    ToolNames.SHELL,
-    ToolNames.MONITOR,
-    ToolNames.EDIT,
-    ToolNames.WRITE_FILE,
-  ];
+  // PLAN 4.3: a headless run given work (-p) auto-approves workspace writes and
+  // withholds only the shell-like tools. An explicit --approval-mode=default
+  // still denies all four; that case is covered separately below.
+  const defaultExcludes = [ToolNames.SHELL, ToolNames.MONITOR];
   const originalIsTTY = process.stdin.isTTY;
 
   beforeEach(() => {
@@ -2101,7 +2113,7 @@ describe('Approval mode tool exclusion logic', () => {
     process.stdin.isTTY = originalIsTTY;
   });
 
-  it('should exclude all interactive tools in non-interactive mode with default approval mode', async () => {
+  it('withholds only shell-like tools in non-interactive mode with an implicit posture', async () => {
     process.argv = ['node', 'script.js', '-p', 'test'];
     const argv = await parseArguments();
     const settings: Settings = {};
@@ -2110,8 +2122,8 @@ describe('Approval mode tool exclusion logic', () => {
     const excludedTools = config.getPermissionsDeny();
     expect(excludedTools).toContain(ToolNames.SHELL);
     expect(excludedTools).toContain(ToolNames.MONITOR);
-    expect(excludedTools).toContain(ToolNames.EDIT);
-    expect(excludedTools).toContain(ToolNames.WRITE_FILE);
+    expect(excludedTools).not.toContain(ToolNames.EDIT);
+    expect(excludedTools).not.toContain(ToolNames.WRITE_FILE);
   });
 
   it('should exclude all interactive tools in non-interactive mode with plan approval mode', async () => {
@@ -2169,8 +2181,8 @@ describe('Approval mode tool exclusion logic', () => {
     const excludedTools = config.getPermissionsDeny();
     expect(excludedTools).not.toContain(ToolNames.SHELL);
     expect(excludedTools).toContain(ToolNames.MONITOR);
-    expect(excludedTools).toContain(ToolNames.EDIT);
-    expect(excludedTools).toContain(ToolNames.WRITE_FILE);
+    expect(excludedTools).not.toContain(ToolNames.EDIT);
+    expect(excludedTools).not.toContain(ToolNames.WRITE_FILE);
   });
 
   it('should not exclude monitor when explicitly allowed in tools.allowed', async () => {
@@ -2187,8 +2199,8 @@ describe('Approval mode tool exclusion logic', () => {
     const excludedTools = config.getPermissionsDeny();
     expect(excludedTools).toContain(ToolNames.SHELL);
     expect(excludedTools).not.toContain(ToolNames.MONITOR);
-    expect(excludedTools).toContain(ToolNames.EDIT);
-    expect(excludedTools).toContain(ToolNames.WRITE_FILE);
+    expect(excludedTools).not.toContain(ToolNames.EDIT);
+    expect(excludedTools).not.toContain(ToolNames.WRITE_FILE);
   });
 
   it('should honor monitor aliases in tools.allowed for non-interactive exclusions', async () => {
@@ -2205,8 +2217,8 @@ describe('Approval mode tool exclusion logic', () => {
     const excludedTools = config.getPermissionsDeny();
     expect(excludedTools).not.toContain(ToolNames.MONITOR);
     expect(excludedTools).not.toContain(ToolNames.SHELL);
-    expect(excludedTools).toContain(ToolNames.EDIT);
-    expect(excludedTools).toContain(ToolNames.WRITE_FILE);
+    expect(excludedTools).not.toContain(ToolNames.EDIT);
+    expect(excludedTools).not.toContain(ToolNames.WRITE_FILE);
   });
 
   it('should not exclude a tool explicitly allowed in tools.core', async () => {
@@ -2223,8 +2235,8 @@ describe('Approval mode tool exclusion logic', () => {
     const excludedTools = config.getPermissionsDeny();
     expect(excludedTools).not.toContain(ToolNames.SHELL);
     expect(excludedTools).toContain(ToolNames.MONITOR);
-    expect(excludedTools).toContain(ToolNames.EDIT);
-    expect(excludedTools).toContain(ToolNames.WRITE_FILE);
+    expect(excludedTools).not.toContain(ToolNames.EDIT);
+    expect(excludedTools).not.toContain(ToolNames.WRITE_FILE);
   });
 
   it('should not exclude monitor when explicitly allowed in tools.core', async () => {
@@ -2241,8 +2253,8 @@ describe('Approval mode tool exclusion logic', () => {
     const excludedTools = config.getPermissionsDeny();
     expect(excludedTools).toContain(ToolNames.SHELL);
     expect(excludedTools).not.toContain(ToolNames.MONITOR);
-    expect(excludedTools).toContain(ToolNames.EDIT);
-    expect(excludedTools).toContain(ToolNames.WRITE_FILE);
+    expect(excludedTools).not.toContain(ToolNames.EDIT);
+    expect(excludedTools).not.toContain(ToolNames.WRITE_FILE);
   });
 
   it('should exclude only shell tools in non-interactive mode with auto-edit approval mode', async () => {
@@ -2902,7 +2914,28 @@ describe('loadCliConfig with includeDirectories', () => {
 
     expect(config.getManagedAutoMemoryEnabled()).toBe(true);
     expect(config.getManagedAutoDreamEnabled()).toBe(true);
-    expect(config.getAutoSkillEnabled()).toBe(true);
+    // autoSkill is the exception and is OFF by default (2026-07-25): unlike the
+    // memory toggles, it writes new skill FILES on its own from a background
+    // model run. Creating artifacts nobody asked for is opt-in.
+    expect(config.getAutoSkillEnabled()).toBe(false);
+  });
+
+  it('autoSkill: stays off unless explicitly enabled, and turns on when it is', async () => {
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    expect(
+      (await loadCliConfig({}, argv, undefined, [])).getAutoSkillEnabled(),
+    ).toBe(false);
+    expect(
+      (
+        await loadCliConfig(
+          { memory: { enableAutoSkill: true } },
+          argv,
+          undefined,
+          [],
+        )
+      ).getAutoSkillEnabled(),
+    ).toBe(true);
   });
 
   it('autoSkillConfirm: defaults to true when unset', async () => {
@@ -3422,8 +3455,9 @@ describe('loadCliConfig tool exclusions', () => {
     const argv = await parseArguments();
     const config = await loadCliConfig({}, argv, undefined, []);
     expect(config.getPermissionsDeny()).toContain('run_shell_command');
-    expect(config.getPermissionsDeny()).toContain('edit');
-    expect(config.getPermissionsDeny()).toContain('write_file');
+    // PLAN 4.3: writes are the point of a headless agent run; shell is not.
+    expect(config.getPermissionsDeny()).not.toContain('edit');
+    expect(config.getPermissionsDeny()).not.toContain('write_file');
   });
 
   it('should not exclude interactive tools in non-interactive mode with YOLO', async () => {

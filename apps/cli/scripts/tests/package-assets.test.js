@@ -222,7 +222,7 @@ describe('package asset scripts', () => {
     expect(distPackageJson.files).toContain('examples');
     expect(distPackageJson.bundledDependencies).toBeUndefined();
     expect(distPackageJson.optionalDependencies).toMatchObject({
-      '@qwen-code/audio-capture': rootPackageJson.version,
+      '@lal/audio-capture': rootPackageJson.version,
     });
     expect(
       existsSync(
@@ -230,7 +230,7 @@ describe('package asset scripts', () => {
           rootDir,
           'dist',
           'node_modules',
-          '@qwen-code',
+          '@lal',
           'audio-capture',
         ),
       ),
@@ -240,6 +240,29 @@ describe('package asset scripts', () => {
         path.join(rootDir, 'dist', 'examples', 'mcp-server', 'package.json'),
       ),
     ).toBe(true);
+  });
+
+  it('includes the LAL license and derivation notice in the prepared package', () => {
+    const rootDir = createFixtureRoot();
+    createBundleArtifacts(rootDir);
+    stubConsole();
+
+    preparePackage({ rootDir, requireNativeAudioCapture: false });
+
+    const distDir = path.join(rootDir, 'dist');
+    const distPackageJson = JSON.parse(
+      readFileSync(path.join(distDir, 'package.json'), 'utf8'),
+    );
+
+    expect(distPackageJson.files).toEqual(
+      expect.arrayContaining(['LICENSE', 'NOTICE-LAL.md']),
+    );
+    expect(readFileSync(path.join(distDir, 'LICENSE'), 'utf8')).toBe(
+      'Apache-2.0\n',
+    );
+    expect(readFileSync(path.join(distDir, 'NOTICE-LAL.md'), 'utf8')).toContain(
+      'Qwen Code and Gemini CLI',
+    );
   });
 
   it('omits browser MCP install hooks and deps from the prepared dist package', () => {
@@ -373,7 +396,7 @@ describe('package asset scripts', () => {
           rootDir,
           'dist',
           'node_modules',
-          '@qwen-code',
+          '@lal',
           'audio-capture',
         ),
       ),
@@ -385,7 +408,7 @@ describe('package asset scripts', () => {
     createBundleArtifacts(rootDir);
     writeFile(
       rootDir,
-      'dist/node_modules/@qwen-code/audio-capture/prebuilds/darwin-arm64/@qwen-code+audio-capture.node',
+      'dist/node_modules/@lal/audio-capture/prebuilds/darwin-arm64/@lal+audio-capture.node',
       'stale native addon\n',
     );
     stubConsole();
@@ -407,7 +430,7 @@ describe('package asset scripts', () => {
           rootDir,
           'dist',
           'node_modules',
-          '@qwen-code',
+          '@lal',
           'audio-capture',
         ),
       ),
@@ -448,7 +471,7 @@ describe('package asset scripts', () => {
         'audio-capture',
         'prebuilds',
         'darwin-arm64',
-        '@qwen-code+audio-capture.node',
+        '@lal+audio-capture.node',
       ),
     );
     createBundleArtifacts(rootDir);
@@ -485,7 +508,7 @@ describe('package asset scripts', () => {
           rootDir,
           'dist',
           'node_modules',
-          '@qwen-code',
+          '@lal',
           'audio-capture',
         ),
       ),
@@ -529,7 +552,7 @@ describe('package asset scripts', () => {
           rootDir,
           'dist',
           'node_modules',
-          '@qwen-code',
+          '@lal',
           'audio-capture',
         ),
       ),
@@ -555,10 +578,15 @@ describe('package asset scripts', () => {
     writeFile(rootDir, 'LICENSE', 'Apache-2.0\n');
     writeFile(
       rootDir,
+      'NOTICE-LAL.md',
+      'Apache-2.0-derived portions of Qwen Code and Gemini CLI\n',
+    );
+    writeFile(
+      rootDir,
       'package.json',
       JSON.stringify(
         {
-          name: '@qwen-code/qwen-code',
+          name: '@lal/cli',
           version: '0.17.0',
           description: 'Qwen Code',
           repository: {
@@ -588,7 +616,7 @@ describe('package asset scripts', () => {
       'packages/audio-capture/package.json',
       JSON.stringify(
         {
-          name: '@qwen-code/audio-capture',
+          name: '@lal/audio-capture',
           version: '0.17.0',
           type: 'module',
           main: 'dist/index.js',
@@ -619,7 +647,7 @@ describe('package asset scripts', () => {
     );
     writeFile(
       rootDir,
-      'packages/audio-capture/prebuilds/darwin-arm64/@qwen-code+audio-capture.node',
+      'packages/audio-capture/prebuilds/darwin-arm64/@lal+audio-capture.node',
       'fake native addon\n',
     );
     writeFile(
@@ -658,9 +686,7 @@ describe('package asset scripts', () => {
   function createBundleArtifacts(rootDir) {
     writeFile(rootDir, 'dist/cli.js', '');
     mkdirSync(path.join(rootDir, 'dist', 'vendor'), { recursive: true });
-    mkdirSync(path.join(rootDir, 'dist', 'bundled', 'qc-helper', 'docs'), {
-      recursive: true,
-    });
+    mkdirSync(path.join(rootDir, 'dist', 'bundled'), { recursive: true });
     // Web Shell release gate (prepare-package.js verifyBundleArtifacts): the
     // published package must ship the UI, so the fixture provides it too.
     writeFile(rootDir, 'dist/web-shell/index.html', '<!doctype html>');

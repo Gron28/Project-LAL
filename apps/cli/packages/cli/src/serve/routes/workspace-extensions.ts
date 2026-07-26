@@ -15,7 +15,7 @@ import {
   type Extension,
   type ExtensionInstallMetadata,
   type ExtensionSetting,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { Application, Request, RequestHandler, Response } from 'express';
 import { loadSettings } from '../../config/settings.js';
 import { getWorkspaceTrustStatus } from '../../config/trustedFolders.js';
@@ -33,7 +33,7 @@ import {
   type ServeExtensionCapabilities,
   type ServeExtensionEntry,
   type ServeWorkspaceExtensionsStatus,
-} from '@qwen-code/acp-bridge/status';
+} from '@lal/acp-bridge/status';
 import type { DaemonWorkspaceService } from '../workspace-service/index.js';
 
 type SafeBody = typeof safeBodyType;

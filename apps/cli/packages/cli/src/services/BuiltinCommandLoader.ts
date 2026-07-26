@@ -6,7 +6,7 @@
 
 import type { ICommandLoader } from './types.js';
 import type { SlashCommand } from '../ui/commands/types.js';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import { aboutCommand } from '../ui/commands/aboutCommand.js';
 import { tasksCommand } from '../ui/commands/tasksCommand.js';
 import { workflowsCommand } from '../ui/commands/workflowsCommand.js';
@@ -42,7 +42,7 @@ import { historyCommand } from '../ui/commands/historyCommand.js';
 import { hooksCommand } from '../ui/commands/hooksCommand.js';
 import { ideCommand } from '../ui/commands/ideCommand.js';
 import { importConfigCommand } from '../ui/commands/importConfigCommand.js';
-import { createDebugLogger } from '@qwen-code/qwen-code-core';
+import { createDebugLogger } from '@lal/core';
 import { initCommand } from '../ui/commands/initCommand.js';
 import { languageCommand } from '../ui/commands/languageCommand.js';
 import { mcpCommand } from '../ui/commands/mcpCommand.js';
@@ -51,6 +51,7 @@ import { forgetCommand } from '../ui/commands/forgetCommand.js';
 import { gitCommand } from '../ui/commands/git-command.js';
 import { memoryCommand } from '../ui/commands/memoryCommand.js';
 import { modeCommand } from '../ui/commands/mode-command.js';
+import { researchCommand } from '../ui/commands/research-command.js';
 import { modelCommand } from '../ui/commands/modelCommand.js';
 import { previewCommand } from '../ui/commands/preview-command.js';
 import { rememberCommand } from '../ui/commands/rememberCommand.js';
@@ -160,6 +161,7 @@ export class BuiltinCommandLoader implements ICommandLoader {
       gitCommand,
       memoryCommand,
       modeCommand,
+      researchCommand,
       modelCommand,
       previewCommand,
       rememberCommand,

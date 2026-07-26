@@ -7,7 +7,7 @@
 import type {
   ApprovalMode,
   SessionGroupPresetColor,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type {
   CancelNotification,
   LoadSessionResponse,

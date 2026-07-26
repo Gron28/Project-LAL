@@ -19,7 +19,7 @@ import {
 import * as os from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import * as ts from 'typescript';
-import { QWEN_DIR, Storage } from '@qwen-code/qwen-code-core';
+import { QWEN_DIR, Storage } from '@lal/core';
 
 import {
   bootstrapServeFastPathEnvironment,
@@ -379,7 +379,7 @@ describe('CLI entry import boundary', () => {
 
     expect(fastPathSource).not.toContain('../config/settings.js');
     expect(fastPathSource).not.toContain('../config/environment.js');
-    expect(fastPathSource).not.toContain('@qwen-code/qwen-code-core');
+    expect(fastPathSource).not.toContain('@lal/core');
     expect(fastPathSource).toContain('bootSettings: settings');
     expect(fastPathSource).toContain('resolveOnListen: true');
     expect(fastPathSource).toContain(
@@ -403,7 +403,7 @@ describe('CLI entry import boundary', () => {
     );
 
     expect(helperSource).not.toMatch(
-      /import\s+(?!type\b)[^;]*from ['"]@qwen-code\/qwen-code-core['"]/,
+      /import\s+(?!type\b)[^;]*from ['"]@lal\/core['"]/,
     );
   });
 
@@ -431,13 +431,13 @@ describe('CLI entry import boundary', () => {
       /from ['"]\.\/acp-session-bridge\.js['"]/,
     );
     expect(runServeSource).not.toMatch(
-      /from ['"]@qwen-code\/acp-bridge\/bridge['"]/,
+      /from ['"]@lal\/acp-bridge\/bridge['"]/,
     );
     expect(runServeSource).not.toMatch(
-      /from ['"]@qwen-code\/acp-bridge\/spawnChannel['"]/,
+      /from ['"]@lal\/acp-bridge\/spawnChannel['"]/,
     );
     expect(runServeSource).toContain("import('./server.js')");
-    expect(runServeSource).toContain("import('@qwen-code/acp-bridge/bridge')");
+    expect(runServeSource).toContain("import('@lal/acp-bridge/bridge')");
   });
 
   it('keeps request helpers from value-importing the ACP compatibility shim', () => {
@@ -450,10 +450,10 @@ describe('CLI entry import boundary', () => {
       /from ['"]\.\.\/acp-session-bridge\.js['"]/,
     );
     expect(requestHelpersSource).toContain(
-      "import type { AcpSessionBridge } from '@qwen-code/acp-bridge/bridgeTypes';",
+      "import type { AcpSessionBridge } from '@lal/acp-bridge/bridgeTypes';",
     );
     expect(requestHelpersSource).toContain(
-      "import { MAX_WORKSPACE_PATH_LENGTH } from '@qwen-code/acp-bridge/workspacePaths';",
+      "import { MAX_WORKSPACE_PATH_LENGTH } from '@lal/acp-bridge/workspacePaths';",
     );
   });
 
@@ -472,11 +472,11 @@ describe('CLI entry import boundary', () => {
     ).toEqual([]);
 
     const forbiddenExternalImports = [
-      '@qwen-code/acp-bridge',
-      '@qwen-code/acp-bridge/bridge',
-      '@qwen-code/acp-bridge/spawnChannel',
-      '@qwen-code/acp-bridge/bridgeClient',
-      '@qwen-code/acp-bridge/bridgeErrors',
+      '@lal/acp-bridge',
+      '@lal/acp-bridge/bridge',
+      '@lal/acp-bridge/spawnChannel',
+      '@lal/acp-bridge/bridgeClient',
+      '@lal/acp-bridge/bridgeErrors',
     ];
     const forbiddenImports = [...graph.externalValueImports].filter(
       (specifier) => forbiddenExternalImports.includes(specifier),
@@ -654,11 +654,10 @@ describe('serve fast path argument parsing', () => {
       ['rate-limit-read', ['--rate-limit-read', '120']],
       ['rate-limit-window-ms', ['--rate-limit-window-ms', '60000']],
       ['experimental-lsp', ['--experimental-lsp']],
-      ['channel', ['--channel', 'telegram']],
       ['help', ['--help']],
       ['version', ['--version']],
     ]);
-    const expectedFallbackOptions = new Set(['channel', 'help', 'version']);
+    const expectedFallbackOptions = new Set(['help', 'version']);
 
     expect(longOptionNames.sort()).toEqual(
       [...sampleArgvByOption.keys()].sort(),

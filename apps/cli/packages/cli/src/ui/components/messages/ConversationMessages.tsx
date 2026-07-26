@@ -28,6 +28,15 @@ export const toggleKeyHint =
 
 interface UserMessageProps {
   text: string;
+  /**
+   * Local HH:MM the message was submitted, already formatted. Rendered into the
+   * prefix so it occupies no extra row and cannot disturb the existing layout —
+   * the transcript is already short on vertical space (PLAN 7.4).
+   *
+   * Undefined means "not known", which is left blank rather than guessed: see
+   * messageTimeFromId, which refuses ids that are not really timestamps.
+   */
+  timeLabel?: string;
 }
 
 interface UserShellMessageProps {
@@ -203,12 +212,12 @@ const ContinuationMarkdownMessage: React.FC<
   );
 };
 
-export const UserMessage: React.FC<UserMessageProps> = ({ text }) => (
+export const UserMessage: React.FC<UserMessageProps> = ({ text, timeLabel }) => (
   // The TUI paints no background of its own; user messages render directly on
   // the terminal background so they blend in across terminals and themes.
   <PrefixedTextMessage
     text={text}
-    prefix=">"
+    prefix={timeLabel ? `${timeLabel} >` : '>'}
     prefixColor={theme.text.accent}
     textColor={theme.text.accent}
     ariaLabel={SCREEN_READER_USER_PREFIX}

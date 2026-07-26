@@ -48,6 +48,9 @@ describe('EditTool', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'edit-tool-test-'));
     rootDir = path.join(tempDir, 'root');
     fs.mkdirSync(rootDir);
+    // Make Git-root discovery hermetic. A developer machine may itself have an
+    // unrelated /tmp/.git, which must not move this fixture's team-memory root.
+    fs.mkdirSync(path.join(rootDir, '.git'));
     fileReadCache = new FileReadCache();
     mockFileHistoryService = { trackEdit: vi.fn() };
     fsService = new StandardFileSystemService();
@@ -551,6 +554,15 @@ describe('EditTool', () => {
       expect(() => tool.build(params)).toThrow(
         /The 'file_path' parameter must be non-empty./,
       );
+    });
+
+    it('should allow arbitrarily large model-authored edits', async () => {
+      const params: EditToolParams = {
+        file_path: path.join(rootDir, 'big-edit.txt'),
+        old_string: 'x'.repeat(1_000_000),
+        new_string: 'y',
+      };
+      expect(() => tool.build(params)).not.toThrow();
     });
 
     it('should reject when calculateEdit fails after an abort signal', async () => {

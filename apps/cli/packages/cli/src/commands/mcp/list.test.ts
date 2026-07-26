@@ -10,7 +10,7 @@ import { loadSettings } from '../../config/settings.js';
 import { isWorkspaceTrusted } from '../../config/trustedFolders.js';
 import { assembleMcpServers } from '../../config/mcpServers.js';
 import { loadMcpApprovals } from '../../config/mcpApprovals.js';
-import { createTransport, ExtensionManager } from '@qwen-code/qwen-code-core';
+import { createTransport, ExtensionManager } from '@lal/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 const mockWriteStdoutLine = vi.hoisted(() => vi.fn());
@@ -36,7 +36,7 @@ vi.mock('../../config/mcpApprovals.js', () => ({
 vi.mock('../../config/trustedFolders.js', () => ({
   isWorkspaceTrusted: vi.fn(),
 }));
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   createTransport: vi.fn(),
   MCPServerStatus: {
     CONNECTED: 'CONNECTED',

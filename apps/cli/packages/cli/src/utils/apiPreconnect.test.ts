@@ -30,9 +30,9 @@ vi.mock('undici', async (importOriginal) => {
     fetch: mockFetch,
   };
 });
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
   return {
     ...actual,
     AuthType: {

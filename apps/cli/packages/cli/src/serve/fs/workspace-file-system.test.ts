@@ -9,7 +9,7 @@ import { promises as fsp } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
-import { Ignore } from '@qwen-code/qwen-code-core';
+import { Ignore } from '@lal/core';
 import {
   FS_ACCESS_EVENT_TYPE,
   FS_DENIED_EVENT_TYPE,
@@ -18,7 +18,7 @@ import {
   type WorkspaceFileSystem,
   type WorkspaceFileSystemFactory,
 } from './index.js';
-import type { BridgeEvent } from '@qwen-code/acp-bridge/eventBus';
+import type { BridgeEvent } from '@lal/acp-bridge/eventBus';
 import { canonicalizeWorkspace } from './paths.js';
 import { isFsError } from './errors.js';
 

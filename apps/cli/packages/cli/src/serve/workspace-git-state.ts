@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { resolveBranchName, watchRepoBranch } from '@qwen-code/qwen-code-core';
+import { resolveBranchName, watchRepoBranch } from '@lal/core';
 import type { AcpSessionBridge } from './acp-session-bridge.js';
 
 export interface WorkspaceGitStatus {

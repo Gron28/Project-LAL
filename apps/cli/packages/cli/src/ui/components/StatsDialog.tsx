@@ -13,7 +13,7 @@ import { loadStatsData, type StatsData } from '../utils/statsDataService.js';
 import {
   metricsToUsageRecord,
   type TimeRange,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { useSessionStats } from '../contexts/SessionContext.js';
 import { useConfig } from '../contexts/ConfigContext.js';
 import { t } from '../../i18n/index.js';
@@ -95,7 +95,7 @@ function buildCurrentSessionRecord(
   sessionId: string,
   startTime: Date,
   project: string,
-  metrics: import('@qwen-code/qwen-code-core').SessionMetrics,
+  metrics: import('@lal/core').SessionMetrics,
 ) {
   const hasActivity = Object.values(metrics.models).some(
     (m) => m.api.totalRequests > 0,

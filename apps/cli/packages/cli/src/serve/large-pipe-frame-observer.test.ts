@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { LOAD_REPLAY_META_KEY } from '@qwen-code/acp-bridge/bridgeTypes';
+import { LOAD_REPLAY_META_KEY } from '@lal/acp-bridge/bridgeTypes';
 import {
   classifyLargePipeFrame,
   createLargePipeFrameObserver,

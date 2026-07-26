@@ -10,12 +10,16 @@ import { useLoadingIndicator } from './useLoadingIndicator.js';
 import { StreamingState } from '../types.js';
 import { PHRASE_CHANGE_INTERVAL_MS } from './usePhraseCycler.js';
 import * as i18n from '../../i18n/index.js';
+import { setTerminalRenderer } from '../utils/terminal-renderer.js';
 
 const MOCK_WITTY_PHRASES = ['Phrase 1', 'Phrase 2', 'Phrase 3'];
 
 describe('useLoadingIndicator', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // See useTimer.test.ts: this hook composes useTimer and usePhraseCycler,
+    // both of which no-op under the default 'static' renderer.
+    setTerminalRenderer('viewport');
     vi.spyOn(i18n, 'ta').mockReturnValue(MOCK_WITTY_PHRASES);
     vi.spyOn(i18n, 't').mockImplementation((key) => key);
   });
@@ -24,6 +28,7 @@ describe('useLoadingIndicator', () => {
     vi.useRealTimers(); // Restore real timers after each test
     act(() => vi.runOnlyPendingTimers);
     vi.restoreAllMocks();
+    setTerminalRenderer('static');
   });
 
   it('should initialize with default values when Idle', () => {

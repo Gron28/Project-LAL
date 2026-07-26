@@ -6,7 +6,7 @@
 
 /**
  * Prepares the bundled CLI package for npm publishing
- * This script adds publishing metadata (package.json, README, LICENSE) to dist/
+ * This script adds publishing metadata (package.json, README, LICENSE, NOTICE) to dist/
  * All runtime assets (cli.js, vendor/, *.sb) are already in dist/ from the bundle step
  */
 
@@ -67,10 +67,6 @@ function verifyBundleArtifacts(rootDir, distDir, { requireWebShell = true } = {}
   const requiredPaths = [
     path.join(distDir, 'cli.js'),
     path.join(distDir, 'vendor'),
-    path.join(distDir, 'bundled', 'qc-helper'),
-    ...(requireWebShell
-      ? [path.join(distDir, 'bundled', 'qc-helper', 'docs')]
-      : []),
     // The Web Shell ships with the published package ("Web Shell out of the
     // box"). Gate on it here so a build that skipped the web-shell workspace
     // (e.g. `npm ci --ignore-scripts` bypassing the root `prepare`) fails
@@ -107,6 +103,7 @@ function copyDocumentationFiles(rootDir, distDir) {
   const filesToCopy = [
     ['README-LAL.md', 'README.md'],
     ['LICENSE', 'LICENSE'],
+    ['NOTICE-LAL.md', 'NOTICE-LAL.md'],
   ];
   for (const [source, destination] of filesToCopy) {
     const sourcePath = path.join(rootDir, source);
@@ -170,7 +167,7 @@ function verifyNativeAudioCapturePackage(rootDir, distDir, { required } = {}) {
   const addonDest = path.join(
     distDir,
     'node_modules',
-    '@qwen-code',
+    '@lal',
     'audio-capture',
   );
   const requiredPaths = [
@@ -307,6 +304,7 @@ function writeDistPackageJson(rootDir, distDir) {
       '*.sb',
       'README.md',
       'LICENSE',
+      'NOTICE-LAL.md',
       'locales',
       'examples',
       'bundled',
@@ -315,7 +313,7 @@ function writeDistPackageJson(rootDir, distDir) {
     config: rootPackageJson.config,
     dependencies: {},
     optionalDependencies: {
-      '@qwen-code/audio-capture': rootPackageJson.version,
+      '@lal/audio-capture': rootPackageJson.version,
       '@lydell/node-pty': '1.2.0-beta.10',
       '@lydell/node-pty-darwin-arm64': '1.2.0-beta.10',
       '@lydell/node-pty-darwin-x64': '1.2.0-beta.10',

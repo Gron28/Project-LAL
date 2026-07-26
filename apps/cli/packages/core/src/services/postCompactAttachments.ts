@@ -17,7 +17,7 @@
 
 import type { Content, Part } from '@google/genai';
 import { readFile, stat } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { resolve as resolvePath, sep as pathSep } from 'node:path';
 import { CHARS_PER_TOKEN } from './tokenEstimation.js';
 import { getFunctionResponseParts } from './compactionInputSlimming.js';
@@ -357,6 +357,16 @@ export async function readFileSizeAdaptive(
 export async function buildFileRestorationBlocks(
   filePaths: string[],
   signal?: AbortSignal,
+  /**
+   * Called with each path whose ENTIRE current content was embedded (PLAN 5).
+   *
+   * The distinction matters to the caller: an embedded file is one the model can
+   * still see every byte of after compaction, so forcing it to re-read that file
+   * is pure waste. A `reference` is only a filename, and re-reading it is
+   * genuinely required. Reported as a callback rather than a changed return type
+   * so existing callers and tests are unaffected.
+   */
+  onFullyEmbedded?: (filePath: string) => void,
 ): Promise<Content[]> {
   const references: string[] = [];
   const embeds: Array<{ path: string; content: string }> = [];
@@ -383,6 +393,7 @@ export async function buildFileRestorationBlocks(
     }
     embeds.push({ path: filePath, content: result.content });
     usedChars += result.content.length;
+    onFullyEmbedded?.(filePath);
   }
 
   const blocks: Content[] = [];
@@ -485,6 +496,7 @@ export function buildImageRestorationBlock(
  */
 const RESUME_TRAILER =
   'Resume the prior task using the summary above. Continue from the last in-flight step; do not acknowledge the summary, do not re-introduce, do not greet the user again.';
+export const POST_COMPACT_ACK = 'Got it. Thanks for the additional context!';
 
 /**
  * Strip the model's drafting scratchpad before the summary becomes the new
@@ -532,7 +544,135 @@ export function stripAnalysisBlock(rawSummary: string): string {
   return result.trim();
 }
 
-export function postProcessSummary(rawSummary: string): string {
+const MAX_WORKING_STATE_ROWS = 80;
+const MAX_WORKING_STATE_DETAIL_CHARS = 240;
+
+function singleLine(value: unknown): string {
+  return String(value ?? '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .trim();
+}
+
+function decodeWorkingStateText(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * Build a deterministic evidence appendix from actual history events.  This
+ * is intentionally not authored by the summary model: a stated intention or
+ * a confident assistant sentence can never become a verified file/test/tool
+ * claim merely because compaction occurred.
+ */
+export function buildVerifiedWorkingState(history: Content[]): string {
+  const rows: string[] = [];
+  const calls = new Map<string, { name: string; target: string }>();
+  // A previous deterministic appendix is trusted only in the synthetic
+  // summary+ack shape created by this module. Starting at the final opening
+  // tag excludes any earlier unclosed tag echoed by the summary model.
+  const firstText = history[0]?.parts?.find(
+    (part) => typeof part.text === 'string',
+  )?.text;
+  const hasSyntheticAck =
+    history[1]?.role === 'model' &&
+    history[1].parts?.some((part) => part.text === POST_COMPACT_ACK);
+  const appendixStart = hasSyntheticAck
+    ? (firstText?.lastIndexOf('<verified-working-state>') ?? -1)
+    : -1;
+  const priorAppendix =
+    appendixStart >= 0 ? firstText?.slice(appendixStart) : undefined;
+  const priorCurrentRequest = priorAppendix?.match(
+    /<current-request>([\s\S]*?)<\/current-request>/,
+  )?.[1];
+  let latestUserRequest = priorCurrentRequest
+    ? decodeWorkingStateText(priorCurrentRequest.trim())
+    : '';
+  for (const [contentIndex, content] of history.entries()) {
+    const parts = content.parts ?? [];
+    if (
+      content.role === 'user' &&
+      !(contentIndex === 0 && priorAppendix) &&
+      !parts.some((part) => part.functionResponse)
+    ) {
+      const text = parts
+        .find(
+          (part) =>
+            typeof part.text === 'string' &&
+            !/^\s*(?:\[research_controller\]|Research coverage gate rejected synthesis:)/i.test(
+              part.text,
+            ),
+        )
+        ?.text?.trim();
+      if (text && !text.startsWith('<verified-working-state>')) {
+        latestUserRequest = text.slice(0, 2_000);
+      }
+    }
+    for (const part of parts) {
+      const call = part.functionCall;
+      if (call) {
+        const args = call.args as Record<string, unknown> | undefined;
+        const target = singleLine(
+          args?.['file_path'] ?? args?.['path'] ?? args?.['command'] ?? '',
+        ).slice(0, MAX_WORKING_STATE_DETAIL_CHARS);
+        if (call.id)
+          calls.set(call.id, { name: call.name ?? 'unknown', target });
+      }
+      const response = part.functionResponse as
+        | { id?: string; name?: string; response?: Record<string, unknown> }
+        | undefined;
+      if (response) {
+        const failed =
+          !response.response ||
+          'error' in response.response ||
+          response.response['success'] === false;
+        const detail = singleLine(
+          response.response?.['error'] ??
+            response.response?.['output'] ??
+            response.response?.['result'] ??
+            '',
+        ).slice(0, MAX_WORKING_STATE_DETAIL_CHARS);
+        const call = response.id ? calls.get(response.id) : undefined;
+        // A request is not evidence. Record it only once an actual response
+        // exists, and include its target only after the permission/tool layer
+        // has allowed the operation to execute.
+        rows.push(
+          `- tool ${failed ? 'failed' : 'succeeded'}: ${escapeXml(response.name ?? call?.name ?? 'unknown')}${call?.target ? ` — ${escapeXml(call.target)}` : ''}${detail ? ` — ${escapeXml(detail)}` : ''}`,
+        );
+      }
+    }
+  }
+  const priorEvidence = priorAppendix?.match(
+    /<evidence>([\s\S]*?)<\/evidence>/,
+  )?.[1];
+  const priorRows =
+    priorEvidence?.split('\n').filter((line) => line.trim().startsWith('- ')) ??
+    [];
+  const evidence = [...new Set([...priorRows, ...rows])].slice(
+    -MAX_WORKING_STATE_ROWS,
+  );
+  return [
+    '<verified-working-state>',
+    '<current-request>',
+    escapeXml(latestUserRequest || '[not recoverable from transcript]'),
+    '</current-request>',
+    '<evidence>',
+    ...(evidence.length
+      ? evidence
+      : ['- no mechanically verified tool evidence recorded']),
+    '</evidence>',
+    '<completion-rule>Do not claim completion unless the evidence above records the required mutation and a fresh validation after it.</completion-rule>',
+    '</verified-working-state>',
+  ].join('\n');
+}
+
+export function postProcessSummary(
+  rawSummary: string,
+  history: Content[] = [],
+): string {
   const stripped = stripAnalysisBlock(rawSummary);
   // Defensive sentinel only. Callers gate on `isSummaryEmpty`, which now
   // checks the STRIPPED summary — so a response that strips to nothing is
@@ -541,7 +681,8 @@ export function postProcessSummary(rawSummary: string): string {
   // (a tiny `[Summary unavailable]` is smaller than the original, so the
   // guard wouldn't fire) — the upstream emptiness check is what prevents it.
   const body = stripped.length > 0 ? stripped : '[Summary unavailable]';
-  return `${body}\n\n${RESUME_TRAILER}`;
+  const verifiedState = buildVerifiedWorkingState(history);
+  return `${body}\n\n${verifiedState}\n\n${RESUME_TRAILER}`;
 }
 
 /**
@@ -580,6 +721,12 @@ export interface ComposePostCompactOptions {
    * `QWEN_COMPACT_MAX_RECENT_FILES`).
    */
   maxFiles?: number;
+  /**
+   * Notified for each file whose full current content was embedded into the
+   * attachment block (PLAN 5). The caller uses it to keep the read cache armed
+   * for exactly those files instead of clearing it wholesale.
+   */
+  onFullyRestoredFile?: (filePath: string) => void;
   /**
    * Max recent images to restore. Defaults to
    * `POST_COMPACT_MAX_IMAGES_TO_RESTORE`. Configurable via
@@ -769,6 +916,47 @@ export function buildStateReminderParts(options: {
   return parts;
 }
 
+/**
+ * Active artifact drafts — PLAN 5's "active artifact drafts" line, and the half
+ * of PLAN 3.1 that only works if it survives compaction.
+ *
+ * When a stream dies mid-`write_file`, the generated characters are staged at
+ * `<target>.lal-partial` and the resume instructions are delivered as a turn
+ * error. A turn error is conversation, and compaction summarises conversation —
+ * so a compaction between the interruption and the retry silently deleted the
+ * only pointer to the staged work, and the model regenerated the file. The draft
+ * on disk is durable state, so it is re-derived here from disk rather than
+ * recovered from the transcript.
+ */
+export function buildActiveDraftsPart(filePaths: string[]): Part | null {
+  const drafts: Array<{ target: string; draft: string; chars: number }> = [];
+  for (const filePath of filePaths) {
+    const draft = `${filePath}.lal-partial`;
+    try {
+      const { size } = statSync(draft);
+      if (size > 0) drafts.push({ target: filePath, draft, chars: size });
+    } catch {
+      // No draft for this path — the ordinary case.
+    }
+  }
+  if (drafts.length === 0) return null;
+  return {
+    text: [
+      '<active-artifact-drafts>',
+      'A previous write to each of these files was interrupted. The characters that',
+      'were already generated are staged on disk. The target file itself is unchanged.',
+      'Read the draft and continue from its last COMPLETE line — do NOT regenerate',
+      'from the beginning. The runtime refuses a rewrite that is smaller than what is',
+      'already staged.',
+      ...drafts.map(
+        (d) =>
+          `- ${sanitizePathForDisplay(d.target)} — ${d.chars} staged characters at ${sanitizePathForDisplay(d.draft)}`,
+      ),
+      '</active-artifact-drafts>',
+    ].join('\n'),
+  };
+}
+
 export async function composePostCompactHistory(
   history: Content[],
   summary: string,
@@ -787,7 +975,11 @@ export async function composePostCompactHistory(
   const filePaths = extractRecentFilePaths(history, maxFiles).filter((p) =>
     isInsideWorkspace(p, workspaceRoot),
   );
-  const fileBlocks = await buildFileRestorationBlocks(filePaths, signal);
+  const fileBlocks = await buildFileRestorationBlocks(
+    filePaths,
+    signal,
+    options.onFullyRestoredFile,
+  );
 
   const images = extractRecentImages(history, maxImages);
   const imageBlock = buildImageRestorationBlock(images);
@@ -809,6 +1001,11 @@ export async function composePostCompactHistory(
   const postAckParts: Part[] = [
     ...buildStateReminderParts({ planModeActive, runningSubagents }),
   ];
+  // Before file bodies: a staged partial write is the single most expensive
+  // thing to forget, because forgetting it means regenerating the file that
+  // just exhausted a response.
+  const draftsPart = buildActiveDraftsPart(filePaths);
+  if (draftsPart) postAckParts.push(draftsPart);
   for (const block of fileBlocks) {
     for (const part of block.parts ?? []) postAckParts.push(part);
   }
@@ -825,12 +1022,10 @@ export async function composePostCompactHistory(
   //                       model→model adjacency that would otherwise
   //                       arise from a separate appended entry.
   const trailingFc = trailingFunctionCallContent(history);
-  const ackParts: Part[] = [
-    { text: 'Got it. Thanks for the additional context!' },
-  ];
+  const ackParts: Part[] = [{ text: POST_COMPACT_ACK }];
 
   const out: Content[] = [
-    { role: 'user', parts: [{ text: postProcessSummary(summary) }] },
+    { role: 'user', parts: [{ text: postProcessSummary(summary, history) }] },
   ];
 
   if (postAckParts.length > 0) {

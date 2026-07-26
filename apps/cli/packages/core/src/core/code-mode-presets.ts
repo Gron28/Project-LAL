@@ -32,8 +32,9 @@ export interface CodeModePreset {
   maxRounds: number;
   /** Per-response output token ceiling — maps to samplingParams.max_tokens. */
   maxTokens: number;
-  /** Context window size hint — maps to Config.setContextWindowOverride(). */
-  ctx: number;
+  /** Optional explicit context override. Omitted presets retain the verified
+   * runtime handshake instead of shrinking an adaptive 64K/128K model. */
+  ctx?: number;
   /** Whether reasoning/thinking should be enabled for this preset. */
   think: boolean;
   /** Sampling temperature — maps to samplingParams.temperature. */
@@ -82,7 +83,6 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
     label: 'default',
     maxRounds: 24,
     maxTokens: 8192,
-    ctx: 16384,
     think: true,
     temperature: 0,
     addendum: '',
@@ -91,7 +91,6 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
     label: 'quick-edit',
     maxRounds: 8,
     maxTokens: 8192,
-    ctx: 8192,
     think: false,
     temperature: 0,
     addendum:
@@ -101,7 +100,6 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
     label: 'planning',
     maxRounds: 16,
     maxTokens: 8192,
-    ctx: 16384,
     think: true,
     temperature: 0,
     addendum:
@@ -112,17 +110,15 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
     label: 'deep-research',
     maxRounds: 64,
     maxTokens: 8192,
-    ctx: 16384,
     think: true,
     temperature: 0.3,
     addendum:
-      "MODE: deep-research — this is a genuine deep-research pass, not a quick lookup, and should take real time and many steps. Start by decomposing the question into as many distinct sub-questions and angles as it warrants (typically 8-15 for a substantial question) — write them out before searching. Research each one thoroughly — a snippet alone is never enough to answer from, open the real source. As you read, generate NEW follow-up sub-questions from gaps, contradictions, or unexpected findings instead of stopping after your first pass. Track sources as you go. Do not synthesize your final answer until you've covered the breadth you identified — a shallow 1-2 search pass is a WRONG answer in this mode, not merely an incomplete one. Your final reply cites sources and synthesizes the findings into an answer, noting any disagreements or gaps in what you found.",
+      "MODE: deep-research — this is a genuine deep-research pass, not a quick lookup, and should take real time and many steps. Use web_search for internet queries and web_fetch for source URLs; tool_search discovers tools and must never receive a web query. Start by decomposing the question into as many distinct sub-questions and angles as it warrants (typically 8-15 for a substantial question) — write them out before searching. Research each one thoroughly — a snippet alone is never enough to answer from, open the real source. As you read, generate NEW follow-up sub-questions from gaps, contradictions, or unexpected findings instead of stopping after your first pass. Track sources as you go. Do not synthesize your final answer until you've covered the breadth you identified — a shallow 1-2 search pass is a WRONG answer in this mode, not merely an incomplete one. Your final reply cites sources and synthesizes the findings into an answer, noting any disagreements or gaps in what you found.",
   },
   orchestrator: {
     label: 'orchestrator',
     maxRounds: 120,
     maxTokens: 8192,
-    ctx: 16384,
     think: true,
     temperature: 0.2,
     addendum: ORCHESTRATOR_PROMPT,

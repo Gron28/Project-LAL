@@ -16,7 +16,7 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type {
   MCPServerConfig,
   TeammateApprovalRequestEvent,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { PermissionSuggestion } from '../../types.js';
 
 /**

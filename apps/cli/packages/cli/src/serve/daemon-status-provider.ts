@@ -6,7 +6,7 @@
 
 /**
  * Daemon-host implementation of the `DaemonStatusProvider` interface
- * (declared in `@qwen-code/acp-bridge/bridgeOptions`). Production
+ * (declared in `@lal/acp-bridge/bridgeOptions`). Production
  * `qwen serve` wires this into `BridgeOptions.statusProvider` so the
  * bridge factory can pull env / preflight cells without importing
  * daemon-host-specific modules directly.
@@ -18,14 +18,14 @@
  */
 
 import { promises as fs } from 'node:fs';
-import { canUseRipgrep } from '@qwen-code/qwen-code-core';
+import { canUseRipgrep } from '@lal/core';
 import {
   type DaemonStatusProvider,
   mapDomainErrorToErrorKind,
   type ServePreflightCell,
   type ServePreflightKind,
   type ServeWorkspaceEnvStatus,
-} from '@qwen-code/acp-bridge';
+} from '@lal/acp-bridge';
 import { getGitVersion, getNpmVersion } from '../utils/systemInfo.js';
 import { buildEnvStatusFromEnv, snapshotProcessEnv } from './env-snapshot.js';
 

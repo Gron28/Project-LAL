@@ -14,7 +14,6 @@ import {
   ALL_PROVIDERS,
   applyProviderInstallPlan,
   buildInstallPlan,
-  clearCachedCredentialFile,
   createDebugLogger,
   generateSessionRecap,
   findProviderById,
@@ -24,8 +23,6 @@ import {
   getDefaultBaseUrlForProtocol,
   getDefaultModelIds,
   getScopedEnvContents,
-  QwenOAuth2Event,
-  qwenOAuth2Events,
   resolveBaseUrl,
   MCP_BUDGET_WARN_FRACTION,
   MCPServerConfig,
@@ -81,7 +78,6 @@ import {
   type ApprovalMode,
   type Config,
   type ConfigInitializeOptions,
-  type DeviceAuthorizationData,
   type DiscoveredMCPPrompt,
   type DiscoveredMCPResource,
   type HookConfig,
@@ -96,7 +92,7 @@ import {
   type SessionArtifactEventRecordPayload,
   type SessionArtifactSnapshotRecordPayload,
   type WorkspaceRememberContextMode,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { randomUUID } from 'node:crypto';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import {
@@ -142,7 +138,7 @@ import {
   pickAuthMethodsForAuthRequired,
 } from './authMethods.js';
 import { AcpFileSystemService } from './service/filesystem.js';
-import { ndJsonStream } from '@qwen-code/acp-bridge/ndJsonStream';
+import { ndJsonStream } from '@lal/acp-bridge/ndJsonStream';
 import { Readable, Writable } from 'node:stream';
 import { normalizeDisabledToolList } from '../config/normalizeDisabledTools.js';
 import { pipeline } from 'node:stream/promises';
@@ -263,7 +259,7 @@ import {
   type ServeExtensionCapabilities,
   type ServeWorkspaceExtensionsStatus,
   IDLE_HOOK_EVENTS,
-} from '@qwen-code/acp-bridge/status';
+} from '@lal/acp-bridge/status';
 import {
   CLIENT_MCP_OVER_WS_CONFIG_FLAG,
   LOAD_REPLAY_BULK_MODE,
@@ -272,7 +268,7 @@ import {
   LOAD_REPLAY_VERSION,
   type ClientMcpOverWsRuntimeConfig,
   type BridgeLoadReplayEnvelope,
-} from '@qwen-code/acp-bridge/bridgeTypes';
+} from '@lal/acp-bridge/bridgeTypes';
 import { isValidServerName } from '../serve/validate-server-name.js';
 import { MAX_REMEMBER_CONTENT_BYTES } from '../serve/workspace-memory-remember-constants.js';
 import { computeCpuPercent } from '../serve/daemon-metrics-ring.js';
@@ -3064,31 +3060,16 @@ class QwenAgent implements Agent {
   async authenticate({ methodId }: AuthenticateRequest): Promise<void> {
     const method = z.nativeEnum(AuthType).parse(methodId);
 
-    let authUri: string | undefined;
-    const authUriHandler = (deviceAuth: DeviceAuthorizationData) => {
-      authUri = deviceAuth.verification_uri_complete;
-      void this.connection.extNotification('authenticate/update', {
-        _meta: { authUri },
-      });
-    };
-
-    if (method === AuthType.QWEN_OAUTH) {
-      qwenOAuth2Events.once(QwenOAuth2Event.AuthUri, authUriHandler);
-    }
-
-    await clearCachedCredentialFile();
-    try {
-      await this.config.refreshAuth(method);
-      this.settings.setValue(
-        SettingScope.User,
-        'security.auth.selectedType',
-        method,
-      );
-    } finally {
-      if (method === AuthType.QWEN_OAUTH) {
-        qwenOAuth2Events.off(QwenOAuth2Event.AuthUri, authUriHandler);
-      }
-    }
+    // The device-code auth-uri relay existed only for the hosted Qwen OAuth
+    // provider, which was removed with the rest of the cloud surface
+    // (PLAN 7.2). refreshAuth now rejects that authType with an explicit
+    // message, so there is nothing left to relay.
+    await this.config.refreshAuth(method);
+    this.settings.setValue(
+      SettingScope.User,
+      'security.auth.selectedType',
+      method,
+    );
   }
 
   async newSession({
@@ -4410,7 +4391,7 @@ class QwenAgent implements Agent {
   ): Promise<{ cells: ServePreflightCell[]; errors?: ServeStatusCell[] }> {
     // Drive emission order from the shared `ACP_PREFLIGHT_KINDS` constant
     // (also consumed by `createIdleAcpPreflightCells` from
-    // `@qwen-code/acp-bridge/status`)
+    // `@lal/acp-bridge/status`)
     // so the idle-placeholder list and the live builder cannot drift —
     // adding a new ACP kind in the constant flags any builder dispatch
     // gap as a TS exhaustiveness error in the switch below, instead of

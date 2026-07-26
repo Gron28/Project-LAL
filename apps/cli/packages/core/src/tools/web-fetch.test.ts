@@ -25,6 +25,7 @@ vi.mock('../utils/fetch.js', async (importOriginal) => {
     ...actual,
     fetchWithTimeout: vi.fn(),
     isPrivateIp: vi.fn(),
+    isPrivateNetworkUrl: vi.fn(),
   };
 });
 
@@ -113,7 +114,61 @@ describe('WebFetchTool', () => {
       expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_FALLBACK_FAILED);
     });
 
-    it('should return WEB_FETCH_FALLBACK_FAILED on API processing failure', async () => {
+    it('refuses a navigation-menu page instead of reporting it as a source', async () => {
+      // Yahoo returned exactly this shape on 2026-07-25 and web_fetch called it a
+      // success; the model then counted it toward the research coverage gate and
+      // reported "4 sources opened" when this one had no prose in it.
+      const nav = [
+        'NEWS',
+        ...Array.from({ length: 30 }, (_, i) => ` * item ${i}`),
+        'LIFE',
+        ' * Health',
+        ' * Parenting',
+      ].join('\n');
+      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(false);
+      vi.spyOn(fetchUtils, 'fetchWithTimeout').mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'text/plain' }),
+        text: () => Promise.resolve(nav),
+      } as Response);
+
+      const tool = new WebFetchTool(mockConfig);
+      const result = await tool
+        .build({ url: 'https://news.example/x', prompt: 'the chef tips' })
+        .execute(new AbortController().signal);
+
+      expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_FALLBACK_FAILED);
+      expect(String(result.llmContent)).toContain('navigation menu');
+    });
+
+    it('accepts a short but substantive page rather than judging it by length', async () => {
+      // The counterweight to the test above: a small JSON body or plain-text file
+      // has no long lines either and must NOT be rejected for being brief. This
+      // is why the nav check requires many lines as well as low prose.
+      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(false);
+      vi.spyOn(fetchUtils, 'fetchWithTimeout').mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: () => Promise.resolve('{"cook_minutes":3,"eggs":2}'),
+      } as Response);
+
+      const tool = new WebFetchTool(mockConfig);
+      const result = await tool
+        .build({ url: 'https://api.example/omelette', prompt: 'cook time' })
+        .execute(new AbortController().signal);
+
+      expect(result.error).toBeUndefined();
+      expect(String(result.llmContent)).toContain('cook_minutes');
+    });
+
+    it('returns page text directly and never calls a second model', async () => {
+      // web_fetch used to summarise every page with a full generation on the
+      // MAIN model, so a research pass paid for N extra generations serialised
+      // behind the GPU lease the outer turn already held. That made a model
+      // outage or a busy GPU a web_fetch failure. Now there is no second call
+      // to fail, and this test is what keeps it that way.
       vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(false);
       vi.spyOn(fetchUtils, 'fetchWithTimeout').mockResolvedValue({
         ok: true,
@@ -125,7 +180,37 @@ describe('WebFetchTool', () => {
       const params = { url: 'https://public.ip', prompt: 'summarize this' };
       const invocation = tool.build(params);
       const result = await invocation.execute(new AbortController().signal);
+      expect(result.error).toBeUndefined();
+      expect(String(result.llmContent)).toContain('Test content');
+      expect(mockGenerateContent).not.toHaveBeenCalled();
+    });
+
+    it('blocks a research redirect to a private network target', async () => {
+      vi.mocked(fetchUtils.isPrivateNetworkUrl)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      vi.mocked(fetchUtils.fetchWithTimeout).mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ location: 'http://127.0.0.1/private' }),
+      } as Response);
+      const tool = new WebFetchTool({
+        ...mockConfig,
+        getGeminiClient: () => ({ isResearchModeActive: () => true }),
+      } as unknown as Config);
+      const invocation = tool.build({
+        url: 'https://example.com/redirect',
+        prompt: 'extract evidence',
+      });
+
+      const result = await invocation.execute(new AbortController().signal);
+
       expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_FALLBACK_FAILED);
+      expect(result.llmContent).toContain(
+        'blocked a private or unresolved network target',
+      );
+      expect(fetchUtils.fetchWithTimeout).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -259,18 +344,14 @@ describe('WebFetchTool', () => {
           ),
       } as Response);
 
-      mockGenerateContent.mockImplementation((options) => {
-        receivedContent = options.contents[0].parts[0].text;
-        return Promise.resolve({ text: 'Processed', usage: undefined });
-      });
-
       const tool = new WebFetchTool(mockConfig);
       const params = {
         url: 'https://api.github.com/repos/openai/codex/releases/tags/rust-v0.92.0',
         prompt: 'report the published date',
       };
       const invocation = tool.build(params);
-      await invocation.execute(new AbortController().signal);
+      const result = await invocation.execute(new AbortController().signal);
+      receivedContent = String(result.llmContent);
 
       expect(receivedContent).toContain('published_at');
       expect(receivedContent).toContain('2026-01-27T11:50:52Z');
@@ -289,15 +370,11 @@ describe('WebFetchTool', () => {
           Promise.resolve('# Hello World\n\nThis is markdown content.'),
       } as Response);
 
-      mockGenerateContent.mockImplementation((options) => {
-        receivedContent = options.contents[0].parts[0].text;
-        return Promise.resolve({ text: 'Processed', usage: undefined });
-      });
-
       const tool = new WebFetchTool(mockConfig);
       const params = { url: 'https://example.com', prompt: 'summarize' };
       const invocation = tool.build(params);
-      await invocation.execute(new AbortController().signal);
+      const result = await invocation.execute(new AbortController().signal);
+      receivedContent = String(result.llmContent);
 
       expect(receivedContent).toContain('# Hello World');
     });
@@ -310,11 +387,6 @@ describe('WebFetchTool', () => {
         text: () => Promise.resolve('Plain text content here'),
       } as Response);
 
-      mockGenerateContent.mockImplementation((options) => {
-        receivedContent = options.contents[0].parts[0].text;
-        return Promise.resolve({ text: 'Processed', usage: undefined });
-      });
-
       const tool = new WebFetchTool(mockConfig);
       const params = {
         url: 'https://example.com',
@@ -322,13 +394,47 @@ describe('WebFetchTool', () => {
         format: 'text' as const,
       };
       const invocation = tool.build(params);
-      await invocation.execute(new AbortController().signal);
+      const result = await invocation.execute(new AbortController().signal);
+      receivedContent = String(result.llmContent);
 
       expect(receivedContent).toContain('Plain text content here');
     });
   });
 
   describe('getConfirmationDetails', () => {
+    it('allows public sources during an explicit research request', async () => {
+      const tool = new WebFetchTool({
+        ...mockConfig,
+        getGeminiClient: () => ({ isResearchModeActive: () => true }),
+      } as unknown as Config);
+      vi.mocked(fetchUtils.isPrivateNetworkUrl).mockResolvedValue(false);
+      const invocation = tool.build({
+        url: 'https://sqlite.org/isolation.html',
+        prompt: 'extract transaction behavior',
+      });
+
+      expect(await invocation.getDefaultPermission()).toBe('allow');
+    });
+
+    it.each([
+      'http://127.0.0.1:8770/api/models',
+      'http://localhost:8770/api/models',
+      'http://service.local/private',
+      'http://169.254.169.254/latest/meta-data',
+    ])(
+      'still asks before research fetches a private target: %s',
+      async (url) => {
+        vi.mocked(fetchUtils.isPrivateNetworkUrl).mockResolvedValue(true);
+        const tool = new WebFetchTool({
+          ...mockConfig,
+          getGeminiClient: () => ({ isResearchModeActive: () => true }),
+        } as unknown as Config);
+        const invocation = tool.build({ url, prompt: 'extract data' });
+
+        expect(await invocation.getDefaultPermission()).toBe('ask');
+      },
+    );
+
     it('should return confirmation details with the correct prompt and urls', async () => {
       const tool = new WebFetchTool(mockConfig);
       const params = {

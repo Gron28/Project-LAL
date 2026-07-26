@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ModelsConfig } from '@qwen-code/qwen-code-core';
+import { ModelsConfig } from '@lal/core';
 import { loadSettings } from '../../config/settings.js';
 import type { LoadedSettings } from '../../config/settings.js';
 import {

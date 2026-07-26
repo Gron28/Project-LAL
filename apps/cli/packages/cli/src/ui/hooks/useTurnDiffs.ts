@@ -9,7 +9,7 @@ import {
   createDebugLogger,
   type FileHistoryService,
   type TurnDiff,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { HistoryItem, HistoryItemUser } from '../types.js';
 
 type UserTurn = HistoryItem & HistoryItemUser;

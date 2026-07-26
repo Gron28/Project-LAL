@@ -7,7 +7,7 @@
 import type React from 'react';
 import { useEffect, useState } from 'react';
 import { Text } from 'ink';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import { useConfig } from '../contexts/ConfigContext.js';
 import { theme } from '../semantic-colors.js';
 

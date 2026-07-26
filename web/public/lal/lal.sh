@@ -21,6 +21,7 @@ if [ -f "$LAL_HOME/.env" ]; then
   if [ -n "$token" ]; then export LAL_API_KEY="$token"; fi
 fi
 export QWEN_HOME="$LAL_HOME"
+export LAL_MANAGED=1
 
 device_id="$(sed -n '1p' "$LAL_HOME/device-id" 2>/dev/null || true)"
 device_name="$(sed -n '1p' "$LAL_HOME/device-name" 2>/dev/null || true)"
@@ -36,7 +37,16 @@ if [ -n "${LAL_API_KEY:-}" ] && [ -n "$device_id" ]; then
     "$host/api/lal/heartbeat" >/dev/null 2>&1 || true
 fi
 
-if command -v qwen >/dev/null 2>&1; then exec qwen "$@"; fi
-if [ -x "$HOME/.local/bin/qwen" ]; then exec "$HOME/.local/bin/qwen" "$@"; fi
+runtime_command="${LAL_RUNTIME_COMMAND:-}"
+if [ -z "$runtime_command" ] && [ -s "$LAL_HOME/runtime-command" ]; then runtime_command="$(sed -n '1p' "$LAL_HOME/runtime-command")"; fi
+# Transitional compatibility for existing local installs. This wrapper never
+# downloads or updates the inherited runtime; release-managed LAL runtimes can
+# be selected with LAL_RUNTIME_COMMAND or ~/.lal/runtime-command.
+runtime_command="${runtime_command:-qwen}"
+if [[ "$runtime_command" == */* ]]; then
+  if [ -x "$runtime_command" ]; then exec "$runtime_command" "$@"; fi
+elif command -v "$runtime_command" >/dev/null 2>&1; then
+  exec "$runtime_command" "$@"
+fi
 printf 'LAL runtime is missing. Run: lal update\n' >&2
 exit 1

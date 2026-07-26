@@ -21,7 +21,7 @@ const coreMocks = vi.hoisted(() => ({
 // The middleware only touches these five core helpers; stub them so the test is
 // a pure unit on the `recordRequest` seam. `withDaemonRequestSpan` just runs the
 // wrapped fn (which registers the res listeners and calls next()).
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   ...coreMocks,
 }));
 

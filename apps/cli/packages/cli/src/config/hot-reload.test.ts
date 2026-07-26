@@ -20,7 +20,7 @@ import {
   ApprovalMode,
   type Config,
   type MCPServerConfig,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { LoadedSettings, Settings } from './settings.js';
 import type {
   SettingsWatcher,

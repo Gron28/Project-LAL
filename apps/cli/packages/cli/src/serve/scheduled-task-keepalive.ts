@@ -38,7 +38,7 @@ import {
   SessionService,
   taskHasLegacyCondition,
   type DurableCronTask,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { scheduledTaskSessionName } from './routes/scheduled-tasks.js';
 
 const log = createDebugLogger('SCHED_KEEPALIVE');

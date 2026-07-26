@@ -13,7 +13,7 @@ import {
   ToolNames,
   persistSessionUsage,
   createDebugLogger,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   hasBlockingBackgroundWork,
   resetBackgroundStateForSessionSwitch,

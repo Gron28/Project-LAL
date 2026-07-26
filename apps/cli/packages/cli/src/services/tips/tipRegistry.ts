@@ -8,7 +8,7 @@
  * Contextual tip registry — defines tips, their conditions, and display rules.
  */
 
-import { type CompactionThresholds } from '@qwen-code/qwen-code-core';
+import { type CompactionThresholds } from '@lal/core';
 
 export type TipTrigger = 'startup' | 'post-response';
 

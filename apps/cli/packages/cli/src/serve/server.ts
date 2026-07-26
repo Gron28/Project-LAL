@@ -6,24 +6,14 @@
 
 import express from 'express';
 import type { Application } from 'express';
-import type { DaemonStatusProvider } from '@qwen-code/acp-bridge';
-import { hashDaemonWorkspace } from '@qwen-code/qwen-code-core';
+import type { DaemonStatusProvider } from '@lal/acp-bridge';
+import { hashDaemonWorkspace } from '@lal/core';
 import type { DaemonLogger } from './daemon-logger.js';
 import type {
   DaemonMetricsBucket,
   DaemonPerfSnapshot,
   DaemonStartupSnapshot,
 } from './daemon-status.js';
-import type {
-  ChannelWorkerSnapshot,
-  ChannelWorkerSupervisor,
-} from './channel-worker-supervisor.js';
-import type { ChannelWorkerGroupSnapshot } from './channel-worker-group.js';
-import type {
-  ChannelWorkerControlState,
-  ChannelWorkerSetResult,
-  ChannelWorkerStopResult,
-} from './channel-worker-manager.js';
 import {
   allowOriginCors,
   bearerAuth,
@@ -55,8 +45,6 @@ import {
 import {
   type ServeAuthProviderInstallRequest,
   type ServeAuthProviderInstallResult,
-  type ServeChannelSelection,
-  type ChannelWebhookConfigSource,
   type ServeOptions,
 } from './types.js';
 import {
@@ -192,18 +180,10 @@ import {
   registerWorkspaceMcpControlRoutes,
   registerWorkspaceQualifiedMcpControlRoutes,
 } from './routes/workspace-mcp-control.js';
-import { registerWorkspaceChannelControlRoutes } from './routes/workspace-channel-control.js';
 import {
   registerWorkspaceQualifiedToolsRoutes,
   registerWorkspaceToolsRoutes,
 } from './routes/workspace-tools.js';
-import { registerChannelWebhookRoutes } from './routes/channel-webhooks.js';
-import {
-  parseChannelWebhookConfigLenient,
-  type parseChannelWebhookConfig,
-} from '../commands/channel/config-utils.js';
-import { loadChannelsConfig } from '../commands/channel/runtime.js';
-import { writeStderrLine } from '../utils/stdioHelpers.js';
 
 export {
   createDefaultFsAuditEmit,
@@ -233,68 +213,6 @@ export { getActiveSseCount } from './routes/sse-events.js';
  */
 let warnedDefaultTrust = false;
 
-function loadServeChannelWebhookConfigs(
-  sources: readonly ChannelWebhookConfigSource[],
-): Record<string, { webhooks?: ReturnType<typeof parseChannelWebhookConfig> }> {
-  const parsed: Record<
-    string,
-    { webhooks?: ReturnType<typeof parseChannelWebhookConfig> }
-  > = {};
-
-  for (const source of sources) {
-    let channelsConfig: ReturnType<typeof loadChannelsConfig>;
-    try {
-      channelsConfig = loadChannelsConfig(source.workspaceCwd);
-    } catch (error) {
-      writeStderrLine(
-        `[daemon] Skipping webhook config source ${JSON.stringify(source.workspaceCwd)}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      continue;
-    }
-    const selectedChannels = source.channelNames
-      ? new Set(source.channelNames)
-      : undefined;
-    for (const [channelName, rawConfig] of Object.entries(channelsConfig)) {
-      if (
-        (selectedChannels && !selectedChannels.has(channelName)) ||
-        typeof rawConfig !== 'object' ||
-        rawConfig === null
-      ) {
-        continue;
-      }
-      let webhooks: ReturnType<typeof parseChannelWebhookConfig>;
-      try {
-        webhooks = parseChannelWebhookConfigLenient(
-          channelName,
-          rawConfig as Record<string, unknown>,
-          (webhookSource, sourceError) => {
-            const sourceMessage =
-              sourceError instanceof Error
-                ? sourceError.message
-                : String(sourceError);
-            writeStderrLine(
-              `[daemon] Skipping malformed webhook source "${webhookSource}" for channel "${channelName}": ${sourceMessage}`,
-            );
-          },
-          source.env,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        writeStderrLine(
-          `[daemon] Skipping malformed webhook config for channel "${channelName}": ${message}`,
-        );
-        continue;
-      }
-      if (webhooks) {
-        parsed[channelName] = { webhooks };
-      }
-    }
-  }
-
-  return parsed;
-}
 
 function describeRegistryPrimaryForConflict(
   registry: WorkspaceRegistry,
@@ -391,26 +309,6 @@ export interface ServeAppDeps {
    */
   daemonLog?: DaemonLogger;
   startup?: DaemonStartupSnapshot;
-  getChannelWorkerSnapshot?: () => ChannelWorkerSnapshot;
-  getChannelWorkerSnapshots?: () => ChannelWorkerGroupSnapshot[];
-  getChannelWorkerControl?: () => ChannelWorkerControlState;
-  isChannelControlDraining?: () => boolean;
-  isChannelControlInitializing?: () => boolean;
-  setChannelWorkerSelection?: (
-    selection: ServeChannelSelection,
-  ) => Promise<ChannelWorkerSetResult>;
-  stopChannelWorker?: () => Promise<ChannelWorkerStopResult>;
-  enqueueChannelWebhookTask?: ChannelWorkerSupervisor['enqueueWebhookTask'];
-  channelWebhookConfigSources?: readonly ChannelWebhookConfigSource[];
-  getChannelWebhookConfigSources?: () => readonly ChannelWebhookConfigSource[];
-  getChannelWebhookConfigVersion?: () => number;
-  registerChannelWebhookConfigRefresh?: (refresh: () => void) => void;
-  /**
-   * Stop and relaunch the daemon-managed channel worker so it re-reads
-   * settings.json. Its presence mounts the compatibility reload route;
-   * `channel_reload` is advertised only while the control state is enabled.
-   */
-  reloadChannelWorker?: () => Promise<ChannelWorkerSnapshot>;
   getPerfSnapshot?: () => DaemonPerfSnapshot;
   /** Rolling metrics series for the Daemon Status charts (oldest→newest). */
   getMetricsSeries?: () => DaemonMetricsBucket[];
@@ -664,26 +562,6 @@ export function createServeApp(
       // runtime, so it has the same reload surface as legacy deps.workspace.
       reloadAvailable:
         deps.workspace !== undefined || injectedWorkspaceRegistry !== undefined,
-      channelControlAvailable:
-        deps.getChannelWorkerControl !== undefined &&
-        deps.setChannelWorkerSelection !== undefined &&
-        deps.stopChannelWorker !== undefined,
-      channelReloadAvailable: () => {
-        if (deps.reloadChannelWorker === undefined) return false;
-        const control = deps.getChannelWorkerControl?.();
-        if (control) {
-          return (
-            control.enabled &&
-            control.selection !== null &&
-            control.workers.length > 0
-          );
-        }
-        return (
-          deps.getChannelWorkerSnapshots?.().some((worker) => worker.enabled) ||
-          deps.getChannelWorkerSnapshot?.().enabled ||
-          false
-        );
-      },
       sessionShellCommandEnabled,
       multiWorkspaceSessionsEnabled: () => workspaceRegistry.list().length > 1,
       persistentWorkspaceRegistrationAvailable:
@@ -940,51 +818,6 @@ export function createServeApp(
     mountWebShellAssets(app, webShellDir, webShellFrameAncestors);
   }
 
-  if (deps.enqueueChannelWebhookTask) {
-    let channelWebhookConfigVersion = -1;
-    let channelWebhookConfigs: Record<
-      string,
-      { webhooks?: ReturnType<typeof parseChannelWebhookConfig> }
-    > = {};
-    const refreshChannelWebhookConfigs = () => {
-      const version = deps.getChannelWebhookConfigVersion?.() ?? 0;
-      try {
-        // A mutable manager must provide committed routing explicitly;
-        // falling back to every primary-workspace webhook would keep old
-        // secrets active after DELETE or a failed replacement.
-        const sources =
-          deps.getChannelWebhookConfigSources?.() ??
-          (deps.getChannelWorkerControl
-            ? []
-            : (deps.channelWebhookConfigSources ?? [
-                { workspaceCwd: primaryBoundWorkspace },
-              ]));
-        channelWebhookConfigs = loadServeChannelWebhookConfigs(sources);
-        channelWebhookConfigVersion = version;
-      } catch (error) {
-        channelWebhookConfigs = {};
-        daemonLog?.warn(
-          `failed to refresh channel webhook configuration: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    };
-    deps.registerChannelWebhookConfigRefresh?.(refreshChannelWebhookConfigs);
-    registerChannelWebhookRoutes(app, {
-      getChannelsConfig: () => {
-        const version = deps.getChannelWebhookConfigVersion?.() ?? 0;
-        if (channelWebhookConfigVersion !== version) {
-          refreshChannelWebhookConfigs();
-        }
-        return channelWebhookConfigs;
-      },
-      safeBody,
-      enqueueWebhookTask: deps.enqueueChannelWebhookTask,
-      rateLimiter,
-      daemonLog,
-    });
-  }
 
   app.use(bearerAuth(opts.token));
 
@@ -1079,8 +912,6 @@ export function createServeApp(
     getSupportedDeviceFlowProviders,
     deviceFlowRegistry,
     sessionShellCommandEnabled,
-    getChannelWorkerSnapshot: deps.getChannelWorkerSnapshot,
-    getChannelWorkerSnapshots: deps.getChannelWorkerSnapshots,
     getPerfSnapshot: deps.getPerfSnapshot,
     getMetricsSeries: deps.getMetricsSeries,
     getTotalSessionAdmissionSnapshot:
@@ -1376,52 +1207,6 @@ export function createServeApp(
     safeBody,
     sendBridgeError,
   });
-  const channelWorkerControl =
-    deps.getChannelWorkerControl ??
-    (deps.getChannelWorkerSnapshot
-      ? () => {
-          const workers = deps.getChannelWorkerSnapshots?.() ?? [];
-          const primary = deps.getChannelWorkerSnapshot!();
-          return {
-            enabled:
-              workers.length > 0
-                ? workers.some((worker) => worker.enabled)
-                : primary.enabled,
-            selection: null,
-            transition: 'idle' as const,
-            workers,
-          };
-        }
-      : undefined);
-  if (
-    channelWorkerControl &&
-    (deps.reloadChannelWorker ||
-      (deps.setChannelWorkerSelection && deps.stopChannelWorker))
-  ) {
-    registerWorkspaceChannelControlRoutes(app, {
-      getChannelWorkerControl: channelWorkerControl,
-      ...(deps.isChannelControlDraining
-        ? { isDaemonDraining: deps.isChannelControlDraining }
-        : {}),
-      ...(deps.isChannelControlInitializing
-        ? { isManagerInitializing: deps.isChannelControlInitializing }
-        : {}),
-      ...(deps.setChannelWorkerSelection
-        ? { setChannelWorkerSelection: deps.setChannelWorkerSelection }
-        : {}),
-      ...(deps.stopChannelWorker
-        ? { stopChannelWorker: deps.stopChannelWorker }
-        : {}),
-      ...(deps.reloadChannelWorker
-        ? { reloadChannelWorker: deps.reloadChannelWorker }
-        : {}),
-      mutate,
-      safeBody,
-      sendBridgeError,
-      parseAndValidateClientId: (req, res) =>
-        parseAndValidateWorkspaceClientId(req, res, primaryBridge),
-    });
-  }
   registerWorkspaceLifecycleRoutes(app, {
     boundWorkspace: primaryBoundWorkspace,
     workspace: primaryWorkspace,

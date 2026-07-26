@@ -23,7 +23,7 @@ import type {
   EditorType,
   GeminiClient,
   AnyToolInvocation,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   ApprovalMode,
   AUTONOMOUS_SENTINEL_DYNAMIC,
@@ -32,7 +32,7 @@ import {
   SendMessageType,
   ToolErrorType,
   ToolConfirmationOutcome,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { Part, PartListUnion } from '@google/genai';
 import type { UseHistoryManagerReturn } from './useHistoryManager.js';
 import type { HistoryItem, SlashCommandProcessorResult } from '../types.js';
@@ -72,6 +72,7 @@ const MockedGeminiClientClass = vi.hoisted(() =>
       recordMessage: vi.fn(),
       recordMessageTokens: vi.fn(),
       recordToolCalls: vi.fn(),
+      recordRuntimeDecision: vi.fn(),
       getConversationFile: vi.fn(),
     });
   }),
@@ -96,7 +97,7 @@ const mockSetActiveGoal = vi.hoisted(() => vi.fn());
 const mockClearActiveGoal = vi.hoisted(() => vi.fn());
 const mockRefreshMemoryAfterManagedWrite = vi.hoisted(() => vi.fn());
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actualCoreModule = (await importOriginal()) as any;
   return {
     ...actualCoreModule,

@@ -6,8 +6,8 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { AskUserQuestionDialog } from './AskUserQuestionDialog.js';
-import type { ToolAskUserQuestionConfirmationDetails } from '@qwen-code/qwen-code-core';
-import { ToolConfirmationOutcome } from '@qwen-code/qwen-code-core';
+import type { ToolAskUserQuestionConfirmationDetails } from '@lal/core';
+import { ToolConfirmationOutcome } from '@lal/core';
 import { renderWithProviders } from '../../../test-utils/render.js';
 import stripAnsi from 'strip-ansi';
 

@@ -13,7 +13,7 @@ import {
   __resetActiveGoalStoreForTests,
   type Config,
   uiTelemetryService,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { LoadedSettings } from './config/settings.js';
 import { CommandKind, type ExecutionMode } from './ui/commands/types.js';
 import { filterCommandsForMode } from './services/commandUtils.js';

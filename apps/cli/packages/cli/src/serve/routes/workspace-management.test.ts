@@ -127,7 +127,7 @@ function createRemovalController(
     beginDrain: vi.fn(),
     cancelDrain: vi.fn(),
     completeDrain: vi.fn(),
-    getActivity: vi.fn(() => ({ pendingSessionStarts, channelWorkers: 0 })),
+    getActivity: vi.fn(() => ({ pendingSessionStarts })),
     disposeRuntime: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -604,8 +604,8 @@ describe('DELETE /workspaces/:workspace', () => {
     const runtime = makeRuntime(REAL_DIR);
     const runtimeRemoval = createRemovalController();
     vi.mocked(runtimeRemoval.getActivity)
-      .mockReturnValueOnce({ pendingSessionStarts: 0, channelWorkers: 0 })
-      .mockReturnValueOnce({ pendingSessionStarts: 1, channelWorkers: 0 });
+      .mockReturnValueOnce({ pendingSessionStarts: 0 })
+      .mockReturnValueOnce({ pendingSessionStarts: 1 });
     const acpHandle = {
       beginWorkspaceDrain: vi.fn(),
       cancelWorkspaceDrain: vi.fn(),
@@ -643,8 +643,8 @@ describe('DELETE /workspaces/:workspace', () => {
     const runtime = makeRuntime(REAL_DIR);
     const runtimeRemoval = createRemovalController();
     vi.mocked(runtimeRemoval.getActivity)
-      .mockReturnValueOnce({ pendingSessionStarts: 0, channelWorkers: 0 })
-      .mockReturnValueOnce({ pendingSessionStarts: 1, channelWorkers: 0 });
+      .mockReturnValueOnce({ pendingSessionStarts: 0 })
+      .mockReturnValueOnce({ pendingSessionStarts: 1 });
     vi.mocked(runtimeRemoval.cancelDrain).mockImplementation(() => {
       throw new Error('controller rollback failed');
     });

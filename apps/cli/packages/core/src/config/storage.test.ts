@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as fsSync from 'node:fs';
 import { Storage } from './storage.js';
 
 const mockRealpathSync = vi.hoisted(() => vi.fn());
@@ -48,7 +49,7 @@ function mockRealpath(
 
 describe('Storage – getGlobalSettingsPath', () => {
   it('returns path to ~/.qwen/settings.json', () => {
-    const expected = path.join(os.homedir(), '.qwen', 'settings.json');
+    const expected = path.join(Storage.getGlobalQwenDir(), 'settings.json');
     expect(Storage.getGlobalSettingsPath()).toBe(expected);
   });
 });
@@ -63,7 +64,7 @@ describe('Storage – additional helpers', () => {
   });
 
   it('getUserCommandsDir returns ~/.qwen/commands', () => {
-    const expected = path.join(os.homedir(), '.qwen', 'commands');
+    const expected = path.join(Storage.getGlobalQwenDir(), 'commands');
     expect(Storage.getUserCommandsDir()).toBe(expected);
   });
 
@@ -73,7 +74,10 @@ describe('Storage – additional helpers', () => {
   });
 
   it('getMcpOAuthTokensPath returns ~/.qwen/mcp-oauth-tokens.json', () => {
-    const expected = path.join(os.homedir(), '.qwen', 'mcp-oauth-tokens.json');
+    const expected = path.join(
+      Storage.getGlobalQwenDir(),
+      'mcp-oauth-tokens.json',
+    );
     expect(Storage.getMcpOAuthTokensPath()).toBe(expected);
   });
 });
@@ -511,10 +515,55 @@ describe('Storage – QWEN_HOME env var', () => {
     }
   });
 
-  it('defaults to ~/.qwen when QWEN_HOME is not set', () => {
-    delete process.env['QWEN_HOME'];
-    const expected = path.join(os.homedir(), '.qwen');
-    expect(Storage.getGlobalQwenDir()).toBe(expected);
+  // The home-directory rule, pinned against synthetic homes rather than
+  // whatever this machine happens to have on disk. A fresh install must get
+  // `.lal`; an install that predates the rename must keep its `.qwen` rather
+  // than be silently orphaned; and when both exist `.lal` wins, which is the
+  // state that let the launcher and the bare CLI disagree about where the
+  // session history lived.
+  describe.each([
+    { name: 'fresh install (neither exists)', create: [], expected: '.lal' },
+    { name: 'legacy install (only .qwen)', create: ['.qwen'], expected: '.qwen' },
+    { name: 'both present', create: ['.lal', '.qwen'], expected: '.lal' },
+    { name: 'already migrated (only .lal)', create: ['.lal'], expected: '.lal' },
+  ])('home directory resolution — $name', ({ create, expected }) => {
+    it(`resolves to ${expected}`, () => {
+      delete process.env['QWEN_HOME'];
+      delete process.env['LAL_HOME'];
+      const fakeHome = fsSync.mkdtempSync(
+        path.join(os.tmpdir(), 'lal-home-resolution-'),
+      );
+      // os.homedir() is an ESM namespace export and cannot be spied on, but
+      // it reads HOME / USERPROFILE, so drive it through the environment.
+      const priorHome = process.env['HOME'];
+      const priorUserProfile = process.env['USERPROFILE'];
+      process.env['HOME'] = fakeHome;
+      process.env['USERPROFILE'] = fakeHome;
+      try {
+        for (const dir of create) {
+          fsSync.mkdirSync(path.join(fakeHome, dir));
+        }
+        Storage._resetHomeDirNameCacheForTest();
+        expect(Storage.getGlobalQwenDir()).toBe(path.join(fakeHome, expected));
+      } finally {
+        if (priorHome === undefined) delete process.env['HOME'];
+        else process.env['HOME'] = priorHome;
+        if (priorUserProfile === undefined) delete process.env['USERPROFILE'];
+        else process.env['USERPROFILE'] = priorUserProfile;
+        Storage._resetHomeDirNameCacheForTest();
+        fsSync.rmSync(fakeHome, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it('prefers LAL_HOME over QWEN_HOME when both are set', () => {
+    process.env['QWEN_HOME'] = path.resolve('/tmp/legacy-home');
+    process.env['LAL_HOME'] = path.resolve('/tmp/lal-home');
+    try {
+      expect(Storage.getGlobalQwenDir()).toBe(path.resolve('/tmp/lal-home'));
+    } finally {
+      delete process.env['LAL_HOME'];
+    }
   });
 
   it('uses QWEN_HOME when set to absolute path', () => {

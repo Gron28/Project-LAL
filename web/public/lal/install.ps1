@@ -12,9 +12,22 @@ $PlatformFile = Join-Path $LalHome 'platform'
 $DeviceId = if (Test-Path $DeviceIdFile) { (Get-Content $DeviceIdFile -Raw).Trim() } else { [guid]::NewGuid().ToString('N') }
 $DeviceName = if (Test-Path $DeviceNameFile) { (Get-Content $DeviceNameFile -Raw).Trim() } else { $env:COMPUTERNAME }
 $Platform = "$([System.Environment]::OSVersion.VersionString)/$env:PROCESSOR_ARCHITECTURE"
+# [Text.Encoding]::UTF8 EMITS A BOM. Every file written with it below lands in
+# ~/.lal, gets read by lal.cmd's `for /f` into an environment variable, and the
+# BOM comes along. LAL_DEVICE_NAME then carries U+FEFF into the
+# `x-lal-device-name` HTTP header, where fetch rejects any code unit > 255 and
+# throws BEFORE sending the request:
+#   "Cannot convert argument to a ByteString because the character at index 0
+#    has a value of 8745"
+# (8745 = U+2229, byte 0xEF of the BOM rendered through code page 437.)
+# That killed web_search outright on Windows, silently, with nothing reaching the
+# host to log. Proof it was these exact writes: the host's device records showed
+# mojibake on `name` and `platform` — the two UTF8-written fields — while
+# `device-id`, written as ASCII, was clean. Diagnosed 2026-07-25.
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText($DeviceIdFile, "$DeviceId`r`n", [Text.Encoding]::ASCII)
-[IO.File]::WriteAllText($DeviceNameFile, "$DeviceName`r`n", [Text.Encoding]::UTF8)
-[IO.File]::WriteAllText($PlatformFile, "$Platform`r`n", [Text.Encoding]::UTF8)
+[IO.File]::WriteAllText($DeviceNameFile, "$DeviceName`r`n", $Utf8NoBom)
+[IO.File]::WriteAllText($PlatformFile, "$Platform`r`n", $Utf8NoBom)
 
 $Token = $env:LAL_TOKEN
 $EnvFile = Join-Path $LalHome '.env'
@@ -37,13 +50,50 @@ $SystemBasePromptPath = Join-Path $LalHome 'system.base.md'
 $SystemLocalPromptPath = Join-Path $LalHome 'system.local.md'
 Invoke-WebRequest -UseBasicParsing -Headers $Headers -OutFile $SystemBasePromptPath "$HostUrl/api/lal/prompt/terminal"
 if (-not (Test-Path $SystemLocalPromptPath)) {
-  [IO.File]::WriteAllText($SystemLocalPromptPath, '# Your local LAL prompt additions. This file is preserved by lal update.' + "`r`n", [Text.Encoding]::UTF8)
+  [IO.File]::WriteAllText($SystemLocalPromptPath, '# Your local LAL prompt additions. This file is preserved by lal update.' + "`r`n", $Utf8NoBom)
 }
 $SystemPrompt = (Get-Content -LiteralPath $SystemBasePromptPath -Raw) + "`r`n`r`n---`r`n`r`n# Owner additions (system.local.md)`r`n`r`n" + (Get-Content -LiteralPath $SystemLocalPromptPath -Raw)
-[IO.File]::WriteAllText($SystemPromptPath, $SystemPrompt, [Text.Encoding]::UTF8)
+[IO.File]::WriteAllText($SystemPromptPath, $SystemPrompt, $Utf8NoBom)
 
 $RuntimeFile = Join-Path $LalHome 'runtime-version'
 $InstalledRuntime = if (Test-Path $RuntimeFile) { (Get-Content $RuntimeFile -Raw).Trim() } else { '' }
+function Remove-StaleRuntime {
+  param([string]$Path)
+  if (-not (Test-Path $Path)) { return }
+  try {
+    Remove-Item -Recurse -Force $Path -ErrorAction Stop
+    return
+  } catch {
+    # Windows permits RENAMING a directory that holds a running executable but
+    # not DELETING one: a node.exe left running by an open LAL session keeps its
+    # own image locked. Reported 2026-07-25 as
+    #   "Cannot remove item ...\runtime.old\node\node.exe: Access to the path
+    #    'node.exe' is denied"
+    # which aborted `lal update` outright. Deleting leftover bytes is cleanup, not
+    # part of installing, and must never be able to fail an update -- least of all
+    # a leftover from a PREVIOUS update, which made the failure permanent until
+    # the lock happened to clear. Move it aside so the path is free, and let a
+    # later run collect it.
+    $Aside = "$Path.$(Get-Date -Format 'yyyyMMddHHmmss')"
+    try {
+      Move-Item -Force $Path $Aside -ErrorAction Stop
+      Write-Warning "Could not delete $Path - a LAL session is probably still running. Moved it to $Aside; delete it later at your leisure. The update itself continues."
+    } catch {
+      Write-Warning "Could not delete or move $Path. If the update fails, close every LAL window and run 'lal update' again."
+    }
+  }
+}
+
+# Opportunistically collect aside-moved runtimes from earlier updates. Best
+# effort by definition: any that are still locked are simply skipped.
+function Clear-AsideRuntimes {
+  param([string]$RuntimeRoot)
+  $parent = Split-Path -Parent $RuntimeRoot
+  $leaf = Split-Path -Leaf $RuntimeRoot
+  Get-ChildItem -Path $parent -Directory -Filter "$leaf.old.*" -ErrorAction SilentlyContinue |
+    ForEach-Object { Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue }
+}
+
 $RuntimeCommand = Join-Path $RuntimeDir 'bin\lal.cmd'
 $ExpectedRuntime = [string]$Manifest.lalRuntimeVersion
 if ($InstalledRuntime -ne $ExpectedRuntime -or -not (Test-Path $RuntimeCommand)) {
@@ -60,7 +110,7 @@ if ($InstalledRuntime -ne $ExpectedRuntime -or -not (Test-Path $RuntimeCommand))
     $StagedRuntime = Join-Path $TempDir 'lal-cli'
     if (-not (Test-Path (Join-Path $StagedRuntime 'bin\lal.cmd'))) { throw 'Invalid LAL runtime archive.' }
     $OldRuntime = "$RuntimeDir.old"
-    if (Test-Path $OldRuntime) { Remove-Item -Recurse -Force $OldRuntime }
+    Remove-StaleRuntime $OldRuntime
     if (Test-Path $RuntimeDir) { Move-Item -Force $RuntimeDir $OldRuntime }
     try {
       Move-Item -Force $StagedRuntime $RuntimeDir
@@ -68,9 +118,14 @@ if ($InstalledRuntime -ne $ExpectedRuntime -or -not (Test-Path $RuntimeCommand))
       if (Test-Path $OldRuntime) { Move-Item -Force $OldRuntime $RuntimeDir }
       throw
     }
-    if (Test-Path $OldRuntime) { Remove-Item -Recurse -Force $OldRuntime }
+    # The new runtime is already in place; this is only tidying. It must not be
+    # able to turn a completed update into a reported failure.
+    Remove-StaleRuntime $OldRuntime
+    Clear-AsideRuntimes $RuntimeDir
   } finally {
-    if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
+    if (Test-Path $TempDir) {
+      Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
+    }
   }
 }
 
@@ -117,7 +172,6 @@ Set-LalSettingProperty $CurrentSettings 'security' $ManagedSettings.security
 Set-LalSettingProperty $CurrentSettings 'model' $ManagedSettings.model
 Set-LalSettingProperty $CurrentSettings 'modelProviders' $ManagedSettings.modelProviders
 $MergedSettingsText = $CurrentSettings | ConvertTo-Json -Depth 100
-$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText($SettingsPath, $MergedSettingsText, $Utf8NoBom)
 
 $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')

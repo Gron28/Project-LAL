@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Activity, ChevronLeft, ChevronRight, Cpu, LayoutDashboard, MessageSquare, TerminalSquare, GraduationCap, Library, Gauge, Network, Radio, X } from "lucide-react";
+import { Activity, AlertTriangle, ChevronLeft, ChevronRight, Cpu, Download, LayoutDashboard, MessageSquare, TerminalSquare, GraduationCap, Library, Gauge, Network, Radio, X } from "lucide-react";
 import { ICON_SIZE } from "@/components/ui/icon";
 import { SignalTrace } from "@/components/ui/signal-trace";
 
@@ -120,6 +120,39 @@ function ActiveRunNotice() {
   );
 }
 
+/** Inventory failures used to become an indistinguishable empty dropdown in
+ * every surface. Keep the actual state visible globally and route recovery to
+ * the dedicated diagnostics/download page. */
+function ModelInventoryNotice() {
+  const [notice, setNotice] = useState<{ state: "empty" | "failed"; detail: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const response = await fetch("/api/agent/models", { cache: "no-store" });
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) throw new Error(`HTTP ${response.status} returned non-JSON content`);
+        const body = await response.json();
+        const inventory = body?.inventory;
+        if (!response.ok || inventory?.state === "failed") {
+          if (alive) setNotice({ state: "failed", detail: inventory?.diagnostics?.[0] || body?.error || `HTTP ${response.status}` });
+        } else if (inventory?.state === "empty") {
+          if (alive) setNotice({ state: "empty", detail: "No local models were found." });
+        } else if (alive) setNotice(null);
+      } catch (error) {
+        if (alive) setNotice({ state: "failed", detail: error instanceof Error ? error.message : String(error) });
+      }
+    };
+    void check(); const timer = setInterval(check, 30_000);
+    return () => { alive = false; clearInterval(timer); };
+  }, []);
+  if (!notice) return null;
+  return <Link href="/models" className="fixed z-[59] top-11 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1rem)] px-3 py-1.5 rounded-full border border-[var(--border-loud)] bg-[var(--surface-1)] shadow-lg flex items-center gap-2 text-[10px] text-[var(--text-2)] hover:text-[var(--accent-ai)]" title={notice.detail}>
+    {notice.state === "failed" ? <AlertTriangle size={12} className="text-[var(--accent-danger)] shrink-0" /> : <Download size={12} className="text-[var(--accent-ai)] shrink-0" />}
+    <span className="truncate">{notice.state === "failed" ? "Model inventory failed" : "No models installed"}</span><span className="text-[var(--accent-ai)] shrink-0">open Models</span>
+  </Link>;
+}
+
 // Monitor's sysinfo now lives in dashboard widgets, so it's dropped from nav to
 // keep the mobile bottom bar (h-14) compact — the route itself still exists.
 const items = [
@@ -128,10 +161,45 @@ const items = [
   { href: "/code", label: "Code", Icon: TerminalSquare },
   { href: "/hive", label: "Hive", Icon: Network },
   { href: "/train", label: "Train", Icon: GraduationCap },
+  { href: "/models", label: "Models", Icon: Download },
   { href: "/monitor", label: "Monitor", Icon: Activity },
   { href: "/library", label: "Library", Icon: Library },
   { href: "/benchmark", label: "Bench", Icon: Gauge },
 ];
+
+
+/**
+ * The CLI's mark, at nav scale.
+ *
+ * apps/cli/.../AsciiArt.ts draws it in 11 lines of block glyphs: an apex, two legs
+ * descending, a wide crossbar through them, and small inverted legs below. That is
+ * too tall for a 12px rail, so this is the same geometry as strokes rather than a
+ * shrunken screenshot of the ASCII — it stays legible at 16px and shares the
+ * accent colour, which is what makes the two surfaces read as one product.
+ */
+function BrandMark({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="var(--accent-ai)"
+      strokeWidth="2"
+      strokeLinecap="square"
+      aria-hidden="true"
+    >
+      {/* apex + legs */}
+      <path d="M12 3 L4 17" />
+      <path d="M12 3 L20 17" />
+      {/* the crossbar, wider than the legs — the logo's defining stroke */}
+      <path d="M2 13 L22 13" />
+      {/* the small inverted legs beneath */}
+      <path d="M8 21 L11 17" />
+      <path d="M16 21 L13 17" />
+    </svg>
+  );
+}
 
 export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const p = usePathname();
@@ -140,14 +208,18 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
   return (
     <>
       <ActiveRunNotice />
+      <ModelInventoryNotice />
       {/* Desktop: left icon rail (expands to labels on lg) — collapsible to reclaim
           screen width; collapsed state takes NO layout space at all, with a small
           floating button left to bring it back. */}
       {!collapsed && (
         <nav className="hidden md:flex md:flex-col fixed left-0 top-0 h-dvh w-12 lg:w-36 bg-[var(--surface-1)] border-r border-[var(--border)] z-50 py-2 gap-0.5">
           <div className="px-0 lg:px-3 mb-2 text-center lg:text-left">
-            <span className="text-[var(--text-2)] text-[11px] tracking-wide" style={{ fontFamily: "var(--font-display), monospace" }}>
-              <span className="hidden lg:inline">Local AI Lab</span><span className="lg:hidden">LAL</span>
+            <span className="flex items-center justify-center lg:justify-start gap-2 text-[var(--text-2)] text-[11px] tracking-wide" style={{ fontFamily: "var(--font-display), monospace" }}>
+              <BrandMark />
+              {/* "LAL" everywhere, matching the CLI and the `lal` command, instead of
+                  a longer name the terminal never uses. */}
+              <span className="hidden lg:inline">LAL</span>
             </span>
           </div>
           {items.map(({ href, label, Icon }) => (
@@ -174,9 +246,9 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
       )}
 
       {/* Mobile: bottom tab bar (unaffected by the desktop rail's collapse state) */}
-      <nav className="flex md:hidden fixed bottom-0 left-0 right-0 h-14 bg-[var(--surface-1)] border-t border-[var(--border)] z-50 pb-[env(safe-area-inset-bottom)]">
+      <nav className="flex md:hidden fixed bottom-0 left-0 right-0 h-14 bg-[var(--surface-1)] border-t border-[var(--border)] z-50 pb-[env(safe-area-inset-bottom)] overflow-x-auto">
         {items.map(({ href, label, Icon }) => (
-          <Link key={href} href={href} className="flex-1 flex flex-col items-center justify-center gap-0.5 text-[9px] tracking-wide"
+          <Link key={href} href={href} className="flex-none min-w-14 flex flex-col items-center justify-center gap-0.5 text-[9px] tracking-wide"
             style={{ color: active(href) ? "var(--accent-ai)" : "var(--text-2)" }}>
             <Icon size={ICON_SIZE.md} /><span>{label}</span>
           </Link>

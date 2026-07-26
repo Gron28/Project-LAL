@@ -22,7 +22,7 @@ vi.mock('../../i18n/index.js', () => ({
   },
 }));
 
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   createDebugLogger: () => ({ debug: () => undefined }),
   ToolNames: { AGENT: 'agent' },
   FORK_SUBAGENT_TYPE: 'fork',

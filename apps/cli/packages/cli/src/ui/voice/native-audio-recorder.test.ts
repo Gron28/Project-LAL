@@ -162,7 +162,7 @@ describe('createNativeAudioRecorder', () => {
     const recorder = createNativeAudioRecorder({
       loadBackend: () => {
         throw new Error(
-          "Cannot find package '@qwen-code/audio-capture' imported from /qwen/dist/cli.js",
+          "Cannot find package '@lal/audio-capture' imported from /qwen/dist/cli.js",
         );
       },
     });
@@ -170,14 +170,14 @@ describe('createNativeAudioRecorder', () => {
     await expect(recorder.start()).rejects.toThrow(
       /mirror or private registry/,
     );
-    await expect(recorder.start()).rejects.toThrow(/@qwen-code\/audio-capture/);
+    await expect(recorder.start()).rejects.toThrow(/@lal\/audio-capture/);
   });
 
   it.each(['ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND'])(
     'explains mirror registry installs for %s native package errors',
     async (code) => {
       const error = Object.assign(
-        new Error('missing @qwen-code/audio-capture dependency'),
+        new Error('missing @lal/audio-capture dependency'),
         { code },
       );
       const recorder = createNativeAudioRecorder({
@@ -190,14 +190,14 @@ describe('createNativeAudioRecorder', () => {
         /mirror or private registry/,
       );
       await expect(recorder.start()).rejects.toThrow(
-        /@qwen-code\/audio-capture/,
+        /@lal\/audio-capture/,
       );
     },
   );
 
   it('does not rewrite wrapped native addon load failures as missing packages', async () => {
     const loadError = new Error(
-      "Native audio capture addon could not be loaded. Reinstall @qwen-code/audio-capture, or use the SoX fallback. (Cannot find module 'node-gyp-build')",
+      "Native audio capture addon could not be loaded. Reinstall @lal/audio-capture, or use the SoX fallback. (Cannot find module 'node-gyp-build')",
     );
     const recorder = createNativeAudioRecorder({
       loadBackend: () => {
@@ -210,7 +210,7 @@ describe('createNativeAudioRecorder', () => {
 
   it('does not explain native start failures as missing packages', async () => {
     const startError = new Error(
-      "Cannot find package '@qwen-code/audio-capture' while starting",
+      "Cannot find package '@lal/audio-capture' while starting",
     );
     const backend = {
       startRecording: vi.fn(() => {

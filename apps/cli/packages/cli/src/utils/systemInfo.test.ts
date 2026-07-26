@@ -16,7 +16,7 @@ import type { CommandContext } from '../ui/commands/types.js';
 import { createMockCommandContext } from '../test-utils/mockCommandContext.js';
 import type * as child_process from 'node:child_process';
 import os from 'node:os';
-import { IdeClient } from '@qwen-code/qwen-code-core';
+import { IdeClient } from '@lal/core';
 import * as versionUtils from './version.js';
 
 // `getNpmVersion` / `getGitVersion` use `execFile` callback-style. Mock
@@ -77,9 +77,9 @@ vi.mock('./version.js', () => ({
   getCliVersion: vi.fn(),
 }));
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
   return {
     ...actual,
     IdeClient: {
@@ -267,7 +267,7 @@ describe('systemInfo', () => {
       } as unknown as IdeClient);
       setExecFileStdout('10.0.0');
 
-      const { AuthType } = await import('@qwen-code/qwen-code-core');
+      const { AuthType } = await import('@lal/core');
       // Update the mock context to use OpenAI auth
       mockContext.services.settings.merged.security!.auth!.selectedType =
         AuthType.USE_OPENAI;

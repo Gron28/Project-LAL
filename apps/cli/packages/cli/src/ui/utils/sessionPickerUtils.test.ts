@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { SessionListItem } from '@qwen-code/qwen-code-core';
+import type { SessionListItem } from '@lal/core';
 import { filterSessions, truncateText } from './sessionPickerUtils.js';
 import { getCachedStringWidth } from './textUtils.js';
 

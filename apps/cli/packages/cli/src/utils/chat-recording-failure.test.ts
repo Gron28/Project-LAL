@@ -10,7 +10,7 @@ import {
   type ChatRecordingFailureEvent,
   type ChatRecordingFailureListener,
   type Config,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { JsonOutputAdapterInterface } from '../nonInteractive/io/BaseJsonOutputAdapter.js';
 import {
   createChatRecordingFailureSystemMessage,

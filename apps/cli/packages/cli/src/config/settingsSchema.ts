@@ -13,7 +13,7 @@ import type {
   ChatCompressionSettings,
   ModelProvidersConfig,
   ProviderProtocolConfig,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   ApprovalMode,
   DEFAULT_MAX_SUBAGENT_DEPTH,
@@ -26,7 +26,7 @@ import {
   DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
   DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
   SENSITIVE_SPAN_ATTRIBUTE_MAX_LENGTH_LIMIT,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { CustomTheme } from '../ui/themes/theme.js';
 import { getLanguageSettingsOptions } from '../i18n/languages.js';
 
@@ -462,9 +462,9 @@ const SETTINGS_SCHEMA = {
         label: 'Enable Auto Update',
         category: 'General',
         requiresRestart: false,
-        default: true,
+        default: false,
         description:
-          'Enable automatic update checks and installations on startup.',
+          'Allow automatic update checks and installations on startup.',
         showInDialog: true,
       },
       showSessionRecap: {
@@ -729,7 +729,7 @@ const SETTINGS_SCHEMA = {
         label: 'Theme',
         category: 'UI',
         requiresRestart: false,
-        default: 'Qwen Dark' as string,
+        default: 'LAL Dark' as string,
         description: 'The color theme for the UI.',
         showInDialog: true,
       },
@@ -1019,7 +1019,22 @@ const SETTINGS_SCHEMA = {
         default: false,
         description:
           'Render conversation history in an in-app scrollable viewport instead of the terminal scrollback buffer. Recommended if you see flicker, scroll-storm, or interface freeze on long sessions, after Ctrl+O, after Ctrl+E / Ctrl+F (expand), after window resize, or when alt-tabbing back. Scroll with Shift+↑/↓ (line), PgUp/PgDn (page), Ctrl+Home/End (top/bottom), or the mouse wheel. Also enables mouse interactions: click an option in a menu/dialog to select it, hover to highlight it, and click in the prompt to position the cursor. Does NOT use the host terminal scrollback while enabled; for native text selection, hold Shift (or Option on macOS) while dragging.',
+        showInDialog: false,
+      },
+      terminalRenderer: {
+        type: 'enum',
+        label: 'Terminal renderer',
+        category: 'UI',
+        requiresRestart: true,
+        default: 'auto',
+        description:
+          'Auto uses a stable managed viewport on capable terminals and a non-animated, scrollback-safe renderer elsewhere.',
         showInDialog: true,
+        options: [
+          { value: 'auto', label: 'Auto (recommended)' },
+          { value: 'viewport', label: 'Managed viewport' },
+          { value: 'static', label: 'Static scrollback' },
+        ],
       },
       showScrollbar: {
         type: 'boolean',
@@ -1176,11 +1191,11 @@ const SETTINGS_SCHEMA = {
     properties: {
       usageStatisticsEnabled: {
         type: 'boolean',
-        label: 'Enable Usage Statistics',
+        label: 'Usage Statistics (disabled in LAL)',
         category: 'Privacy',
         requiresRestart: true,
-        default: true,
-        description: 'Enable collection of usage statistics',
+        default: false,
+        description: 'Legacy compatibility setting. LAL does not send inherited usage statistics.',
         showInDialog: true,
       },
     },
@@ -1831,10 +1846,16 @@ const SETTINGS_SCHEMA = {
         label: 'Enable Auto Skill',
         category: 'Memory',
         requiresRestart: false,
-        default: true,
+        // OFF by default (2026-07-25). This dispatches a background subagent that
+        // writes skill files on its own after tool-heavy sessions. On a box with
+        // one GPU that is a real model run competing with the user's work, and the
+        // operator's report was unambiguous: "it also automatically made a skill,
+        // I don't want that ... I don't use it". An assistant that creates
+        // artifacts nobody asked for has to be opt-in.
+        default: false,
         description:
-          'Enable background review for reusable project skills after tool-heavy sessions.',
-        showInDialog: false,
+          'Background review that writes reusable project skills after tool-heavy sessions. Off by default: it spends a model turn and creates files on its own.',
+        showInDialog: true,
       },
       autoSkillConfirm: {
         type: 'boolean',
@@ -2404,50 +2425,6 @@ const SETTINGS_SCHEMA = {
         description:
           'Per-message budget (characters) for the combined output of one batch of tool calls; the largest results are offloaded to disk when exceeded. Set to -1 to disable.',
         showInDialog: false,
-      },
-      computerUse: {
-        type: 'object',
-        label: 'Computer Use',
-        category: 'Tools',
-        requiresRestart: true,
-        default: {},
-        description:
-          "Cross-platform desktop automation via the cua-driver native driver (trycua/cua). On first invocation a pinned, signed + notarized binary (~20MB) is downloaded into ~/.qwen/computer-use/ and the user is walked through macOS Accessibility / Screen Recording permissions if needed. Exposes cua-driver's full tool surface (click, type_text, scroll, drag, press_key, get_window_state, page, launch_app, and more).",
-        showInDialog: false,
-        properties: {
-          enabled: {
-            type: 'boolean',
-            label: 'Enable Computer Use',
-            category: 'Tools',
-            requiresRestart: true,
-            default: true,
-            description:
-              'When enabled (default), the cua-driver computer_use__* tools are registered as deferred built-ins. Set to false to prevent the driver from being downloaded or spawned.',
-            showInDialog: true,
-          },
-          idleTimeoutMs: {
-            type: 'number',
-            label: 'Idle Timeout',
-            category: 'Tools',
-            requiresRestart: true,
-            default: 300000,
-            minimum: 0,
-            maximum: 2147483647,
-            description:
-              'Milliseconds to keep the cua-driver process alive after the last computer_use__* call. The default is 300000 (5 minutes). Set to 0 to keep it running until qwen-code exits.',
-            showInDialog: false,
-          },
-          maxImageDimension: {
-            type: 'number',
-            label: 'Max Screenshot Dimension',
-            category: 'Tools',
-            requiresRestart: true,
-            default: -1,
-            description:
-              "Longest-edge pixel cap applied to cua-driver screenshots (via set_config's max_image_dimension). -1 (default) keeps cua-driver's built-in default (1568); 0 disables resizing (full resolution); a positive value caps the longest edge. Lower caps cut vision-token cost at the expense of fine detail. Overridable via the QWEN_COMPUTER_USE_MAX_IMAGE_DIMENSION env var.",
-            showInDialog: false,
-          },
-        },
       },
     },
   },

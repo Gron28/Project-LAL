@@ -8,7 +8,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as dotenv from 'dotenv';
-import { getErrorMessage, QWEN_DIR, Storage } from '@qwen-code/qwen-code-core';
+import { getErrorMessage, QWEN_DIR, Storage } from '@lal/core';
 import { isWorkspaceTrusted } from './trustedFolders.js';
 import {
   DEFAULT_EXCLUDED_ENV_VARS,

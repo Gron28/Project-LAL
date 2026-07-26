@@ -12,7 +12,7 @@ const debugLogger = vi.hoisted(() => ({
   warn: vi.fn(),
 }));
 
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   createDebugLogger: () => debugLogger,
 }));
 

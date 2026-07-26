@@ -15,13 +15,13 @@ import {
   CODE_MODE_NAMES,
   CODE_MODE_PRESETS,
   type CodeModeName,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 const NAME_LIST = CODE_MODE_NAMES.join(', ');
 
 function describePreset(name: CodeModeName): string {
   const p = CODE_MODE_PRESETS[name];
-  return `${name} — rounds:${p.maxRounds} tokens:${p.maxTokens} ctx:${p.ctx} think:${p.think ? 'on' : 'off'} temp:${p.temperature}`;
+  return `${name} — rounds:${p.maxRounds} tokens:${p.maxTokens} ctx:${p.ctx ?? 'verified-runtime'} think:${p.think ? 'on' : 'off'} temp:${p.temperature}`;
 }
 
 export const modeCommand: SlashCommand = {

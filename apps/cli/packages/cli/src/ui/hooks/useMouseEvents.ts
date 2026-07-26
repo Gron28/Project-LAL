@@ -18,6 +18,7 @@ import {
 } from '../utils/mouse.js';
 import { useKeypressContext } from '../contexts/KeypressContext.js';
 import { SettingsContext } from '../contexts/SettingsContext.js';
+import { isViewportTerminal } from '../utils/terminal-renderer.js';
 
 export type MouseHandler = (event: MouseEvent) => void;
 
@@ -52,6 +53,33 @@ type MouseModeEntry = {
 };
 
 const mouseModeRefs = new Map<NodeJS.WriteStream, MouseModeEntry>();
+
+/**
+ * Whether to enable SGR mouse tracking at all. OFF unless explicitly asked for.
+ *
+ * Mouse tracking is exactly what prevents drag-to-select: with ?1002h/?1003h
+ * active the terminal routes press-drag-release to the application instead of
+ * painting a selection, so the transcript cannot be copied. PLAN 7.4 records
+ * selectable text as crucial, and the operator has now reported it twice.
+ *
+ * The first attempt at this shipped `LAL_NO_MOUSE=1` as an opt-OUT, which was the
+ * wrong default: it does nothing unless you already know it exists, so the
+ * crucial behaviour stayed broken for anyone who had not read the commit. Copying
+ * output matters more than wheel-scrolling, and the keyboard still scrolls
+ * (PageUp/PageDown, arrows), so the wheel is the cheaper thing to lose.
+ *
+ * `LAL_MOUSE=1` opts back IN for wheel scrolling, click-to-expand and scrollbar
+ * dragging. `LAL_NO_MOUSE` is still honoured so anyone who set it keeps working.
+ * Note that many terminals (Windows Terminal included) let shift+drag bypass
+ * mouse reporting, but that is per-terminal and undiscoverable, which is why it
+ * cannot be the answer.
+ */
+function mouseTrackingEnabled(): boolean {
+  const off = process.env['LAL_NO_MOUSE']?.trim().toLowerCase();
+  if (off === '1' || off === 'true' || off === 'yes') return false;
+  const on = process.env['LAL_MOUSE']?.trim().toLowerCase();
+  return on === '1' || on === 'true' || on === 'yes';
+}
 
 function effectiveTracking(entry: MouseModeEntry): MouseTracking | null {
   if (entry.any > 0) return 'any';
@@ -151,8 +179,10 @@ export function useMouseEvents(
   // pass `bypassVpGate` to opt in. This keeps the non-VP transcript scrollable
   // no matter how many click/hover subscribers are added later.
   const settings = useContext(SettingsContext);
-  const isVpMode = settings?.merged.ui?.useTerminalBuffer ?? false;
-  const vpGateOpen = isVpMode || bypassVpGate;
+  const isVpMode = settings
+    ? isViewportTerminal(settings.merged.ui?.useTerminalBuffer ?? false)
+    : false;
+  const vpGateOpen = (isVpMode || bypassVpGate) && mouseTrackingEnabled();
 
   const handlerRef = useRef(handler);
   handlerRef.current = handler;

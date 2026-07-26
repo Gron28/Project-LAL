@@ -117,3 +117,43 @@ describe('toolCallIdUtils', () => {
     ]);
   });
 });
+
+describe('normalizeModelToolCallIds under a provider that reuses one id', () => {
+  // llama-server b9835 emits the SAME tool_call id for every call it ever
+  // makes (PLAN 2.1a). Keying same-turn replay detection on the id alone meant
+  // a parallel batch lost every call after the first — silently, with only a
+  // debug log. The model asked for three reads, got one answer, and re-asked;
+  // that is a runtime defect that reads as the model looping.
+  const CONSTANT = 'ZsSt4SkIFMRz0HtqT7MTlimNvzlKM896';
+
+  it('keeps every distinct call in a parallel batch and gives each a unique id', () => {
+    const parts = [
+      { functionCall: { id: CONSTANT, name: 'read_file', args: { p: 'a.ts' } } },
+      { functionCall: { id: CONSTANT, name: 'read_file', args: { p: 'b.ts' } } },
+      { functionCall: { id: CONSTANT, name: 'glob', args: { pattern: '*.ts' } } },
+    ];
+
+    const out = normalizeModelToolCallIds(parts, new Set(), new Set());
+
+    expect(out).toHaveLength(3);
+    expect(out.map((p) => p.functionCall?.args)).toEqual([
+      { p: 'a.ts' },
+      { p: 'b.ts' },
+      { pattern: '*.ts' },
+    ]);
+    const ids = out.map((p) => p.functionCall?.id);
+    expect(new Set(ids).size).toBe(3);
+    // The provider's raw id is preserved for diagnostics on all three.
+    for (const p of out) {
+      expect(getProviderToolCallId(p.functionCall!)).toBe(CONSTANT);
+    }
+  });
+
+  it('still drops a genuine same-turn replay of one identical call', () => {
+    const call = {
+      functionCall: { id: CONSTANT, name: 'read_file', args: { p: 'a.ts' } },
+    };
+    const out = normalizeModelToolCallIds([call, { ...call }], new Set(), new Set());
+    expect(out).toHaveLength(1);
+  });
+});

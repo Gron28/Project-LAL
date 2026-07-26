@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
-import type { UsageSummaryRecord } from '@qwen-code/qwen-code-core';
+import type { UsageSummaryRecord } from '@lal/core';
 import { registerUsageStatsRoutes } from './usage-stats.js';
 
 const DAY = 86_400_000;

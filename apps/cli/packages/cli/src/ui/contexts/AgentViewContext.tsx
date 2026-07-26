@@ -26,7 +26,7 @@ import {
   type AgentInteractive,
   type ApprovalMode,
   type Config,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { useArenaInProcess } from '../hooks/useArenaInProcess.js';
 import { useTeamInProcess } from '../hooks/useTeamInProcess.js';
 

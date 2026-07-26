@@ -11,9 +11,9 @@ const mockDebugLogger = vi.hoisted(() => ({
   warn: vi.fn(),
 }));
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
   return {
     ...actual,
     createDebugLogger: vi.fn(() => mockDebugLogger),
@@ -22,7 +22,7 @@ vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
 
 vi.mock('node:fs/promises', { spy: true });
 
-import type { FileSystemService } from '@qwen-code/qwen-code-core';
+import type { FileSystemService } from '@lal/core';
 import { AcpFileSystemService } from './filesystem.js';
 import type { AgentSideConnection } from '@agentclientprotocol/sdk';
 import { promises as fs } from 'node:fs';

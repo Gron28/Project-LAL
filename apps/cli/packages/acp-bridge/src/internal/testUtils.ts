@@ -25,7 +25,7 @@
  *      so the cli test reads source directly — editing
  *      `testUtils.ts` doesn't require rebuilding acp-bridge.
  *
- * External consumers of `@qwen-code/acp-bridge` should NOT depend on
+ * External consumers of `@lal/acp-bridge` should NOT depend on
  * these helpers — the `internal/` directory matches the neighboring
  * `internal/stderrLine.ts` convention; the `@internal` JSDoc tag is
  * an additional package-private signal (stderrLine.ts uses prose

@@ -13,7 +13,7 @@ import {
   readCronTasks,
   updateCronTasks,
   type DurableCronTask,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   disableTasksForSessions,
   enableTasksForSessions,

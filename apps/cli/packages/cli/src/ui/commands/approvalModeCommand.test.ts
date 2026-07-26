@@ -32,7 +32,7 @@ describe('approvalModeCommand', () => {
 
   it('should have correct metadata', () => {
     expect(approvalModeCommand.name).toBe('approval-mode');
-    expect(approvalModeCommand.description).toBe(
+    expect(approvalModeCommand.description).toContain(
       'View or change the approval mode for tool usage',
     );
     expect(approvalModeCommand.kind).toBe(CommandKind.BUILT_IN);
@@ -172,5 +172,51 @@ describe('approvalModeCommand', () => {
 
   it('should not have completion function', () => {
     expect(approvalModeCommand.completion).toBeUndefined();
+  });
+});
+
+describe('phone-reachable aliases (2026-07-25)', () => {
+  // Shift+Tab does not exist on a phone keyboard. Reported from Termux over ssh:
+  // "no way to set permissions as auto or Yolo from the phone without access to
+  // tab".
+  let setApprovalMode: ReturnType<typeof vi.fn>;
+  const contextFor = (raw: string, args = '') => {
+    setApprovalMode = vi.fn();
+    return createMockCommandContext({
+      services: {
+        config: {
+          getApprovalMode: () => 'default',
+          setApprovalMode,
+        },
+      },
+      invocation: { raw, name: 'approval-mode', args },
+    });
+  };
+
+  it('exposes typing-only aliases', () => {
+    expect(approvalModeCommand.altNames).toContain('yolo');
+    expect(approvalModeCommand.altNames).toContain('auto-edit');
+    expect(approvalModeCommand.description).toContain('without Shift+Tab');
+  });
+
+  it('/yolo sets yolo directly instead of opening a dialog', async () => {
+    const result = await approvalModeCommand.action!(contextFor('/yolo'), '');
+    expect(result).toMatchObject({ type: 'message' });
+    expect(setApprovalMode).toHaveBeenCalledWith('yolo');
+  });
+
+  it('/auto-edit sets auto-edit directly', async () => {
+    await approvalModeCommand.action!(contextFor('/auto-edit'), '');
+    expect(setApprovalMode).toHaveBeenCalledWith('auto-edit');
+  });
+
+  it('a non-mode alias still opens the picker', async () => {
+    const result = await approvalModeCommand.action!(contextFor('/approval'), '');
+    expect(result).toMatchObject({ type: 'dialog', dialog: 'approval-mode' });
+  });
+
+  it('an explicit argument still wins over the alias', async () => {
+    await approvalModeCommand.action!(contextFor('/yolo plan', 'plan'), 'plan');
+    expect(setApprovalMode).toHaveBeenCalledWith('plan');
   });
 });

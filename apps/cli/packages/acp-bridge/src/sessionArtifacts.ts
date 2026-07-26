@@ -16,7 +16,7 @@ import {
   stableSessionArtifactId,
   WORKSPACE_CONTENT_MTIME_MS_METADATA_KEY,
   WORKSPACE_CONTENT_SHA256_METADATA_KEY,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type {
   PersistedSessionArtifact,
   RebuiltSessionArtifactSnapshot,
@@ -25,7 +25,7 @@ import type {
   SessionArtifactRestoreState,
   SessionArtifactRetention,
   SessionArtifactSnapshotRecordPayload,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { writeStderrLine } from './internal/stderrLine.js';
 
 export type DaemonSessionArtifactKind =

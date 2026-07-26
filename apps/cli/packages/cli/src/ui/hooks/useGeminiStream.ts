@@ -69,7 +69,7 @@ import {
   resetSemanticToolCallDedupAfterMutation,
   AutonomousLoopTickResolver,
   refreshMemoryAfterManagedWrite,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { type Part, type PartListUnion, FinishReason } from '@google/genai';
 import type {
   HistoryItem,
@@ -2268,6 +2268,24 @@ export const useGeminiStream = (
             }
             case ServerGeminiEventType.HookSystemMessage:
               flushBufferedStreamEvents();
+              // Persist the runtime's decision, not just display it. Every gate
+              // rejection, circuit-breaker refusal, acceptance verdict and
+              // rerouted tool call arrives on this event, and none of them
+              // reached the forensic export — so diagnosing the 2026-07-25
+              // research failure meant trusting the MODEL's account of what the
+              // runtime had done to it. PLAN 1.2 requires a failed run to be
+              // explainable from its trace alone.
+              // Optional at every level on purpose, including the getter. This
+              // runs inside the stream loop, so a TypeError here does not just
+              // lose a forensic record — it aborts the turn before the
+              // stop_hook_system_message below is ever displayed. That is
+              // exactly what was happening: a config without
+              // getChatRecordingService silently swallowed a user-visible
+              // message. Recording is best-effort observability; rendering the
+              // turn is not.
+              config.getChatRecordingService?.()?.recordRuntimeDecision?.(
+                event.value,
+              );
               // Display system message from Stop hooks with "Stop says:" prefix
               // First commit any pending AI response to ensure correct ordering
               if (pendingHistoryItemRef.current) {
@@ -3817,10 +3835,10 @@ export const useGeminiStream = (
   // otherwise a stale TeamManager could keep pushing into
   // the active queue ref after team recreation/remount.
   useEffect(() => {
-    let boundManager: import('@qwen-code/qwen-code-core').TeamManager | null =
+    let boundManager: import('@lal/core').TeamManager | null =
       null;
     const handleManagerChange = (
-      manager: import('@qwen-code/qwen-code-core').TeamManager | null,
+      manager: import('@lal/core').TeamManager | null,
     ) => {
       if (boundManager && boundManager !== manager) {
         boundManager.setLeaderMessageCallback(null);

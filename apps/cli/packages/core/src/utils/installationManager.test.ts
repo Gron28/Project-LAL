@@ -41,7 +41,9 @@ describe('InstallationManager', () => {
   let tempHomeDir: string;
   let installationManager: InstallationManager;
   const installationIdFile = () =>
-    path.join(tempHomeDir, '.qwen', 'installation_id');
+    // Fresh temp home: neither directory exists, so the resolver picks the
+    // current name rather than the legacy one.
+    path.join(tempHomeDir, '.lal', 'installation_id');
 
   beforeEach(() => {
     tempHomeDir = fs.mkdtempSync(
@@ -85,7 +87,9 @@ describe('InstallationManager', () => {
     });
 
     it('should handle read errors and return a fallback ID', () => {
-      vi.mocked(fs.existsSync).mockReturnValueOnce(true);
+      // Not `...Once`: resolving the home directory now probes existsSync too,
+      // so a single-shot mock gets consumed before the id file is ever checked.
+      vi.mocked(fs.existsSync).mockReturnValue(true);
       const readSpy = vi.mocked(fs.readFileSync);
       readSpy.mockImplementationOnce(() => {
         throw new Error('Read error');

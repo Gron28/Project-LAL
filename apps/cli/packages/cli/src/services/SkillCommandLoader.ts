@@ -4,13 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import {
   createDebugLogger,
   appendToLastTextPart,
   buildSkillLlmContent,
   applySkillAllowedTools,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { dirname } from 'node:path';
 import type { ICommandLoader } from './types.js';
 import {

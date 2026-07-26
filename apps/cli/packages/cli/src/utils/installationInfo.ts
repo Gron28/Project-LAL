@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { createDebugLogger, isGitRepository } from '@qwen-code/qwen-code-core';
+import { createDebugLogger, isGitRepository } from '@lal/core';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
@@ -170,7 +170,7 @@ export function getInstallationInfo(
 
     // Check for pnpm
     if (realPath.includes('/.pnpm/global')) {
-      const updateCommand = 'pnpm add -g @qwen-code/qwen-code@latest';
+      const updateCommand = 'pnpm add -g @lal/cli@latest';
       return {
         packageManager: PackageManager.PNPM,
         isGlobal: true,
@@ -183,7 +183,7 @@ export function getInstallationInfo(
 
     // Check for yarn
     if (realPath.includes('/.yarn/global')) {
-      const updateCommand = 'yarn global add @qwen-code/qwen-code@latest';
+      const updateCommand = 'yarn global add @lal/cli@latest';
       return {
         packageManager: PackageManager.YARN,
         isGlobal: true,
@@ -203,7 +203,7 @@ export function getInstallationInfo(
       };
     }
     if (realPath.includes('/.bun/bin')) {
-      const updateCommand = 'bun add -g @qwen-code/qwen-code@latest';
+      const updateCommand = 'bun add -g @lal/cli@latest';
       return {
         packageManager: PackageManager.BUN,
         isGlobal: true,
@@ -257,11 +257,11 @@ export function getInstallationInfo(
         packageManager: PackageManager.NPM,
         isGlobal: true,
         updateMessage:
-          'Update requires sudo. Please run: sudo npm install -g @qwen-code/qwen-code@latest',
+          'Update requires sudo. Please run: sudo npm install -g @lal/cli@latest',
       };
     }
 
-    const updateCommand = 'npm install -g @qwen-code/qwen-code@latest';
+    const updateCommand = 'npm install -g @lal/cli@latest';
     return {
       packageManager: PackageManager.NPM,
       isGlobal: true,
@@ -340,7 +340,7 @@ function isStandaloneInstallDir(installDir: string): boolean {
     };
     // Manifest format is produced by writeManifest in create-standalone-package.js.
     if (
-      manifest.name !== '@qwen-code/qwen-code' ||
+      manifest.name !== '@lal/cli' ||
       typeof manifest.target !== 'string' ||
       !isStandaloneTargetForCurrentPlatform(manifest.target)
     ) {

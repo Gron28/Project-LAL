@@ -9,10 +9,10 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-// Mock @qwen-code/qwen-code-core to avoid the undici dependency chain.
-// This is required so @qwen-code/acp-bridge/status can load (it imports
+// Mock @lal/core to avoid the undici dependency chain.
+// This is required so @lal/acp-bridge/status can load (it imports
 // SkillError from core).
-vi.mock('@qwen-code/qwen-code-core', () => {
+vi.mock('@lal/core', () => {
   class SkillError extends Error {
     code: string;
     constructor(message: string, code: string) {
@@ -91,7 +91,7 @@ vi.mock('../../../utils/stdioHelpers.js', () => ({
 }));
 
 const { createDaemonWorkspaceService } = await import('../index.js');
-import { SessionNotFoundError } from '@qwen-code/acp-bridge/bridgeErrors';
+import { SessionNotFoundError } from '@lal/acp-bridge/bridgeErrors';
 import {
   resetHomeEnvBootstrapForTesting,
   SettingScope,

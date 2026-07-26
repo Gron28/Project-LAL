@@ -1,0 +1,111 @@
+import { describe, expect, it } from 'vitest';
+import {
+  resolveTerminalRenderer,
+  terminalAnimationsEnabled,
+  isRemoteSession,
+} from './terminal-renderer.js';
+
+describe('resolveTerminalRenderer', () => {
+  it('keeps animations off until interactive startup selects a renderer', () => {
+    expect(terminalAnimationsEnabled()).toBe(false);
+  });
+  it('defaults a capable interactive terminal to inline/static rendering', () => {
+    expect(
+      resolveTerminalRenderer({
+        isTTY: true,
+        environment: { TERM: 'xterm-256color' },
+      }),
+    ).toBe('static');
+  });
+  it('falls back to static for dumb, redirected, CI, and safe-terminal output', () => {
+    expect(
+      resolveTerminalRenderer({ isTTY: true, environment: { TERM: 'dumb' } }),
+    ).toBe('static');
+    expect(
+      resolveTerminalRenderer({ isTTY: false, environment: { TERM: 'xterm' } }),
+    ).toBe('static');
+    expect(
+      resolveTerminalRenderer({
+        isTTY: true,
+        environment: { TERM: 'xterm', CI: 'true' },
+      }),
+    ).toBe('static');
+    expect(
+      resolveTerminalRenderer({
+        isTTY: true,
+        safeTerminal: true,
+        environment: { TERM: 'xterm' },
+      }),
+    ).toBe('static');
+  });
+  it('honors explicit configuration and environment overrides', () => {
+    expect(
+      resolveTerminalRenderer({
+        configured: 'static',
+        isTTY: true,
+        environment: { TERM: 'xterm' },
+      }),
+    ).toBe('static');
+    expect(
+      resolveTerminalRenderer({
+        configured: 'static',
+        isTTY: true,
+        environment: { TERM: 'xterm', LAL_TERMINAL_RENDERER: 'viewport' },
+      }),
+    ).toBe('viewport');
+  });
+});
+
+describe('remote sessions default to the static renderer (2026-07-25)', () => {
+  // Termux over ssh: "the interface flashes on and off extremely fast ... on
+  // desktop and Linux this did not happen". Viewport repaints the whole
+  // alternate screen per update, which is a full screen of bytes per keystroke
+  // across an ssh link.
+  const base = { isTTY: true, screenReader: false };
+
+  it('uses static for a local tty too — the terminal owns scrollback', () => {
+    expect(
+      resolveTerminalRenderer({ ...base, environment: { TERM: 'xterm-256color' } }),
+    ).toBe('static');
+  });
+
+  it('switches to static when reached over ssh', () => {
+    for (const key of ['SSH_TTY', 'SSH_CONNECTION', 'SSH_CLIENT']) {
+      expect(
+        resolveTerminalRenderer({
+          ...base,
+          environment: { TERM: 'xterm-256color', [key]: 'set' },
+        }),
+      ).toBe('static');
+    }
+  });
+
+  it('an explicit override still wins over the remote default', () => {
+    expect(
+      resolveTerminalRenderer({
+        ...base,
+        environment: {
+          TERM: 'xterm-256color',
+          SSH_TTY: '/dev/pts/3',
+          LAL_TERMINAL_RENDERER: 'viewport',
+        },
+      }),
+    ).toBe('viewport');
+  });
+
+  it('a configured setting also wins, so this is not a lock-in', () => {
+    expect(
+      resolveTerminalRenderer({
+        ...base,
+        configured: 'viewport',
+        environment: { TERM: 'xterm-256color', SSH_CONNECTION: 'x' },
+      }),
+    ).toBe('viewport');
+  });
+
+  it('isRemoteSession reads only ssh variables', () => {
+    expect(isRemoteSession({})).toBe(false);
+    expect(isRemoteSession({ TERM: 'xterm' })).toBe(false);
+    expect(isRemoteSession({ SSH_TTY: '/dev/pts/1' })).toBe(true);
+  });
+});

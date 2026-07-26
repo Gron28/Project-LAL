@@ -18,7 +18,7 @@ import {
   buildBtwCacheSafeParams,
   buildBtwPrompt,
   runForkedAgent,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 function formatBtwError(error: unknown): string {
   return t('Failed to answer btw question: {{error}}', {

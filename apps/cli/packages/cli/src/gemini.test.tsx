@@ -25,8 +25,8 @@ import { startInteractiveUI } from './ui/startInteractiveUI.js';
 import type { CliArgs } from './config/config.js';
 import { type LoadedSettings } from './config/settings.js';
 import { appEvents, AppEvent } from './utils/events.js';
-import type { Config } from '@qwen-code/qwen-code-core';
-import { ApprovalMode, OutputFormat } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
+import { ApprovalMode, OutputFormat } from '@lal/core';
 
 const mockWriteStderrLine = vi.hoisted(() => vi.fn());
 const mockHandleListExtensions = vi.hoisted(() => vi.fn());
@@ -1944,7 +1944,10 @@ describe('startInteractiveUI', () => {
     expect(renderSpy).toHaveBeenCalledTimes(1);
     const [reactElement, options] = renderSpy.mock.calls[0];
 
-    // Verify render options
+    // alternateScreen tracks the resolved renderer, which now defaults to
+    // 'static' everywhere (inline rendering, terminal owns scrollback) so the
+    // wheel is never translated into arrow keys. Only an explicit
+    // LAL_TERMINAL_RENDERER=viewport takes the alternate screen.
     expect(options).toEqual({
       exitOnCtrlC: false,
       isScreenReaderEnabled: false,

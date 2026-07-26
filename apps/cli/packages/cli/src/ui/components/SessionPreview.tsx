@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type {
   ResumedSessionData,
   SessionService,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { theme } from '../semantic-colors.js';
 import { HistoryItemDisplay } from './HistoryItemDisplay.js';
 import { useKeypress } from '../hooks/useKeypress.js';

@@ -16,18 +16,21 @@ import {
   getDefaultModelIds,
   resolveBaseUrl,
   type ProviderSetupInputs,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   useAuthCommand,
   normalizeCustomModelIds,
   maskApiKey,
 } from './useAuth.js';
 
+// useQwenAuth is gone with the hosted Qwen OAuth provider (PLAN 7.2); useAuth
+// now reads a frozen idle state, so there is nothing to mock.
 vi.mock('../hooks/useQwenAuth.js', () => ({
-  useQwenAuth: vi.fn(() => ({
-    qwenAuthState: {},
-    cancelQwenAuth: vi.fn(),
-  })),
+  IDLE_QWEN_AUTH_STATE: {
+    deviceAuth: null,
+    authStatus: 'idle',
+    authMessage: null,
+  },
 }));
 
 vi.mock('../../utils/settingsUtils.js', async (importOriginal) => {

@@ -12,7 +12,7 @@ import {
   type ArenaManager,
   type ArenaAgentResult,
   type Config,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { renderWithProviders } from '../../../test-utils/render.js';
 import { ArenaSelectDialog } from './ArenaSelectDialog.js';
 

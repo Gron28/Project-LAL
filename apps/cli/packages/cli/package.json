@@ -1,6 +1,6 @@
 {
-  "name": "@qwen-code/qwen-code",
-  "version": "0.1.0-lal.24",
+  "name": "@lal/cli",
+  "version": "0.1.0-lal.28",
   "description": "LAL terminal agent",
   "repository": {
     "type": "git",
@@ -36,26 +36,15 @@
   "files": [
     "dist"
   ],
-  "config": {
-    "sandboxImageUri": "ghcr.io/qwenlm/qwen-code:0.19.9"
-  },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
     "@google/genai": "2.6.0",
     "@iarna/toml": "^2.2.5",
     "@modelcontextprotocol/sdk": "^1.25.2",
-    "@qwen-code/acp-bridge": "file:../acp-bridge",
-    "@qwen-code/audio-capture": "file:../audio-capture",
-    "@qwen-code/channel-base": "file:../channels/base",
-    "@qwen-code/channel-dingtalk": "file:../channels/dingtalk",
-    "@qwen-code/channel-feishu": "file:../channels/feishu",
-    "@qwen-code/channel-qqbot": "file:../channels/qqbot",
-    "@qwen-code/channel-telegram": "file:../channels/telegram",
-    "@qwen-code/channel-wecom": "file:../channels/wecom",
-    "@qwen-code/channel-weixin": "file:../channels/weixin",
-    "@qwen-code/qwen-code-core": "file:../core",
-    "@qwen-code/sdk": "file:../sdk-typescript",
-    "@qwen-code/web-templates": "file:../web-templates",
+    "@lal/acp-bridge": "file:../acp-bridge",
+    "@lal/audio-capture": "file:../audio-capture",
+    "@lal/core": "file:../core",
+    "@lal/web-templates": "file:../web-templates",
     "@types/update-notifier": "^6.0.8",
     "ansi-regex": "^6.2.2",
     "chokidar": "^4.0.3",

@@ -314,7 +314,7 @@ unreadable source files are ignored.
 If source tracking is not needed and Node.js 22 or newer is already available:
 
 ```bash
-npm install -g @qwen-code/qwen-code@latest
+npm install -g @lal/cli@latest
 ```
 
 Homebrew users can also install Qwen Code with:
@@ -346,7 +346,7 @@ fails with a permission error, fix the npm global install location or use a
 user-owned Node.js installation, then rerun:
 
 ```bash
-npm install -g @qwen-code/qwen-code@latest --registry https://registry.npmmirror.com
+npm install -g @lal/cli@latest --registry https://registry.npmmirror.com
 ```
 
 ### qwen Is Not on PATH After Installation

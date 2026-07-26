@@ -1,5 +1,5 @@
 {
-  "name": "@qwen-code/audio-capture",
+  "name": "@lal/audio-capture",
   "version": "0.19.9",
   "description": "Native microphone capture backend for LAL voice input",
   "type": "module",

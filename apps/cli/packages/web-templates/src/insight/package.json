@@ -1,5 +1,5 @@
 {
-  "name": "@qwen-code/cli-insight",
+  "name": "@lal/cli-insight",
   "private": true,
   "type": "module",
   "scripts": {

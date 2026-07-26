@@ -67,6 +67,13 @@ describe('useMouseEvents', () => {
   let stdout: { write: ReturnType<typeof vi.fn>; isTTY: boolean };
 
   beforeEach(() => {
+    // Mouse tracking is OFF by default now, because ?1002h is what prevents
+    // drag-to-select (PLAN 7.4). These tests exercise the ref-counting and
+    // 1002->1003 upgrade mechanics, which only exist when tracking is enabled, so
+    // they opt in explicitly. The default itself is asserted in its own describe
+    // block below.
+    process.env['LAL_MOUSE'] = '1';
+    delete process.env['LAL_NO_MOUSE'];
     stdin = Object.assign(new EventEmitter(), {
       isTTY: true,
       setRawMode: vi.fn(),
@@ -87,6 +94,65 @@ describe('useMouseEvents', () => {
   afterEach(() => {
     vi.clearAllMocks();
     stdin.removeAllListeners();
+  });
+
+  // PLAN 7.4 — the operator called selectable/copyable CLI text crucial. SGR
+  // mouse tracking is precisely what prevents it: with ?1002h active the
+  // terminal routes press-drag-release to the application instead of painting a
+  // selection, so the transcript cannot be dragged over. LAL_NO_MOUSE refuses
+  // mouse tracking outright, trading the wheel and hover for selection.
+  describe('mouse tracking is off by default so text stays selectable', () => {
+    const originalOff = process.env['LAL_NO_MOUSE'];
+    const originalOn = process.env['LAL_MOUSE'];
+    afterEach(() => {
+      for (const [key, value] of [
+        ['LAL_NO_MOUSE', originalOff],
+        ['LAL_MOUSE', originalOn],
+      ] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+
+    it('writes no mouse-enable sequence by default', () => {
+      // The whole point: ?1002h is what stops the terminal painting a selection.
+      // Shipping this as an opt-OUT left the crucial behaviour broken for anyone
+      // who did not know the variable existed.
+      delete process.env['LAL_NO_MOUSE'];
+      delete process.env['LAL_MOUSE'];
+      const { unmount } = renderHook(
+        () => useMouseEvents(() => {}, { isActive: true, bypassVpGate: true }),
+        { wrapper },
+      );
+      expect(stdout.write).not.toHaveBeenCalled();
+      unmount();
+    });
+
+    for (const value of ['1', 'true', 'yes', 'TRUE']) {
+      it(`enables mouse mode when LAL_MOUSE=${value}`, () => {
+        delete process.env['LAL_NO_MOUSE'];
+        process.env['LAL_MOUSE'] = value;
+        const { unmount } = renderHook(
+          () => useMouseEvents(() => {}, { isActive: true, bypassVpGate: true }),
+          { wrapper },
+        );
+        expect(stdout.write).toHaveBeenCalledWith(ENABLE_MOUSE);
+        unmount();
+      });
+    }
+
+    it('honours LAL_NO_MOUSE even when LAL_MOUSE asks for it', () => {
+      // Anyone who set the old variable keeps working, and the explicit "off"
+      // wins over the explicit "on".
+      process.env['LAL_MOUSE'] = '1';
+      process.env['LAL_NO_MOUSE'] = '1';
+      const { unmount } = renderHook(
+        () => useMouseEvents(() => {}, { isActive: true, bypassVpGate: true }),
+        { wrapper },
+      );
+      expect(stdout.write).not.toHaveBeenCalled();
+      unmount();
+    });
   });
 
   it('keeps terminal mouse mode enabled until all subscribers are inactive', () => {

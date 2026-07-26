@@ -16,6 +16,7 @@ import {
   SCREEN_READER_RESPONDING,
 } from '../textConstants.js';
 import { theme } from '../semantic-colors.js';
+import { terminalAnimationsEnabled } from '../utils/terminal-renderer.js';
 
 const TMUX_SPINNER_INTERVAL_MS = 750;
 const TMUX_SPINNER_FRAMES = ['.  ', '.. ', '...'];
@@ -61,11 +62,12 @@ export const GeminiSpinner: React.FC<GeminiSpinnerProps> = ({
   altText,
 }) => {
   const isScreenReaderEnabled = useIsScreenReaderEnabled();
+  const animationsEnabled = terminalAnimationsEnabled();
   const isTmux = Boolean(process.env['TMUX']);
   const [tmuxFrameIndex, setTmuxFrameIndex] = useState(0);
 
   useEffect(() => {
-    if (isScreenReaderEnabled || !isTmux) {
+    if (isScreenReaderEnabled || !isTmux || !animationsEnabled) {
       return;
     }
 
@@ -74,10 +76,14 @@ export const GeminiSpinner: React.FC<GeminiSpinnerProps> = ({
     }, TMUX_SPINNER_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [isScreenReaderEnabled, isTmux]);
+  }, [animationsEnabled, isScreenReaderEnabled, isTmux]);
 
   if (isScreenReaderEnabled) {
     return <Text>{altText}</Text>;
+  }
+
+  if (!animationsEnabled) {
+    return <Text color={theme.text.primary}>…</Text>;
   }
 
   if (isTmux) {

@@ -8,8 +8,8 @@ import { stat } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import type { Application, Request, Response } from 'express';
-import { isWithinRoot } from '@qwen-code/qwen-code-core';
-import { MAX_WORKSPACE_PATH_LENGTH } from '@qwen-code/acp-bridge/workspacePaths';
+import { isWithinRoot } from '@lal/core';
+import { MAX_WORKSPACE_PATH_LENGTH } from '@lal/acp-bridge/workspacePaths';
 import { writeStderrLine } from '../../utils/stdioHelpers.js';
 import { MAX_REGISTERED_WORKSPACES } from '../workspace-inputs.js';
 import type {
@@ -49,7 +49,6 @@ export interface WorkspaceRemovalActivity {
   pendingSessionStarts: number;
   acpConnections: number;
   memoryTasks: number;
-  channelWorkers: number;
 }
 
 export interface WorkspaceRuntimeRemovalController {
@@ -59,7 +58,6 @@ export interface WorkspaceRuntimeRemovalController {
   completeDrain(runtime: WorkspaceRuntime): void;
   getActivity(runtime: WorkspaceRuntime): {
     pendingSessionStarts: number;
-    channelWorkers: number;
   };
   disposeRuntime(
     runtime: WorkspaceRuntime,
@@ -491,7 +489,6 @@ export function registerWorkspaceManagementRoutes(
   ): WorkspaceRemovalActivity => {
     const controllerActivity = runtimeRemoval?.getActivity(runtime) ?? {
       pendingSessionStarts: 0,
-      channelWorkers: 0,
     };
     const acpActivity = getAcpHandle?.()?.getWorkspaceActivity(
       runtime.workspaceId,
@@ -502,7 +499,6 @@ export function registerWorkspaceManagementRoutes(
       activePrompts: runtime.bridge.activePromptCount,
       acpConnections: acpActivity.acpConnections,
       memoryTasks: acpActivity.memoryTasks,
-      channelWorkers: controllerActivity.channelWorkers,
     };
   };
   const isBusy = (activity: WorkspaceRemovalActivity): boolean =>

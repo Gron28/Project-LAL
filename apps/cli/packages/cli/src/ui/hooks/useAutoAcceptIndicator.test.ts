@@ -19,8 +19,8 @@ import {
   useAutoAcceptIndicator,
 } from './useAutoAcceptIndicator.js';
 
-import { Config, ApprovalMode } from '@qwen-code/qwen-code-core';
-import type { Config as ActualConfigType } from '@qwen-code/qwen-code-core';
+import { Config, ApprovalMode } from '@lal/core';
+import type { Config as ActualConfigType } from '@lal/core';
 import type { Key } from './useKeypress.js';
 import { useKeypress } from './useKeypress.js';
 import { MessageType } from '../types.js';
@@ -29,9 +29,9 @@ import { SettingScope, type LoadedSettings } from '../../config/settings.js';
 
 vi.mock('./useKeypress.js');
 
-vi.mock('@qwen-code/qwen-code-core', async () => {
+vi.mock('@lal/core', async () => {
   const actualServerModule = (await vi.importActual(
-    '@qwen-code/qwen-code-core',
+    '@lal/core',
   )) as Record<string, unknown>;
   return {
     ...actualServerModule,

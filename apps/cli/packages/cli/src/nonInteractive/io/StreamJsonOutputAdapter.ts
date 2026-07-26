@@ -10,8 +10,8 @@ import type {
   ServerGeminiStreamEvent,
   ToolCallRequestInfo,
   McpToolProgressData,
-} from '@qwen-code/qwen-code-core';
-import { GeminiEventType } from '@qwen-code/qwen-code-core';
+} from '@lal/core';
+import { GeminiEventType } from '@lal/core';
 import type {
   CLIAssistantMessage,
   CLIMessage,

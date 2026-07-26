@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { parseRule } from '@qwen-code/qwen-code-core';
+import { parseRule } from '@lal/core';
 import type { LoadedSettings } from './settings.js';
 
 export const PERMISSION_RULE_TYPES = ['allow', 'ask', 'deny'] as const;

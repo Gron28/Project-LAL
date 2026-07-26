@@ -20,7 +20,7 @@ import {
   MCPOAuthTokenStorage,
   createDebugLogger,
   matchesAnyServerPattern,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { loadSettings, SettingScope } from '../../../../config/settings.js';
 import { getErrorMessage } from '../../../../utils/errors.js';
 import { ServerDetailStep } from '../../mcp/steps/ServerDetailStep.js';

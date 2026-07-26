@@ -9,7 +9,7 @@ import { RadioButtonSelect } from '../../shared/RadioButtonSelect.js';
 import {
   type Extension,
   getExtensionDisplayName,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { theme } from '../../../semantic-colors.js';
 import { t, getCurrentLanguage } from '../../../../i18n/index.js';
 

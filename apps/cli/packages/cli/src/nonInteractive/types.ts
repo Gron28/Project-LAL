@@ -3,7 +3,7 @@ import type {
   ActiveGoal,
   SubagentConfig,
   McpToolProgressData,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 /**
  * Annotation for attaching metadata to content blocks

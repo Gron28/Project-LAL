@@ -7,15 +7,19 @@
 import { getErrorMessage, isNodeError } from './errors.js';
 import { isTlsVerificationDisabled } from './runtimeFetchOptions.js';
 import { URL } from 'node:url';
+import { lookup } from 'node:dns/promises';
 
 const PRIVATE_IP_RANGES = [
+  /^0\./,
   /^10\./,
+  /^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\./,
   /^127\./,
+  /^169\.254\./,
   /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
   /^192\.168\./,
   /^::1$/,
-  /^fc00:/,
-  /^fe80:/,
+  /^f[cd][0-9a-f]{2}:/,
+  /^fe[89ab][0-9a-f]:/,
 ];
 
 const TLS_ERROR_CODES = new Set([
@@ -50,10 +54,48 @@ export class FetchError extends Error {
 
 export function isPrivateIp(url: string): boolean {
   try {
-    const hostname = new URL(url).hostname;
+    const hostname = new URL(url).hostname
+      .toLowerCase()
+      .replace(/\.$/, '')
+      .replace(/^\[|\]$/g, '');
+    if (
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname.endsWith('.local')
+    ) {
+      return true;
+    }
+    if (hostname.startsWith('::ffff:')) {
+      const mapped = hostname.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+      const address = mapped
+        ? [
+            Number.parseInt(mapped[1], 16) >> 8,
+            Number.parseInt(mapped[1], 16) & 0xff,
+            Number.parseInt(mapped[2], 16) >> 8,
+            Number.parseInt(mapped[2], 16) & 0xff,
+          ].join('.')
+        : hostname.slice('::ffff:'.length);
+      return PRIVATE_IP_RANGES.some((range) => range.test(address));
+    }
     return PRIVATE_IP_RANGES.some((range) => range.test(hostname));
   } catch (_e) {
     return false;
+  }
+}
+
+/** Resolve hostnames before an auto-approved network read. A lookup failure is
+ * treated as private/unsafe here; the ordinary confirmed fetch path can still
+ * surface its normal network error to the user. */
+export async function isPrivateNetworkUrl(url: string): Promise<boolean> {
+  if (isPrivateIp(url)) return true;
+  try {
+    const hostname = new URL(url).hostname;
+    const addresses = await lookup(hostname, { all: true, verbatim: true });
+    return addresses.some(({ address }) =>
+      isPrivateIp(`http://${address.includes(':') ? `[${address}]` : address}`),
+    );
+  } catch {
+    return true;
   }
 }
 
@@ -61,6 +103,7 @@ export async function fetchWithTimeout(
   url: string,
   timeout: number,
   headers?: Record<string, string>,
+  redirect: RequestRedirect = 'follow',
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -69,6 +112,7 @@ export async function fetchWithTimeout(
     const response = await fetch(url, {
       signal: controller.signal,
       headers,
+      redirect,
     });
     return response;
   } catch (error) {

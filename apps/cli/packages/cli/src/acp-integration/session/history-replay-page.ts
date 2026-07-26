@@ -10,7 +10,7 @@ import type {
   HistoryGap,
   SessionTranscriptCursorState,
   SessionTranscriptRecordPage,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { HistoryReplayer } from './history-replayer.js';
 import type { PendingReplayToolCall } from './history-replayer.js';

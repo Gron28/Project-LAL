@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 // Re-import via the relative source path so the new ownsModel envKey gate
-// is exercised even before dist/ is rebuilt (the @qwen-code/qwen-code-core
+// is exercised even before dist/ is rebuilt (the @lal/core
 // package resolves to dist/ on a fresh branch).
 import { requestyProvider, REQUESTY_ENV_KEY } from '../../presets/requesty.js';
 

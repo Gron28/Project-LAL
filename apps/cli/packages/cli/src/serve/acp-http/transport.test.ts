@@ -15,15 +15,15 @@ import WebSocket from 'ws';
 import type {
   BridgeSessionSummary,
   HttpAcpBridge,
-} from '@qwen-code/acp-bridge/bridgeTypes';
+} from '@lal/acp-bridge/bridgeTypes';
 import type {
   BridgeEvent,
   SessionReplaySnapshot,
-} from '@qwen-code/acp-bridge/eventBus';
+} from '@lal/acp-bridge/eventBus';
 import {
   SessionArtifactAuthorizationError,
   SessionArtifactValidationError,
-} from '@qwen-code/acp-bridge/sessionArtifacts';
+} from '@lal/acp-bridge/sessionArtifacts';
 import {
   CancelSentinelCollisionError,
   InvalidClientIdError,
@@ -35,8 +35,8 @@ import {
   SessionShellClientRequiredError,
   SessionShellDisabledError,
   TotalSessionLimitExceededError,
-} from '@qwen-code/acp-bridge/bridgeErrors';
-import { SessionService, Storage } from '@qwen-code/qwen-code-core';
+} from '@lal/acp-bridge/bridgeErrors';
+import { SessionService, Storage } from '@lal/core';
 import {
   resetHomeEnvBootstrapForTesting,
   SettingScope,

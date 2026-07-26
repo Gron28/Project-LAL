@@ -9,7 +9,7 @@ import {
   IdeClient,
   initializeTelemetry,
   type Config,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { LoadedSettings } from '../config/settings.js';
 import { preconnectApi } from '../utils/apiPreconnect.js';
 import { AppEvent, appEvents } from '../utils/events.js';
@@ -148,7 +148,7 @@ export function startPostRenderPrefetches(
 
   if (
     process.env['LAL_MANAGED'] !== '1' &&
-    settings.merged.general?.enableAutoUpdate !== false
+    settings.merged.general?.enableAutoUpdate === true
   ) {
     runDeferredTask('update_check', async () => {
       const [

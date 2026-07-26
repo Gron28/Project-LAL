@@ -9,7 +9,7 @@ import {
   AuthType,
   minimaxProvider,
   buildInstallPlan,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 describe('minimaxProvider', () => {
   it('offers international and China endpoints', () => {

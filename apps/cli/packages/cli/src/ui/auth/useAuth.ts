@@ -14,11 +14,11 @@ import {
   applyProviderInstallPlan,
   type ProviderConfig,
   type ProviderSetupInputs,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { LoadedSettings } from '../../config/settings.js';
 import { createLoadedSettingsAdapter } from '../../config/loadedSettingsAdapter.js';
-import { useQwenAuth } from '../hooks/useQwenAuth.js';
+import { IDLE_QWEN_AUTH_STATE } from '../hooks/useQwenAuth.js';
 import { AuthState, MessageType } from '../types.js';
 import type { HistoryItemWithoutId } from '../types.js';
 import { t } from '../../i18n/index.js';
@@ -58,7 +58,7 @@ export type AuthUiState = {
     message: string;
     detail?: string;
   } | null;
-  qwenAuthState: ReturnType<typeof useQwenAuth>['qwenAuthState'];
+  qwenAuthState: typeof IDLE_QWEN_AUTH_STATE;
 };
 
 export type AuthController = {
@@ -101,10 +101,10 @@ export const useAuthCommand = (
     detail?: string;
   } | null>(null);
 
-  const { qwenAuthState, cancelQwenAuth } = useQwenAuth(
-    pendingAuthType,
-    isAuthenticating,
-  );
+  // Was the hosted Qwen OAuth device-code hook; that provider is gone
+  // (PLAN 7.2), so the state is permanently idle and cancellation is a no-op.
+  const qwenAuthState = IDLE_QWEN_AUTH_STATE;
+  const cancelQwenAuth = useCallback(() => {}, []);
 
   // -- Shared helpers -------------------------------------------------------
 

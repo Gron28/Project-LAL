@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { SessionOrganizationService } from '@qwen-code/qwen-code-core';
+import { SessionOrganizationService } from '@lal/core';
 import { writeStderrLine } from '../utils/stdioHelpers.js';
 
 export function createSessionOrganizationService(

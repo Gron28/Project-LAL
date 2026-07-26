@@ -661,6 +661,16 @@ export async function runForkedAgent(
         filesWritten: written,
       };
     }
+    if (!finalText) {
+      return {
+        status: 'failed',
+        terminateReason,
+        finalText:
+          'Subagent exited without a model-visible result. Any workspace mutations are partial and unreviewed.',
+        filesTouched: touched,
+        filesWritten: written,
+      };
+    }
     return {
       status: 'completed',
       terminateReason,

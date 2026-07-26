@@ -26,8 +26,8 @@ import {
   isWithinRoot,
   type Ignore,
   type WriteTextFileOptions,
-} from '@qwen-code/qwen-code-core';
-import type { BridgeEvent } from '@qwen-code/acp-bridge/eventBus';
+} from '@lal/core';
+import type { BridgeEvent } from '@lal/acp-bridge/eventBus';
 import {
   type AuditContext,
   type AuditPublisher,

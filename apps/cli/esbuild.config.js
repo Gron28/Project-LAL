@@ -63,7 +63,7 @@ const external = [
   '@lydell/node-pty-linux-x64',
   '@lydell/node-pty-win32-arm64',
   '@lydell/node-pty-win32-x64',
-  '@qwen-code/audio-capture',
+  '@lal/audio-capture',
   '@teddyzhu/clipboard',
   '@teddyzhu/clipboard-darwin-arm64',
   '@teddyzhu/clipboard-darwin-x64',
@@ -100,7 +100,7 @@ const mainBuild = esbuild.build({
   },
   alias: {
     'is-in-ci': path.resolve(__dirname, 'packages/cli/src/patches/is-in-ci.ts'),
-    '@qwen-code/web-templates': path.resolve(
+    '@lal/web-templates': path.resolve(
       __dirname,
       'packages/web-templates/src/index.ts',
     ),
@@ -174,10 +174,22 @@ const workerBuild = esbuild.build({
 });
 
 Promise.all([mainBuild, workerBuild])
-  .then(([{ metafile }]) => {
+  .then(async ([{ metafile }]) => {
     if (process.env.DEV === 'true') {
       writeFileSync('./dist/esbuild.json', JSON.stringify(metafile, null, 2));
     }
+    // Copy the runtime assets the bundle expects as siblings — vendored ripgrep
+    // binaries, sandbox profiles, bundled skills.
+    //
+    // These used to be copied only by `npm run bundle`, while every rebuild
+    // instruction in this repo (README, PLAN, the release script's inputs) says
+    // `node esbuild.config.js`. So a rebuilt CLI shipped with no
+    // dist/vendor/ripgrep, `getBuiltinRipgrep()` resolved to a path that did not
+    // exist, and the client silently fell back to the JS grep while telling the
+    // user "ripgrep is not available" — reported from a real session 2026-07-25.
+    // A bundle that is not runnable is not a bundle; the copy belongs here.
+    const { copyBundleAssets } = await import('./scripts/copy_bundle_assets.js');
+    copyBundleAssets();
   })
   .catch((error) => {
     console.error('esbuild build failed:', error);

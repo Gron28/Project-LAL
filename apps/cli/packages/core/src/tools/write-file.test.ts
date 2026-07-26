@@ -203,6 +203,14 @@ describe('WriteFileTool', () => {
       expect(() => tool.build(params)).toThrow(`Missing or empty "file_path"`);
     });
 
+    it('should allow arbitrarily large model-authored content', () => {
+      const params = {
+        file_path: path.join(rootDir, 'big.txt'),
+        content: 'x'.repeat(1_000_000),
+      };
+      expect(() => tool.build(params)).not.toThrow();
+    });
+
     it.skipIf(process.platform === 'win32')(
       'should unescape shell-escaped spaces in file_path',
       () => {

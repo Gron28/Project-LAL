@@ -10,7 +10,7 @@ import {
   HookEventName,
   HooksConfigSource,
   HookType,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { HookMatcherDetailStep } from './HookMatcherDetailStep.js';
 import type {
   HookConfigDisplayInfo,

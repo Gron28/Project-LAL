@@ -43,6 +43,7 @@ import {
   CoreToolScheduler,
   convertToFunctionResponse,
   extractToolFilePaths,
+  validationFailureFingerprint,
 } from './coreToolScheduler.js';
 import type { Part, PartListUnion } from '@google/genai';
 import {
@@ -12166,6 +12167,28 @@ describe('CoreToolScheduler validation retry loop detection', () => {
   });
 });
 
+describe('validationFailureFingerprint', () => {
+  it('groups byte-different oversized mutations as one failed strategy', () => {
+    expect(
+      validationFailureFingerprint(
+        'write_file',
+        'Payload too large: content is 27041 characters, which exceeds the 8000-character limit',
+      ),
+    ).toBe(
+      validationFailureFingerprint(
+        'write_file',
+        'Payload too large: content is 19400 characters, which exceeds the 8000-character limit',
+      ),
+    );
+  });
+
+  it('keeps unrelated validation failures distinct', () => {
+    expect(validationFailureFingerprint('edit', 'first failure')).not.toBe(
+      validationFailureFingerprint('edit', 'second failure'),
+    );
+  });
+});
+
 describe('extractToolFilePaths', () => {
   // 'read_file' is the canonical FS tool name and is on the allowlist;
   // most cases below use it so the field-extraction logic itself runs.
@@ -13792,5 +13815,382 @@ describe('CoreToolScheduler prompt_id propagation', () => {
     await vi.waitFor(() => {
       expect(onAllToolCallsComplete).toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * PLAN "Start here" step 1 — loop control must ENFORCE, not advise.
+ *
+ * Both halves are regression-guarded here because both were measured failing on
+ * HTML-001 2026-07-24: the circuit breaker reworded the error at its limit and
+ * the model kept calling anyway (948k tokens / 33 turns in one run against a
+ * ~120k / 9-turn norm), and identical non-mutating calls were only being
+ * suppressed by accident, downstream, by llama.cpp's constant tool_call.id
+ * colliding in the dedupe layer (PLAN 2.1b).
+ */
+describe('CoreToolScheduler loop enforcement', () => {
+  class RepeatProbeTool extends BaseDeclarativeTool<
+    { q: string },
+    ToolResult
+  > {
+    static readonly Name = 'repeatProbeTool';
+    constructor(kind: Kind) {
+      super(
+        RepeatProbeTool.Name,
+        'RepeatProbeTool',
+        'A non-mutating probe used to test the exact-repeat guard',
+        kind,
+        { properties: { q: { type: 'string' } }, required: ['q'], type: 'object' },
+      );
+    }
+    protected createInvocation(params: { q: string }) {
+      return new (class extends BaseToolInvocation<{ q: string }, ToolResult> {
+        getDescription() {
+          return `probe ${this.params.q}`;
+        }
+        override async getDefaultPermission(): Promise<PermissionDecision> {
+          return 'allow';
+        }
+        async execute(): Promise<ToolResult> {
+          return { llmContent: 'probe result', returnDisplay: 'probe result' };
+        }
+      })(params);
+    }
+  }
+
+  class MutateProbeTool extends BaseDeclarativeTool<
+    { path: string },
+    ToolResult
+  > {
+    static readonly Name = 'mutateProbeTool';
+    constructor() {
+      super(
+        MutateProbeTool.Name,
+        'MutateProbeTool',
+        'A mutation used to advance the guard epoch',
+        Kind.Edit,
+        {
+          properties: { path: { type: 'string' } },
+          required: ['path'],
+          type: 'object',
+        },
+      );
+    }
+    protected createInvocation(params: { path: string }) {
+      return new (class extends BaseToolInvocation<
+        { path: string },
+        ToolResult
+      > {
+        getDescription() {
+          return `mutate ${this.params.path}`;
+        }
+        override async getDefaultPermission(): Promise<PermissionDecision> {
+          return 'allow';
+        }
+        async execute(): Promise<ToolResult> {
+          return { llmContent: 'mutated', returnDisplay: 'mutated' };
+        }
+      })(params);
+    }
+  }
+
+  function createEnforcementScheduler(
+    tools: AnyDeclarativeTool[],
+    options: { interactive?: boolean } = {},
+  ) {
+    const onAllToolCallsComplete = vi.fn();
+    const byName = new Map(tools.map((t) => [t.name, t]));
+    const mockToolRegistry = {
+      getTool: (name: string) => byName.get(name),
+      ensureTool: async (name: string) => byName.get(name),
+      getAllToolNames: () => [...byName.keys()],
+      getFunctionDeclarations: () => [],
+      tools: new Map(),
+    } as unknown as ToolRegistry;
+
+    const mockConfig = {
+      getSessionId: () => 'test-session-id',
+      getUsageStatisticsEnabled: () => true,
+      getDebugMode: () => false,
+      getApprovalMode: () => ApprovalMode.DEFAULT,
+      getPermissionsAllow: () => [],
+      getPermissionsDeny: () => undefined,
+      getContentGeneratorConfig: () => ({
+        model: 'test-model',
+        authType: 'gemini',
+      }),
+      getShellExecutionConfig: () => ({
+        terminalWidth: 90,
+        terminalHeight: 30,
+      }),
+      storage: { getProjectTempDir: () => '/tmp' },
+      getTruncateToolOutputThreshold: () =>
+        DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
+      getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
+      getToolRegistry: () => mockToolRegistry,
+      getUseModelRouter: () => false,
+      getGeminiClient: () => null,
+      getChatRecordingService: () => undefined,
+      isInteractive: () => options.interactive ?? true,
+      getExperimentalZedIntegration: () => false,
+      getInputFormat: () => InputFormat.TEXT,
+      getSdkMode: () => false,
+      getMessageBus: vi.fn().mockReturnValue(undefined),
+      getDisableAllHooks: vi.fn().mockReturnValue(true),
+    } as unknown as Config;
+
+    const scheduler = new CoreToolScheduler({
+      config: mockConfig,
+      onAllToolCallsComplete,
+      getPreferredEditor: () => 'vscode',
+      onEditorClose: vi.fn(),
+    });
+    return { scheduler, onAllToolCallsComplete };
+  }
+
+  const lastCalls = (m: Mock): ToolCall[] =>
+    m.mock.calls.at(-1)?.[0] as ToolCall[];
+  const lastError = (m: Mock): string => {
+    const call = lastCalls(m)[0];
+    return call.status === 'error' ? (call.response.error?.message ?? '') : '';
+  };
+
+  it('refuses an identical non-mutating call, and allows it again once a mutation moves the world', async () => {
+    const probe = new RepeatProbeTool(Kind.Execute);
+    const mutate = new MutateProbeTool();
+    const { scheduler, onAllToolCallsComplete } = createEnforcementScheduler([
+      probe,
+      mutate,
+    ]);
+
+    const probeReq = (callId: string) => ({
+      callId,
+      name: RepeatProbeTool.Name,
+      args: { q: 'npm test' },
+      isClientInitiated: false,
+      prompt_id: 'prompt-A',
+    });
+
+    // 1. First call runs for real.
+    await scheduler.schedule([probeReq('p1')], new AbortController().signal);
+    await vi.waitFor(() => expect(onAllToolCallsComplete).toHaveBeenCalledTimes(1));
+    expect(lastCalls(onAllToolCallsComplete)[0].status).toBe('success');
+
+    // 2. Byte-identical repeat with nothing changed in between is refused
+    //    WITHOUT executing — this is the eight-identical-shell-commands case.
+    await scheduler.schedule([probeReq('p2')], new AbortController().signal);
+    await vi.waitFor(() => expect(onAllToolCallsComplete).toHaveBeenCalledTimes(2));
+    expect(lastCalls(onAllToolCallsComplete)[0].status).toBe('error');
+    expect(lastError(onAllToolCallsComplete)).toContain(
+      'already made this exact',
+    );
+    expect(lastError(onAllToolCallsComplete)).toContain('was NOT run');
+
+    // 3. A mutation advances the epoch...
+    await scheduler.schedule(
+      [
+        {
+          callId: 'm1',
+          name: MutateProbeTool.Name,
+          args: { path: '/tmp/x' },
+          isClientInitiated: false,
+          prompt_id: 'prompt-A',
+        },
+      ],
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => expect(onAllToolCallsComplete).toHaveBeenCalledTimes(3));
+
+    // 4. ...so the same probe is legitimate again (edit → test → edit → test
+    //    must keep working; the guard only bites when nothing changed).
+    await scheduler.schedule([probeReq('p3')], new AbortController().signal);
+    await vi.waitFor(() => expect(onAllToolCallsComplete).toHaveBeenCalledTimes(4));
+    expect(lastCalls(onAllToolCallsComplete)[0].status).toBe('success');
+  });
+
+  it('does not repeat-guard control-flow tools (Kind.Other)', async () => {
+    const probe = new RepeatProbeTool(Kind.Other);
+    const { scheduler, onAllToolCallsComplete } = createEnforcementScheduler([
+      probe,
+    ]);
+    const req = (callId: string) => ({
+      callId,
+      name: RepeatProbeTool.Name,
+      args: { q: 'same' },
+      isClientInitiated: false,
+      prompt_id: 'prompt-A',
+    });
+
+    await scheduler.schedule([req('o1')], new AbortController().signal);
+    await vi.waitFor(() => expect(onAllToolCallsComplete).toHaveBeenCalledTimes(1));
+    await scheduler.schedule([req('o2')], new AbortController().signal);
+    await vi.waitFor(() => expect(onAllToolCallsComplete).toHaveBeenCalledTimes(2));
+    expect(lastCalls(onAllToolCallsComplete)[0].status).toBe('success');
+  });
+
+  it('withdraws a tool after the third same-reason denial and refuses later calls without dispatching', async () => {
+    // Non-interactive + an ask-permission tool = the auto-deny path that
+    // classifiedFailureMessage counts. Each call carries a distinct prompt_id
+    // and distinct args so neither exact-repeat guard can account for the
+    // block: only the circuit breaker can.
+    const tool = new TestApprovalTool({
+      getApprovalMode: () => ApprovalMode.DEFAULT,
+    } as unknown as Config);
+    const { scheduler, onAllToolCallsComplete } = createEnforcementScheduler(
+      [tool],
+      { interactive: false },
+    );
+
+    const messages: string[] = [];
+    for (let i = 1; i <= 4; i++) {
+      await scheduler.schedule(
+        [
+          {
+            callId: `deny-${i}`,
+            name: TestApprovalTool.Name,
+            args: { id: `distinct-${i}` },
+            isClientInitiated: false,
+            prompt_id: `prompt-${i}`,
+          },
+        ],
+        new AbortController().signal,
+      );
+      await vi.waitFor(() =>
+        expect(onAllToolCallsComplete).toHaveBeenCalledTimes(i),
+      );
+      expect(lastCalls(onAllToolCallsComplete)[0].status).toBe('error');
+      messages.push(lastError(onAllToolCallsComplete));
+    }
+
+    // Denials 1 and 2 advise. Denial 3 hits the limit and withdraws the tool.
+    expect(messages[0]).not.toContain('withdrawn');
+    expect(messages[1]).not.toContain('withdrawn');
+    expect(messages[2]).toContain('withdrawn');
+
+    // The 4th call never reaches the permission machinery at all: it is
+    // answered by the breaker itself. This is the assertion that would have
+    // failed before enforcement existed — previously call 4 produced another
+    // full "requires permission ... was declined" round trip.
+    expect(messages[3]).toContain('was withdrawn earlier in this session');
+    expect(messages[3]).toContain('This call was NOT run');
+    expect(messages[3]).not.toContain('LAL requires permission');
+  });
+});
+
+/**
+ * PLAN 2.3 — "a typed tool name never reaches a shell".
+ *
+ * Across two Windows sessions the model never emitted native tool calls for the
+ * web tools; it emitted `run_shell_command` with the tool name as the command.
+ * Research mode rescued web_search/web_fetch via routeResearchToolCall, which is
+ * why research appeared to work at all. Outside research mode nothing rescues
+ * them, and nothing ever rescued `agent` — the string reached cmd.exe and came
+ * back as "'agent' is not recognized as an internal or external command", the
+ * report that opened PLAN 2.1.
+ */
+describe('CoreToolScheduler typed-tool-name shell guard', () => {
+  function createShellScheduler(toolNames: string[]) {
+    const onAllToolCallsComplete = vi.fn();
+    const shellTool = {
+      name: 'run_shell_command',
+      displayName: 'Shell',
+      description: 'runs a shell command',
+      kind: Kind.Execute,
+      schema: {},
+      build: () => ({
+        getDescription: () => 'shell',
+        shouldConfirmExecute: async () => false,
+        getDefaultPermission: async () => 'allow',
+        execute: async () => ({ llmContent: 'RAN', returnDisplay: 'RAN' }),
+      }),
+    } as unknown as AnyDeclarativeTool;
+
+    const mockToolRegistry = {
+      getTool: () => shellTool,
+      ensureTool: async () => shellTool,
+      getAllToolNames: () => toolNames,
+      getFunctionDeclarations: () => [],
+      tools: new Map(),
+    } as unknown as ToolRegistry;
+
+    const mockConfig = {
+      getSessionId: () => 'shell-guard-session',
+      getUsageStatisticsEnabled: () => false,
+      getDebugMode: () => false,
+      getApprovalMode: () => ApprovalMode.YOLO,
+      getPermissionsAllow: () => [],
+      getPermissionsDeny: () => undefined,
+      getContentGeneratorConfig: () => ({ model: 'm', authType: 'gemini' }),
+      getShellExecutionConfig: () => ({ terminalWidth: 80, terminalHeight: 24 }),
+      storage: { getProjectTempDir: () => '/tmp' },
+      getTruncateToolOutputThreshold: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
+      getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
+      getToolRegistry: () => mockToolRegistry,
+      getUseModelRouter: () => false,
+      getGeminiClient: () => null,
+      getChatRecordingService: () => undefined,
+      isInteractive: () => true,
+      getExperimentalZedIntegration: () => false,
+      getInputFormat: () => InputFormat.TEXT,
+      getSdkMode: () => false,
+      getMessageBus: vi.fn().mockReturnValue(undefined),
+      getDisableAllHooks: vi.fn().mockReturnValue(true),
+    } as unknown as Config;
+
+    const scheduler = new CoreToolScheduler({
+      config: mockConfig,
+      onAllToolCallsComplete,
+      getPreferredEditor: () => 'vscode',
+      onEditorClose: vi.fn(),
+    });
+    return { scheduler, onAllToolCallsComplete };
+  }
+
+  async function runCommand(command: string, toolNames: string[]) {
+    const { scheduler, onAllToolCallsComplete } = createShellScheduler(toolNames);
+    await scheduler.schedule(
+      [
+        {
+          callId: 'c1',
+          name: 'run_shell_command',
+          args: { command },
+          isClientInitiated: false,
+          prompt_id: 'p1',
+        },
+      ],
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => expect(onAllToolCallsComplete).toHaveBeenCalled());
+    return (onAllToolCallsComplete.mock.calls.at(-1)?.[0] as ToolCall[])[0];
+  }
+
+  const NAMES = ['run_shell_command', 'web_search', 'web_fetch', 'agent', 'edit'];
+
+  it('refuses web_search passed as a shell command', async () => {
+    const call = await runCommand('web_search "best omelette"', NAMES);
+    expect(call.status).toBe('error');
+    if (call.status === 'error') {
+      expect(call.response.error?.message).toContain('is one of your TOOLS');
+      expect(call.response.error?.message).toContain(
+        'not recognized as a command',
+      );
+    }
+  });
+
+  it('refuses agent passed as a shell command — the reported Windows symptom', async () => {
+    const call = await runCommand('agent "do the thing"', NAMES);
+    expect(call.status).toBe('error');
+  });
+
+  it('does not intercept a name that could be a real program', async () => {
+    // `edit` was a real DOS command and has no underscore, so it must NOT be
+    // second-guessed by this guard.
+    const call = await runCommand('edit notes.txt', NAMES);
+    if (call.status === 'error') {
+      // Surface the reason: the guard must not be the one rejecting this.
+      expect(call.response.error?.message ?? '').not.toContain(
+        'is one of your TOOLS',
+      );
+    }
   });
 });

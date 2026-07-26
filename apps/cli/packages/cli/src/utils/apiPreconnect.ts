@@ -21,7 +21,7 @@ import {
   getAllProviderBaseUrls,
   getOrCreateSharedDispatcher,
   redactProxyCredentials,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { fetch as undiciFetch } from 'undici';
 
 const debugLogger = createDebugLogger('PRECONNECT');

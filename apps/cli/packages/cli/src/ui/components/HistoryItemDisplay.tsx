@@ -34,6 +34,7 @@ import {
 } from './messages/StatusMessages.js';
 import { Box, Text } from 'ink';
 import { theme } from '../semantic-colors.js';
+import { messageTimeFromId } from '../utils/messageTime.js';
 import {
   MarkdownDisplay,
   type MarkdownSourceCopyIndexOffsets,
@@ -47,7 +48,7 @@ import { SessionSummaryDisplay } from './SessionSummaryDisplay.js';
 import { Help } from './Help.js';
 import type { SlashCommand } from '../commands/types.js';
 import { ExtensionsList } from './views/ExtensionsList.js';
-import { getMCPServerStatus } from '@qwen-code/qwen-code-core';
+import { getMCPServerStatus } from '@lal/core';
 import { SkillsList } from './views/SkillsList.js';
 import { ToolsList } from './views/ToolsList.js';
 import { McpStatus } from './views/McpStatus.js';
@@ -59,6 +60,7 @@ import { BtwMessage } from './messages/BtwMessage.js';
 import { MemorySavedMessage } from './messages/MemorySavedMessage.js';
 import { DiffStatsDisplay } from './messages/DiffStatsDisplay.js';
 import { GoalStatusMessage } from './messages/GoalStatusMessage.js';
+import { isViewportTerminal } from '../utils/terminal-renderer.js';
 import { useSettings } from '../contexts/SettingsContext.js';
 import { useThoughtExpanded } from '../contexts/ThoughtExpandedContext.js';
 import { useMouseEvents } from '../hooks/useMouseEvents.js';
@@ -123,8 +125,7 @@ const ClickableThinkMessage: React.FC<{
   // stays dormant and native scrollback is preserved — the block still toggles
   // via Alt+T. Advertise "click" in the collapsed hint only in VP, where the
   // click actually does something.
-  const settings = useSettings();
-  const clickable = !!settings.merged.ui?.useTerminalBuffer;
+  const clickable = isViewportTerminal();
   const isActive = !isPending;
 
   useMouseEvents(
@@ -213,6 +214,11 @@ const HistoryItemDisplayComponent: React.FC<HistoryItemDisplayProps> = ({
   thoughtHeadId,
 }) => {
   const marginTop = getHistoryItemMarginTop(item);
+  // Submission time, rendered into the user prefix so it costs no extra row —
+  // the transcript is already short on vertical space (PLAN 7.4). Deliberately
+  // NOT behind a setting: the settings schema is typed and adding an entry is a
+  // separate change; this is one line to revert if unwanted.
+  const userTimeLabel = messageTimeFromId(item.id);
 
   const {
     allExpanded,
@@ -247,7 +253,10 @@ const HistoryItemDisplayComponent: React.FC<HistoryItemDisplayProps> = ({
     >
       {/* Render standard message types */}
       {itemForDisplay.type === 'user' && (
-        <UserMessage text={itemForDisplay.text} />
+        <UserMessage
+          text={itemForDisplay.text}
+          timeLabel={userTimeLabel}
+        />
       )}
       {itemForDisplay.type === 'notification' && (
         <InfoMessage text={itemForDisplay.text} />

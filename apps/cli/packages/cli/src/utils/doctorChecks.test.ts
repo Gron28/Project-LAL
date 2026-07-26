@@ -10,13 +10,13 @@ import { type CommandContext } from '../ui/commands/types.js';
 import { createMockCommandContext } from '../test-utils/mockCommandContext.js';
 import * as systemInfoUtils from './systemInfo.js';
 import * as authModule from '../config/auth.js';
-import * as allProviders from '@qwen-code/qwen-code-core';
+import * as allProviders from '@lal/core';
 
 vi.mock('./systemInfo.js');
 vi.mock('../config/auth.js');
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actual =
-    (await importOriginal()) as typeof import('@qwen-code/qwen-code-core');
+    (await importOriginal()) as typeof import('@lal/core');
   return {
     ...actual,
     findProviderByCredentials: vi.fn(actual.findProviderByCredentials),

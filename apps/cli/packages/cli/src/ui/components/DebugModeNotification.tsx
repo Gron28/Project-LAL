@@ -9,7 +9,7 @@ import {
   Storage,
   isDebugLogFileEnabled,
   isDebugLoggingDegraded,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { useConfig } from '../contexts/ConfigContext.js';
 import { theme } from '../semantic-colors.js';
 

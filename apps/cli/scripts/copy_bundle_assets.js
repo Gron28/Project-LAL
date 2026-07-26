@@ -79,18 +79,6 @@ export function copyBundleAssets({ root = defaultRoot } = {}) {
     );
   }
 
-  // Copy user docs into qc-helper bundled skill so it can reference them at runtime.
-  // The qc-helper skill reads docs from a `docs/` subdirectory relative to its own
-  // directory. In the esbuild bundle this becomes dist/bundled/qc-helper/docs/.
-  const userDocsDir = join(root, 'docs', 'users');
-  if (existsSync(userDocsDir)) {
-    const destDocsDir = join(distDir, 'bundled', 'qc-helper', 'docs');
-    copyRecursiveSync(userDocsDir, destDocsDir);
-    console.log('Copied docs/users/ to dist/bundled/qc-helper/docs/');
-  } else {
-    console.warn(`Warning: User docs directory not found at ${userDocsDir}`);
-  }
-
   // Copy builtin locales so bundled dist/cli.js can load UI translations at runtime.
   // Published packages already include these via prepare-package.js; bundle output
   // should mirror that behavior for local `node dist/cli.js` runs.
@@ -124,29 +112,12 @@ export function copyBundleAssets({ root = defaultRoot } = {}) {
     );
   }
 
-  // Copy the built Web Shell SPA (index.html + assets/) so the bundled
-  // `qwen serve` can serve the browser UI at its root path. The library
-  // build outputs (dist/index.js, dist/types) are for npm consumers and are
-  // intentionally NOT copied. Source only exists after the web-shell
-  // workspace is built (npm run build); when absent (e.g. a --cli-only
-  // build, or bundling without a prior full build) we warn and skip so the
-  // bundle step never fails — the daemon then runs API-only at runtime.
-  const webShellDistDir = join(root, 'packages', 'web-shell', 'dist');
-  const webShellIndexHtml = join(webShellDistDir, 'index.html');
-  const webShellAssetsDir = join(webShellDistDir, 'assets');
-  if (existsSync(webShellIndexHtml) && existsSync(webShellAssetsDir)) {
-    const destWebShellDir = join(distDir, 'web-shell');
-    mkdirSync(destWebShellDir, { recursive: true });
-    copyFileSync(webShellIndexHtml, join(destWebShellDir, 'index.html'));
-    copyRecursiveSync(webShellAssetsDir, join(destWebShellDir, 'assets'));
-    console.log('Copied Web Shell UI to dist/web-shell/');
-  } else {
-    console.warn(
-      `Warning: Web Shell assets not found at ${webShellDistDir}; ` +
-        'dist/web-shell/ will be absent and `qwen serve` runs API-only. ' +
-        'Run a full `npm run build` before bundling to include the UI.',
-    );
-  }
+  // The Web Shell SPA copy used to live here. packages/web-shell does not
+  // exist and is not in the build order, so the copy could never succeed — it
+  // printed "Warning: Web Shell assets not found" on every bundle, twice per
+  // npm install, training everyone to ignore build warnings. `qwen serve` runs
+  // API-only, which is what it already did. Removed 2026-07-25 with the other
+  // absent-workspace references (PLAN 7.2).
 
   console.log('\n✅ All bundle assets copied to dist/');
 }

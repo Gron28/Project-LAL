@@ -10,7 +10,7 @@ import type {
   ToolRegistry,
   ServerGeminiStreamEvent,
   SessionMetrics,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { CLIUserMessage } from './nonInteractive/types.js';
 import {
   executeToolCall,
@@ -29,7 +29,7 @@ import {
   AUTONOMOUS_SENTINEL_DYNAMIC,
   LOOP_SENTINEL_CRON,
   LOOP_SENTINEL_DYNAMIC,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { Part } from '@google/genai';
 import {
   runNonInteractive,
@@ -51,9 +51,9 @@ import {
 
 // Mock core modules
 vi.mock('./ui/hooks/atCommandProcessor.js');
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const original =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
 
   class MockChatRecordingService {
     initialize = vi.fn();
@@ -973,6 +973,37 @@ describe('runNonInteractive', () => {
 
     expect(flush).toHaveBeenCalledOnce();
     expect(finalize).not.toHaveBeenCalled();
+  });
+
+  it('does not block a completed one-shot answer on background memory maintenance', async () => {
+    setupMetricsMock();
+    mockGeminiClient.sendMessageStream.mockReturnValue(
+      createStreamFromEvents([
+        { type: GeminiEventType.Content, value: 'Done' },
+        {
+          type: GeminiEventType.Finished,
+          value: { reason: undefined, usageMetadata: { totalTokenCount: 1 } },
+        },
+      ]),
+    );
+    mockGeminiClient.consumePendingMemoryTaskPromises.mockReturnValue([
+      new Promise<number>(() => undefined),
+    ]);
+
+    const result = await Promise.race([
+      runNonInteractive(
+        mockConfig,
+        mockSettings,
+        'Test input',
+        'prompt-background-memory',
+      ),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('background memory blocked exit')), 100),
+      ),
+    ]);
+
+    expect(result).toBe(0);
+    expect(processStdoutSpy).toHaveBeenCalledWith('Done\n');
   });
 
   it('should handle a single tool call and respond', async () => {

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { AuthType, type AvailableModel } from '@qwen-code/qwen-code-core';
+import { AuthType, type AvailableModel } from '@lal/core';
 import { t } from '../i18n/index.js';
 
 export type VoiceTransport =

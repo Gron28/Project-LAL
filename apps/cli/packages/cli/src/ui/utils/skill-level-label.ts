@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { SkillLevel } from '@qwen-code/qwen-code-core';
+import type { SkillLevel } from '@lal/core';
 import { t } from '../../i18n/index.js';
 
 // Call at render/command time, not module-load, so `/language` switches take effect.

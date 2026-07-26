@@ -5,13 +5,17 @@
  */
 
 import type React from 'react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from 'ink-testing-library';
 import { act } from '@testing-library/react';
 import { Text } from 'ink';
 import { ScrollableList } from './ScrollableList.js';
 import { SCROLL_TO_ITEM_END } from './VirtualizedList.js';
 import { KeypressProvider } from '../../contexts/KeypressContext.js';
+import {
+  setTerminalRenderer,
+  type ResolvedTerminalRenderer,
+} from '../../utils/terminal-renderer.js';
 
 vi.mock('../../utils/measure-element-position.js', () => ({
   measureElementPosition: () => ({ x: 0, y: 0, width: 40, height: 5 }),
@@ -63,6 +67,26 @@ const leftDrag = (col: number, row: number) => `${ESC}[<32;${col};${row}M`;
 const leftRelease = (col: number, row: number) => `${ESC}[<0;${col};${row}m`;
 
 describe('<ScrollableList /> mouse scrolling', () => {
+  // Second gate on this pipeline, after the stdout.isTTY one mocked above:
+  // useMouseEvents also requires isViewportTerminal(), which reads a
+  // module-level renderer defaulting to unset -> falls back to
+  // ui.useTerminalBuffer (false). Without this the wheel/drag events are
+  // never armed and every assertion below silently sees an unscrolled list.
+  beforeEach(() => {
+    setTerminalRenderer('viewport');
+    // Mouse tracking is opt-IN since the selectable-text fix (PLAN 7.4):
+    // ?1002h tracking is what stops the terminal painting a drag-selection, so
+    // wheel/drag are off unless LAL_MOUSE=1. These tests are about the mouse
+    // pipeline, so they have to opt in explicitly — see the default-off test
+    // at the bottom of this file.
+    vi.stubEnv('LAL_MOUSE', '1');
+  });
+
+  afterEach(() => {
+    setTerminalRenderer('static' as ResolvedTerminalRenderer);
+    vi.unstubAllEnvs();
+  });
+
   it('routes wheel SGR events to viewport scroll (window shifts)', async () => {
     // When scrolled to top, item-0 is in the visible window; after enough
     // wheel-down events it should be scrolled out; wheel-up brings it back.
@@ -101,6 +125,44 @@ describe('<ScrollableList /> mouse scrolling', () => {
       for (let i = 0; i < 10; i++) stdin.write(wheelUp(5, 5));
     });
     await flushScrollFrame();
+    expect(lastFrame()).toContain('item-0');
+  });
+
+  it('ignores the wheel by default, so drag-to-select keeps working', async () => {
+    // The inverse of the test above, and the more important of the two: mouse
+    // tracking must stay OFF unless opted in, because ?1002h is what prevents
+    // selecting and copying transcript text (PLAN 7.4, reported twice). An
+    // earlier attempt shipped this as opt-OUT (LAL_NO_MOUSE), which left the
+    // crucial behaviour broken for anyone who had not read the commit. Pinned
+    // here so it cannot silently regress to opt-out again.
+    vi.stubEnv('LAL_MOUSE', '');
+
+    const renderItem = ({ item }: { item: Item }) => <Text>{item.label}</Text>;
+    const Wrapper = () => (
+      <ScrollableList<Item>
+        hasFocus
+        data={makeItems(50)}
+        renderItem={renderItem}
+        estimatedItemHeight={estimatedItemHeight}
+        keyExtractor={keyExtractor}
+        initialScrollIndex={0}
+        containerHeight={5}
+        width={40}
+        showScrollbar={false}
+      />
+    );
+
+    const { stdin, lastFrame, rerender } = render(withKeypress(<Wrapper />));
+    rerender(withKeypress(<Wrapper />));
+    await act(async () => {});
+    expect(lastFrame()).toContain('item-0');
+
+    await act(async () => {
+      for (let i = 0; i < 5; i++) stdin.write(wheelDown(5, 5));
+    });
+    await flushScrollFrame();
+
+    // Unchanged: the wheel was never consumed by the app.
     expect(lastFrame()).toContain('item-0');
   });
 

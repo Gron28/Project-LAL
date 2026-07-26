@@ -9,7 +9,7 @@
  * (`acp-bridge`), the SDK validator/reducer, and the browser consumer.
  *
  * Kept in this DEPENDENCY-FREE module (no `import type` from core, unlike
- * `bridgeTypes.ts`) so the SDK can re-export these from `@qwen-code/sdk/daemon`
+ * `bridgeTypes.ts`) so the SDK can re-export these from `@lal/sdk/daemon`
  * via its build-time devDep on acp-bridge WITHOUT pulling acp-bridge's type
  * graph into the SDK's bundled `.d.ts` — the same lightweight pattern as
  * `mcpTimeouts.ts`.

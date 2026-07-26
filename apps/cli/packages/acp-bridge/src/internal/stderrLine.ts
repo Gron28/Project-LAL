@@ -10,7 +10,7 @@
  * Originally inlined per-file to keep the
  * modules free of any reverse import on `cli/src/utils/stdioHelpers.ts`.
  * Both consumers now live in the
- * **same** `@qwen-code/acp-bridge` package — the cross-package
+ * **same** `@lal/acp-bridge` package — the cross-package
  * justification no longer applies, and a future behavior change
  * (timestamp prefix, log level, structured field) would require
  * touching two identical copies. Extracted here so both `bridge.ts`

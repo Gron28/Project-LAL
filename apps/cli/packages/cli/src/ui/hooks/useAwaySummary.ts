@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { generateSessionRecap, type Config } from '@qwen-code/qwen-code-core';
+import { generateSessionRecap, type Config } from '@lal/core';
 import type {
   HistoryItem,
   HistoryItemAwayRecap,

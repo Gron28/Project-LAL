@@ -10,7 +10,7 @@ import {
   getFilteredQwenModels,
   getOpenAIAvailableModelFromEnv,
 } from './availableModels.js';
-import { AuthType, type Config } from '@qwen-code/qwen-code-core';
+import { AuthType, type Config } from '@lal/core';
 
 describe('availableModels', () => {
   describe('Qwen models', () => {

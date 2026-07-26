@@ -10,7 +10,7 @@ import type {
   SlashCommandRecordPayload,
   NotificationRecordPayload,
   HistoryGap,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type {
   Content,
   GenerateContentResponseUsageMetadata,

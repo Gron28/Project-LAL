@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
-import { allModels, ensureServing, readSettings, stopServing, saveConvo, newId, SERVE_PORT, listProjects, rememberProject } from "@/lib/lab";
+import { activatePublicModel, contextProfileForModel, readSettings, resolvedContextTarget, saveConvo, newId, SERVE_PORT, listProjects, rememberProject, modelRuntimeSettings } from "@/lib/lab";
 import { runToolLoop, type ToolLoopMsg } from "@/lib/toolloop";
 import { makeAgentExecutor, makeOrchestratorExecutor, makePlannerExecutor, makeImplementerExecutor } from "@/lib/agent-tools";
 import { recordSessionCard, maybeRollupDaily } from "@/lib/memory-pipeline";
@@ -51,7 +51,7 @@ Example of one correctly-formatted step:
    Done when: POST /todos with {"title":"..."} returns 201 and the new item appears in todos.json`;
 
 // Prompt-driven pipeline, not hardcoded stages in TypeScript: adjustable by editing
-// this string, no redeploy of application logic. See docs/orchestrator-research.md.
+// this string, no redeploy of application logic.
 const ORCHESTRATOR_PROMPT = `MODE: orchestrator — you are a COORDINATOR, not the worker. Direct work you may do yourself: read files, list directories, and maintain your own notes files. Everything else — research, drafting a plan, critiquing it, implementing, testing — is delegated with spawn_agent.
 
 HARD CONSTRAINTS (this machine):
@@ -80,25 +80,25 @@ DEFAULT PIPELINE (adapt the shape to the task and say when you deviate):
 PROGRESS RULE: after each stage completes, send one short line to the user naming the stage, its outcome, and what's next.`;
 
 const MODES: Record<string, ModePreset> = {
-  default: { label: "default", maxRounds: 24, maxTokens: 8192, ctx: 16384, think: true, temperature: 0, addendum: "", maxResearchCalls: 8 },
+  default: { label: "default", maxRounds: 24, maxTokens: 40960, ctx: 65536, think: true, temperature: 0, addendum: "", maxResearchCalls: 8 },
   "quick-edit": {
-    label: "quick-edit", maxRounds: 8, maxTokens: 8192, ctx: 8192, think: false, temperature: 0,
+    label: "quick-edit", maxRounds: 8, maxTokens: 40960, ctx: 65536, think: false, temperature: 0,
     addendum: "MODE: quick-edit — make the smallest correct change. Read only what the edit requires. Prefer edit_file (a small exact search/replace) over write_file. Verify the change, then stop. Do not use spawn_agent or web_search/web_fetch in this mode — it's for fast, isolated edits only.",
   },
   planning: {
-    label: "planning", maxRounds: 16, maxTokens: 8192, ctx: 16384, think: true, temperature: 0,
+    label: "planning", maxRounds: 16, maxTokens: 40960, ctx: 65536, think: true, temperature: 0,
     addendum: "MODE: planning — explore the codebase read-only; do NOT call write_file, edit_file, or run_shell to modify anything. Your final reply must be a complete implementation plan, plus risks and how to verify the change once implemented. " + CHUNKED_PLAN_INSTRUCTION,
     maxResearchCalls: 6,
   },
   "deep-research": {
-    label: "deep-research", maxRounds: 64, maxTokens: 8192, ctx: 16384, think: true, temperature: 0.3,
+    label: "deep-research", maxRounds: 64, maxTokens: 40960, ctx: 65536, think: true, temperature: 0.3,
     // 6, not 10: a 16K window cannot survive a 10-search floor even with transcript
     // compaction (verified 2026-07-09 — context death at round 12 with no answer).
     minResearchCalls: 6,
     addendum: "MODE: deep-research — this is a genuine deep-research pass, not a quick lookup, and should take real time and many steps, the same way Gemini/GPT/Perplexity's deep-research modes do. Start by decomposing the question into as many distinct sub-questions and angles as it warrants (typically 8-15 for a substantial question) — write them out before searching. Research each one with web_search + web_fetch (a snippet alone is never enough to answer from — open the real page). As you read, generate NEW follow-up sub-questions from gaps, contradictions, or unexpected findings instead of stopping after your first pass; fan independent sub-questions out via spawn_agent when that saves rounds. Track sources as you go. Do not synthesize your final answer until you've covered the breadth you identified — a shallow 1-2 search pass is a WRONG answer in this mode, not merely an incomplete one. Your final reply cites URLs and synthesizes the findings into an answer, noting any disagreements or gaps in what you found.",
   },
   orchestrator: {
-    label: "orchestrator", maxRounds: 120, maxTokens: 8192, ctx: 16384, think: true, temperature: 0.2,
+    label: "orchestrator", maxRounds: 120, maxTokens: 40960, ctx: 65536, think: true, temperature: 0.2,
     defaultModel: "victory6-8b", addendum: ORCHESTRATOR_PROMPT,
   },
 };
@@ -179,17 +179,18 @@ export async function POST(req: NextRequest) {
   const preset = MODES[modeId];
   const model = (b.model as string) || preset.defaultModel || s.model;
   if (!model) return new Response("no model available", { status: 409 });
+  const runtimeSettings = modelRuntimeSettings(model);
   // An explicit client value wins (matches model resolution above); otherwise the
   // mode's own default applies — this is what makes quick-edit's think:false and
   // orchestrator's think:true actually take effect for callers that don't set it.
-  const think = typeof b.think === "boolean" ? b.think : preset.think;
-  const configuredCtx = Number.isFinite(s.options.num_ctx) ? s.options.num_ctx : preset.ctx;
-  // Modes establish a proven minimum. A user-raised context is honored, and a
-  // smaller setting never silently undercuts a mode's system/tools footprint.
-  const ctx = Math.max(2048, preset.ctx, configuredCtx);
-  // -1 means "use the mode default". A positive saved setting is honored but
-  // bounded to avoid a single response reserving an unworkable context window.
-  const maxTokens = s.options.num_predict > 0 ? Math.min(Math.floor(s.options.num_predict), 16384) : preset.maxTokens;
+  const think = typeof b.think === "boolean" ? b.think : runtimeSettings.thinking;
+  // Modes establish a minimum; the host profile supplies the adaptive target.
+  // A legacy saved num_ctx can no longer silently undercut the active runtime.
+  const ctx = Math.max(2048, preset.ctx, resolvedContextTarget(model));
+  // -1 means "use the mode default". A positive saved setting is honored as-is —
+  // toolloop's own per-round budget (ctx - prompt tokens) is what actually keeps
+  // a single request from exceeding the model's context window.
+  const maxTokens = runtimeSettings.maxOutputTokens > 0 ? Math.floor(runtimeSettings.maxOutputTokens) : preset.maxTokens;
 
   const proj = resolveProject(b.project);
   if ("error" in proj) return new Response(proj.error, { status: 400 });
@@ -216,48 +217,24 @@ export async function POST(req: NextRequest) {
       // events. A client that reopens mid-run rebuilds its view as
       // reconstruct(saved[..base]) + replay(events).
       emit({ k: "turn", v: { base: incoming.length } });
-      emit({ k: "model_loading", v: { model, ctx } });
+      emit({ k: "model_loading", v: { model, ctx, contextProfile: contextProfileForModel(model) } });
 
       // Model serving happens INSIDE the run (it can take up to a minute for a big
       // model — the POST reply must not wait on it). A serve failure becomes a run
       // error event, not an HTTP status.
       //
-      // Serve through OUR llama-server whenever the architecture allows (works for
-      // qwen3 incl. Ollama-pulled blobs, read-only): Ollama's OpenAI shim runs at the
-      // model's default 4096 ctx, which truncates the agent's system prompt + tool
-      // results mid-session. Fall back to the shim only for archs b9835 can't load.
-      // llama-b9835's /health endpoint reports ready once the process is up and *a*
-      // computation graph is loaded — it doesn't validate that graph matches the
-      // model's real architecture; for gemma archs "ensureServing" was observed to
-      // succeed while every REAL completion then 500'd. Skip straight to the Ollama
-      // shim for gemma models instead of trusting a health check that can't see this
-      // failure mode.
-      const mi = allModels().find((m) => m.name === model);
-      let baseUrl: string;
-      if (mi?.source === "ollama" && /gemma/i.test(model)) {
-        stopServing();
-        baseUrl = "http://127.0.0.1:11434";
-      } else {
-        try {
-          await ensureServing(model, ctx);
-          baseUrl = `http://127.0.0.1:${SERVE_PORT}`;
-        } catch (e) {
-          if (mi?.source === "ollama") {
-            stopServing();
-            baseUrl = "http://127.0.0.1:11434";
-          } else {
-            throw new Error("serve failed: " + (e as Error).message);
-          }
-        }
-      }
-      emit({ k: "model_ready", v: { model, ctx, backend: baseUrl.includes(":11434") ? "ollama" : "llama.cpp" } });
+      const runtime = await activatePublicModel(model, ctx);
+      const baseUrl = runtime.backend === "ollama" ? "http://127.0.0.1:11434" : `http://127.0.0.1:${SERVE_PORT}`;
+      const runtimeModel = runtime.runtimeProfile;
+      emit({ k: "context_profile", v: runtime.contextProfile });
+      emit({ k: "model_ready", v: { model, ctx: runtime.context, backend: runtime.backend, contextProfile: runtime.contextProfile, runtimeProfile: runtimeModel } });
 
       const approve = async (call: { id: string; name: string; args: Record<string, unknown> }) => {
         if (autoApprove) return true;
         return requestApproval(meta.id, emit, call);
       };
       const fullExec = makeAgentExecutor({
-        workspaceDir: root, baseUrl, model, think,
+        workspaceDir: root, baseUrl, model: runtimeModel, think,
         onEvent: (e) => emit(e), approve, signal,
         orchestratorMode: modeId === "orchestrator",
       });
@@ -290,11 +267,11 @@ export async function POST(req: NextRequest) {
       // toolset is an explicit override elsewhere too.
       const maxResearchCalls = toolset === "planner" ? 5 : preset.maxResearchCalls;
       const finalMessages = await runToolLoop({
-        baseUrl, model, messages, tools: exec.defs, exec,
+        baseUrl, model: runtimeModel, messages, tools: exec.defs, exec,
         maxRounds: preset.maxRounds, maxTokens, think,
-        temperature: s.options.temperature, topP: s.options.top_p, topK: s.options.top_k, repeatPenalty: s.options.repeat_penalty,
+        temperature: runtimeSettings.temperature, topP: runtimeSettings.topP, topK: runtimeSettings.topK, repeatPenalty: runtimeSettings.repeatPenalty,
         minResearchCalls: preset.minResearchCalls, maxResearchCalls,
-        ctx,
+        ctx: runtime.context,
         onEvent: (e) => emit(e),
         onSnapshot: snapshot,
         approve,

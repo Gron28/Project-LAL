@@ -544,6 +544,7 @@ describe('Gemini Client (client.ts)', () => {
       getSdkMode: vi.fn().mockReturnValue(false),
       getIdeModeFeature: vi.fn().mockReturnValue(false),
       getIdeMode: vi.fn().mockReturnValue(true),
+      isInteractive: vi.fn().mockReturnValue(true),
       getDebugMode: vi.fn().mockReturnValue(false),
       getWorkspaceContext: vi.fn().mockReturnValue({
         getDirectories: vi.fn().mockReturnValue(['/test/dir']),
@@ -2346,6 +2347,52 @@ describe('Gemini Client (client.ts)', () => {
 
       expect(stripOrphanedUserEntriesFromHistory).toHaveBeenCalled();
       expect(cacheClear).toHaveBeenCalled();
+    });
+
+    it('nudges verification when a turn wrote a file and never inspected it (PLAN 2.4)', async () => {
+      // The guard that stops "I created the file, it works" when nothing ever
+      // read it back — the shape behind the field-reported hallucinated
+      // verifications.
+      client['chat'] = {
+        addHistory: vi.fn(),
+        getHistory: vi.fn().mockReturnValue([]),
+        getHistoryLength: vi.fn().mockReturnValue(1),
+        stripOrphanedUserEntriesFromHistory: vi.fn().mockReturnValue([]),
+        repairOrphanedToolUseTurns: vi.fn().mockReturnValue({ injected: [] }),
+      } as unknown as GeminiChat;
+      let round = 0;
+      mockTurnRunFn.mockImplementation(() =>
+        (async function* () {
+          if (round++ === 0) {
+            yield {
+              type: GeminiEventType.ToolCallRequest,
+              value: { name: 'write_file', args: {}, callId: 'c1' },
+            };
+          }
+          yield { type: GeminiEventType.Content, value: 'Done — it works.' };
+        })(),
+      );
+
+      const seen: string[] = [];
+      const stream = client.sendMessageStream(
+        [{ text: 'make a page' }],
+        new AbortController().signal,
+        'prompt-verify-guard',
+        { type: SendMessageType.UserQuery },
+      );
+      for await (const ev of stream) {
+        if (ev.type === GeminiEventType.HookSystemMessage) {
+          seen.push(String(ev.value));
+        }
+      }
+
+      expect(
+        seen.some((m) => /never inspected the result/.test(m)),
+      ).toBe(true);
+      // And it must not nudge forever: the budget is spent after one.
+      expect(seen.filter((m) => /never inspected the result/.test(m))).toHaveLength(
+        1,
+      );
     });
 
     it('restores stripped retry entries when session token limit skips send', async () => {
@@ -5411,6 +5458,22 @@ hello
           ]),
         };
         client['chat'] = mockChat as GeminiChat;
+      });
+
+      it('does not start background memory agents for a one-shot session', async () => {
+        vi.spyOn(client['config'], 'isInteractive').mockReturnValue(false);
+
+        await fromAsync(
+          client.sendMessageStream(
+            [{ text: 'one shot' }],
+            new AbortController().signal,
+            'prompt-id-one-shot-memory',
+          ),
+        );
+
+        expect(mockMemoryManager.scheduleSkillReview).not.toHaveBeenCalled();
+        expect(mockMemoryManager.scheduleExtract).not.toHaveBeenCalled();
+        expect(mockMemoryManager.scheduleDream).not.toHaveBeenCalled();
       });
 
       it('should call scheduleSkillReview with correct params on UserQuery', async () => {
@@ -9772,7 +9835,7 @@ function makeMockConfigForShutdown(
     getHookSystem: vi.fn().mockReturnValue(undefined),
     getMaxSessionTurns: vi.fn().mockReturnValue(100),
     getChatRecordingService: vi.fn().mockReturnValue(undefined),
-    isInteractive: vi.fn().mockReturnValue(false),
+    isInteractive: vi.fn().mockReturnValue(true),
     getStdinReader: vi.fn().mockReturnValue(undefined),
   } as unknown as Config;
 }

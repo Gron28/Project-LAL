@@ -38,7 +38,7 @@ describe('standalone-update', () => {
       fs.writeFileSync(
         path.join(standaloneDir, 'manifest.json'),
         JSON.stringify({
-          name: '@qwen-code/qwen-code',
+          name: '@lal/cli',
           target: 'darwin-arm64',
         }),
       );
@@ -56,7 +56,7 @@ describe('standalone-update', () => {
       fs.writeFileSync(
         path.join(standaloneDir, 'manifest.json'),
         JSON.stringify({
-          name: '@qwen-code/qwen-code',
+          name: '@lal/cli',
           target: 'darwin-arm64',
         }),
       );
@@ -75,7 +75,7 @@ describe('standalone-update', () => {
       fs.writeFileSync(
         path.join(standaloneDir, 'manifest.json'),
         JSON.stringify({
-          name: '@qwen-code/qwen-code',
+          name: '@lal/cli',
           target: 'darwin-arm64',
           version: '0.17.0',
         }),
@@ -85,7 +85,7 @@ describe('standalone-update', () => {
       fs.writeFileSync(
         path.join(oldDir, 'manifest.json'),
         JSON.stringify({
-          name: '@qwen-code/qwen-code',
+          name: '@lal/cli',
           target: 'darwin-arm64',
           version: '0.16.2',
         }),
@@ -113,7 +113,7 @@ describe('standalone-update', () => {
 
       fs.writeFileSync(
         path.join(standaloneDir, 'manifest.json'),
-        JSON.stringify({ name: '@qwen-code/qwen-code', version: '0.17.0' }),
+        JSON.stringify({ name: '@lal/cli', version: '0.17.0' }),
       );
       fs.writeFileSync(path.join(oldDir, 'manifest.json'), '{}');
 
@@ -277,7 +277,7 @@ describe('standalone-update', () => {
       fs.writeFileSync(
         path.join(standaloneDir, 'manifest.json'),
         JSON.stringify({
-          name: '@qwen-code/qwen-code',
+          name: '@lal/cli',
           target: 'darwin-arm64',
         }),
       );
@@ -303,7 +303,7 @@ describe('standalone-update', () => {
       fs.writeFileSync(
         path.join(standaloneDir, 'manifest.json'),
         JSON.stringify({
-          name: '@qwen-code/qwen-code',
+          name: '@lal/cli',
           target: 'freebsd-mips',
         }),
       );
@@ -320,7 +320,7 @@ describe('standalone-update', () => {
       fs.writeFileSync(
         path.join(standaloneDir, 'manifest.json'),
         JSON.stringify({
-          name: '@qwen-code/qwen-code',
+          name: '@lal/cli',
           target: 'darwin-arm64',
         }),
       );
@@ -345,7 +345,7 @@ describe('standalone-update', () => {
       fs.writeFileSync(
         path.join(standaloneDir, 'manifest.json'),
         JSON.stringify({
-          name: '@qwen-code/qwen-code',
+          name: '@lal/cli',
           target: 'win-x64',
         }),
       );
@@ -543,11 +543,11 @@ describe('standalone-update', () => {
       fs.mkdirSync(oldDir);
       fs.writeFileSync(
         path.join(standaloneDir, 'manifest.json'),
-        JSON.stringify({ name: '@qwen-code/qwen-code', version: '0.17.0' }),
+        JSON.stringify({ name: '@lal/cli', version: '0.17.0' }),
       );
       fs.writeFileSync(
         path.join(oldDir, 'manifest.json'),
-        JSON.stringify({ name: '@qwen-code/qwen-code', version: '0.16.0' }),
+        JSON.stringify({ name: '@lal/cli', version: '0.16.0' }),
       );
       fs.writeFileSync(lockPath, '999999999');
       const result = rollbackStandaloneUpdate(standaloneDir);

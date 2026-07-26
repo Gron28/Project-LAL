@@ -34,7 +34,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { writeStderrLine } from '../../utils/stdioHelpers.js';
-import { QWEN_SERVER_TOKEN_ENV } from '../channel-worker-env.js';
+import { QWEN_SERVER_TOKEN_ENV } from '../server-token-env.js';
 import { snapshotProcessEnv } from '../env-snapshot.js';
 
 const A2UI_MIME = 'application/a2ui+json';

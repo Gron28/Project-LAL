@@ -6,7 +6,7 @@
 
 import * as childProcess from 'node:child_process';
 import { ProxyAgent } from 'undici';
-import { createDebugLogger } from '@qwen-code/qwen-code-core';
+import { createDebugLogger } from '@lal/core';
 
 const debugLogger = createDebugLogger('GIT');
 

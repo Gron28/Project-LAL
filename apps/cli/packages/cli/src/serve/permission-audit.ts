@@ -32,14 +32,14 @@
 import type {
   PermissionAuditPublisher,
   PermissionDecisionReason,
-} from '@qwen-code/acp-bridge';
+} from '@lal/acp-bridge';
 import type {
   PermissionPolicy,
   PermissionRequestRecord,
   PermissionResolution,
   PermissionVote,
   PermissionVoteOutcome,
-} from '@qwen-code/acp-bridge/permission';
+} from '@lal/acp-bridge/permission';
 
 /**
  * Default capacity of the audit ring. Mirrors the pre-F3

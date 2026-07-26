@@ -9,7 +9,7 @@ import {
   DEFAULT_QWEN_CUSTOM_IGNORE_FILE_NAMES,
   DEFAULT_SENSITIVE_SPAN_ATTRIBUTE_MAX_LENGTH,
   SENSITIVE_SPAN_ATTRIBUTE_MAX_LENGTH_LIMIT,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   getSettingsSchema,
   type SettingDefinition,
@@ -318,6 +318,15 @@ describe('SettingsSchema', () => {
       checkBooleanDefaults(getSettingsSchema() as SettingsSchema);
     });
 
+    it('defaults external usage statistics and automatic updates to disabled', () => {
+      const schema = getSettingsSchema();
+
+      expect(schema.general.properties.enableAutoUpdate.default).toBe(false);
+      expect(
+        schema.privacy.properties.usageStatisticsEnabled.default,
+      ).toBe(false);
+    });
+
     it('should have showInDialog property configured', () => {
       // Check that user-facing settings are marked for dialog display
       expect(getSettingsSchema().general.properties.vimMode.showInDialog).toBe(
@@ -391,8 +400,19 @@ describe('SettingsSchema', () => {
       expect(useTerminalBuffer).toBeDefined();
       expect(useTerminalBuffer.type).toBe('boolean');
       expect(useTerminalBuffer.default).toBe(false);
-      expect(useTerminalBuffer.showInDialog).toBe(true);
+      expect(useTerminalBuffer.showInDialog).toBe(false);
       expect(useTerminalBuffer.requiresRestart).toBe(false);
+    });
+
+    it('defaults the terminal renderer to auto with safe explicit fallbacks', () => {
+      const renderer = getSettingsSchema().ui.properties.terminalRenderer;
+      expect(renderer.type).toBe('enum');
+      expect(renderer.default).toBe('auto');
+      expect(renderer.options?.map((option) => option.value)).toEqual([
+        'auto',
+        'viewport',
+        'static',
+      ]);
     });
 
     it('should expose response tokens/sec as an opt-in UI setting', () => {

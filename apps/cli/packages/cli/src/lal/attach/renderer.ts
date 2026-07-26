@@ -22,7 +22,7 @@
 // dispatch table must never throw on an unrecognized `k`, and it must
 // never crash the process on a malformed payload shape either — every
 // branch reads its payload defensively.
-import { isKnownEventKind } from '@qwen-code/qwen-code-core';
+import { isKnownEventKind } from '@lal/core';
 
 export type RenderSeverity = 'info' | 'success' | 'warning' | 'error' | 'dim';
 
@@ -257,6 +257,28 @@ const HANDLERS: Record<string, Handler> = {
       `older tool output trimmed (${String(asRecord(e.v)['trimmed'] ?? 0)})`,
       'context_compacted',
     ),
+  // How big the window actually is, and how much we trust that number. A
+  // requested context that was never verified is the difference between "128k"
+  // and "128k if the backend agreed", so `verification` is never hidden — a
+  // degraded or failed probe renders as a warning, not as a dim aside.
+  context_profile: (e) => {
+    const v = asRecord(e.v);
+    const verification = String(v['verification'] ?? 'unknown');
+    const effective = v['verifiedTokens'] ?? v['activeTokens'] ?? v['requestedTokens'];
+    const max = v['modelMaxTokens'];
+    const parts = [
+      `context: ${String(effective ?? '?')}${max ? `/${String(max)}` : ''} tokens`,
+      `via ${String(v['source'] ?? '?')}`,
+      verification,
+    ];
+    if (v['gpuOffload']) parts.push(`gpu ${String(v['gpuOffload'])}`);
+    if (v['reason']) parts.push(String(v['reason']));
+    return line(
+      verification === 'degraded' || verification === 'failed' ? 'error' : 'dim',
+      parts.join(' · '),
+      'context_profile',
+    );
+  },
   phase: (e) =>
     line('info', `phase: ${String(asRecord(e.v)['name'] ?? '?')}`, 'phase'),
   roles: (e) => {

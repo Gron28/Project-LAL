@@ -5,8 +5,8 @@
  */
 
 import type { Part } from '@google/genai';
-import { ToolNames } from '@qwen-code/qwen-code-core';
-import type { ChatRecord, Kind } from '@qwen-code/qwen-code-core';
+import { ToolNames } from '@lal/core';
+import type { ChatRecord, Kind } from '@lal/core';
 import { buildTruncatedDiffPreviewText } from '../../../utils/truncatedDiffPreview.js';
 import { getToolResultCallId } from '../../../utils/chat-record-tool-call-id.js';
 import type {

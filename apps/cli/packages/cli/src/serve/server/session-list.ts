@@ -9,7 +9,7 @@ import {
   SessionOrganizationError,
   type SessionArchiveState,
   type SessionGroupPresetColor,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type {
   AcpSessionBridge,
   BridgeSessionSummary,

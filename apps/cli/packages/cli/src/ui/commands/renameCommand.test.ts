@@ -11,9 +11,9 @@ import { createMockCommandContext } from '../../test-utils/mockCommandContext.js
 
 const tryGenerateSessionTitleMock = vi.fn();
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const original =
-    (await importOriginal()) as typeof import('@qwen-code/qwen-code-core');
+    (await importOriginal()) as typeof import('@lal/core');
   return {
     ...original,
     tryGenerateSessionTitle: (...args: unknown[]) =>

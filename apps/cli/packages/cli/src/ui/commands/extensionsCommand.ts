@@ -20,7 +20,7 @@ import {
   redactUrlCredentials,
   getExtensionDisplayName,
   getExtensionDescription,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 const debugLogger = createDebugLogger('EXTENSIONS_COMMAND');
 const EXTENSION_EXPLORE_URL = {

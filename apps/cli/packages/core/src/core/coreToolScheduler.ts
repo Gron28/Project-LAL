@@ -107,6 +107,10 @@ import {
 } from '../utils/generateContentResponseUtilities.js';
 import type { ModifyContext } from '../tools/modifiable-tool.js';
 import {
+  formatArtifactValidation,
+  validateArtifact,
+} from '../services/artifact-validation-service.js';
+import {
   isModifiableDeclarativeTool,
   modifyWithEditor,
 } from '../tools/modifiable-tool.js';
@@ -142,6 +146,11 @@ import {
 } from '../telemetry/index.js';
 import { safeJsonStringify } from '../utils/safeJsonStringify.js';
 import { acquireSleepInhibitor } from '../services/sleepInhibitor.js';
+import {
+  isResearchTurnActive,
+  shellReachesNetworkForResearch,
+  shellResearchRefusal,
+} from '../services/research-controller.js';
 
 const debugLogger = createDebugLogger('TOOL_SCHEDULER');
 
@@ -1169,6 +1178,147 @@ function partitionToolCalls(calls: ScheduledToolCall[]): ToolBatch[] {
   }, []);
 }
 
+/** Collapse byte-different retries of the same known-bad operation into one
+ * circuit-breaker key. Local models commonly vary only the generated payload
+ * length after an oversized mutation rejection, defeating exact error-string
+ * counters while repeating the identical full-file strategy. */
+export function validationFailureFingerprint(
+  toolName: string,
+  errorMessage: string,
+): string {
+  const canonicalName = canonicalToolName(toolName);
+  if (
+    /payload too large|exceeds the \d[\d,]*-character limit/i.test(errorMessage)
+  ) {
+    return `${toolName}:strategy:file-mutation:oversized-payload`;
+  }
+  if (
+    /output.{0,24}truncat|response was truncated|tool call.{0,24}truncat/i.test(
+      errorMessage,
+    )
+  ) {
+    return `${toolName}:strategy:${canonicalName}:output-truncated`;
+  }
+  if (/path is a directory, not a file/i.test(errorMessage)) {
+    return `${toolName}:strategy:${canonicalName}:directory-as-file`;
+  }
+  return `${toolName}:${errorMessage}`;
+}
+
+/**
+ * After this many failures of the same tool for the same reason, stop treating
+ * the next attempt as worth making. Two is too eager (a genuine transient
+ * deserves one retry); five is too many turns of waste.
+ */
+const REPEATED_FAILURE_LIMIT = 3;
+
+/**
+ * Tool names that must never be executed as a shell command, even though the
+ * model keeps emitting them that way (PLAN 2.3: "a typed tool name never reaches
+ * a shell").
+ *
+ * Observed across two Windows sessions: the model does not emit native tool calls
+ * for these at all — it emits `run_shell_command` with the tool name as the
+ * command string. In research mode `routeResearchToolCall` rescues web_search and
+ * web_fetch by rerouting them (research-controller.ts), which is why research
+ * appeared to work. Nothing rescues them outside research mode, and nothing ever
+ * rescued the others: the string reaches cmd.exe and comes back as
+ * "'agent' is not recognized as an internal or external command" — the exact
+ * Windows report that opened PLAN 2.1.
+ *
+ * Restricted to names that cannot plausibly be a real executable, so a genuine
+ * `edit` or `page` binary is never intercepted. Underscored names are ours by
+ * construction; `agent` is included because it is the reported symptom.
+ */
+function isTypedToolNameForbiddenInShell(
+  token: string,
+  knownToolNames: readonly string[],
+): boolean {
+  const name = token.toLowerCase();
+  if (!knownToolNames.some((known) => known.toLowerCase() === name)) {
+    return false;
+  }
+  return name.includes('_') || name === 'agent';
+}
+
+/** First bare token of a shell command line, ignoring leading whitespace. */
+function firstShellToken(command: string): string {
+  return command.trim().split(/[\s;&|]/, 1)[0] ?? '';
+}
+
+/**
+ * A typed tool name used as an executable somewhere INSIDE a script body.
+ *
+ * The first-token check above catches `web_search "peppers"`. It does not catch
+ * what a model actually does when it decides a tool must be a program:
+ *
+ *   python3 << 'EOF'
+ *   subprocess.run(['web_search', query], capture_output=True)
+ *   EOF
+ *
+ * observed verbatim on 2026-07-25. The first token is `python3`, so the guard
+ * passed it through, the subprocess failed with ENOENT inside python, and the
+ * model concluded the tool did not work.
+ *
+ * Deliberately narrow: only names that appear in a recognised
+ * process-spawning position, and only names that cannot plausibly be a real
+ * executable (same rule as the first-token guard).
+ */
+function typedToolNameSpawnedInScript(
+  command: string,
+  knownToolNames: readonly string[],
+): string | null {
+  const candidates = knownToolNames.filter(
+    (name) => name.includes('_') || name.toLowerCase() === 'agent',
+  );
+  if (candidates.length === 0) return null;
+  const alternation = candidates
+    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  const spawnPatterns = [
+    // subprocess.run(['NAME', ...]) / Popen(("NAME" ...)) / check_output(['NAME'
+    new RegExp(
+      `(?:subprocess\\.)?(?:run|Popen|call|check_output|check_call)\\s*\\(\\s*[\\[('"\`]+\\s*['"\`](${alternation})['"\`]`,
+    ),
+    // os.system("NAME ...") / execSync('NAME ...') / spawnSync("NAME"
+    new RegExp(
+      `(?:os\\.system|exec|execSync|execFile|execFileSync|spawn|spawnSync|system)\\s*\\(\\s*['"\`](${alternation})[\\s'"\`]`,
+    ),
+    // $(NAME ...) or \`NAME ...\` command substitution
+    new RegExp(`[$]\\(\\s*(${alternation})[\\s)]`),
+  ];
+  for (const pattern of spawnPatterns) {
+    const match = pattern.exec(command);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+/**
+ * Kinds whose identical re-run cannot produce information the previous run did
+ * not, and so are covered by the exact-repeat guard (`executedCallSigs`).
+ *
+ * `Kind.Other` is excluded on purpose: it holds control-flow tools (todo_write,
+ * ask_user_question, exit_plan_mode) whose repeat semantics are not ours to
+ * judge. `Kind.Edit` / `Delete` / `Move` have their own guard
+ * (`executedMutationSigs`).
+ *
+ * Built lazily rather than as a module constant: `tools.ts` imports back into
+ * this module, so `Kind` is still undefined while this module's top level runs.
+ */
+let repeatGuardedKinds: ReadonlySet<Kind> | undefined;
+function isRepeatGuardedKind(kind: Kind | undefined): boolean {
+  if (kind === undefined) return false;
+  repeatGuardedKinds ??= new Set<Kind>([
+    Kind.Read,
+    Kind.Search,
+    Kind.Fetch,
+    Kind.Execute,
+    Kind.Agent,
+  ]);
+  return repeatGuardedKinds.has(kind);
+}
+
 export class CoreToolScheduler {
   private toolRegistry: ToolRegistry;
   private toolCalls: ToolCall[] = [];
@@ -1182,6 +1332,57 @@ export class CoreToolScheduler {
   private isFinalizingToolCalls = false;
   private isScheduling = false;
   private validationRetryCounts = new Map<string, number>();
+  // Circuit breaker (PLAN 4.1). Counts failures per (tool, error kind) for the
+  // life of the session. A tool that keeps failing for the SAME reason is not
+  // going to start working: the fix is to classify the cause and change
+  // strategy, not to retry. Measured on HTML-001 before this existed: one run
+  // burned 402k tokens on 16 consecutive run_shell_command permission denials,
+  // each a slightly reworded command that could never have been permitted.
+  private repeatedFailureCounts = new Map<string, number>();
+  // Tools the circuit breaker has taken out of service for the rest of the
+  // session, canonical name → guidance to repeat on every further attempt.
+  //
+  // The breaker used to only *reword* the error at the limit and hope the model
+  // complied. It does not: measured on HTML-001 2026-07-24, a run that hit the
+  // terminal "it is unavailable — stop calling it" message went on to call the
+  // same tool five more times, ending at 948k tokens and 33 turns against a
+  // 106-139k / 8-10 turn norm. Advice is not enforcement. An entry here makes
+  // `_schedule` answer the call itself, without dispatching it.
+  private refusedTools = new Map<string, string>();
+
+  /**
+   * Build a tool-failure message that changes with repetition instead of
+   * repeating itself (PLAN 4.1, "classify the failure and change strategy
+   * instead of blind retry").
+   *
+   * The first occurrences explain the cause and name the alternative. Once the
+   * same (tool, kind) pair has failed REPEATED_FAILURE_LIMIT times the tool is
+   * withdrawn for the rest of the session — see `refusedTools`. Kinds passed
+   * here are policy-level facts about the tool (a declined permission is about
+   * the tool, not the arguments), so withdrawing the whole tool is right;
+   * argument-level mistakes are counted separately by
+   * `recordRetryableToolError`, which is scoped per error fingerprint.
+   */
+  private classifiedFailureMessage(
+    toolName: string,
+    kind: string,
+    cause: string,
+    guidance: string,
+  ): string {
+    const key = `${toolName}:${kind}`;
+    const count = (this.repeatedFailureCounts.get(key) ?? 0) + 1;
+    this.repeatedFailureCounts.set(key, count);
+    if (count < REPEATED_FAILURE_LIMIT) {
+      return `${cause}\n\n${guidance}`;
+    }
+    this.refusedTools.set(canonicalToolName(toolName), guidance);
+    return (
+      `${cause}\n\n"${toolName}" has now failed ${count} times in this session for the same reason. ` +
+      `It has been withdrawn: further calls to it will be refused without running. ${guidance}\n\n` +
+      `If the task genuinely cannot be completed without it, say so and stop, rather than continuing to retry.`
+    );
+  }
+
   // Exact-repeat guard for deterministic workspace mutations (Kind.Edit:
   // edit/write_file/notebook_edit). An identical (tool, args) mutation re-run
   // can never produce new information — small local models get stuck
@@ -1194,6 +1395,26 @@ export class CoreToolScheduler {
   // kill switch ends the whole turn.
   private executedMutationSigs = new Set<string>();
   private mutationSigsPromptId: string | undefined;
+
+  // Exact-repeat guard, sibling of the mutation one above, for the tools that
+  // do NOT mutate the workspace: reads, searches, fetches, shell commands and
+  // subagent launches. Same failure, different half of the tool surface — one
+  // HTML-001 run issued the identical `run_shell_command` eight times, another
+  // six, another five (PLAN 2.1b). Those repeats were being silently swallowed
+  // by llama.cpp's constant tool_call.id colliding in the dedupe layer; the
+  // moment that upstream bug is repaired every one of them executes, so this
+  // guard has to exist before the id repair lands.
+  //
+  // A repeat is only meaningless if the world has not changed underneath it, so
+  // signatures are stamped with `mutationEpoch`, which advances every time a
+  // workspace mutation is dispatched. `edit → npm test → edit → npm test` is
+  // two different epochs and both run; `npm test → npm test` with nothing in
+  // between is refused. The epoch deliberately does NOT advance on Kind.Execute
+  // — otherwise a shell command would clear its own repeat, which is the exact
+  // loop being closed. Cost: a genuine poll-until-ready shell loop gets refused
+  // and has to vary its command. That is the trade, and it is worth it.
+  private executedCallSigs = new Set<string>();
+  private mutationEpoch = 0;
   private autoModeFallbackCallIds = new Set<string>();
   // Tool span lifecycle now spans validating → awaiting_approval → executing
   // → terminal, so we hold the span across method boundaries by callId.
@@ -1948,7 +2169,7 @@ export class CoreToolScheduler {
     toolName: string,
     errorMessage: string,
   ): number {
-    const errorKey = `${toolName}:${errorMessage}`;
+    const errorKey = validationFailureFingerprint(toolName, errorMessage);
     const count = (this.validationRetryCounts.get(errorKey) ?? 0) + 1;
     for (const key of this.validationRetryCounts.keys()) {
       if (key.startsWith(`${toolName}:`) && key !== errorKey) {
@@ -2062,6 +2283,91 @@ export class CoreToolScheduler {
           continue;
         }
 
+        // Circuit breaker, enforcing half. The tool has already failed
+        // REPEATED_FAILURE_LIMIT times this session for the same policy reason;
+        // answer the call here instead of walking it through validation,
+        // confirmation and dispatch to arrive at the identical wall again. This
+        // is deliberately before the truncation and invocation checks so a
+        // withdrawn tool costs zero side effects and zero GPU.
+        const refusalGuidance = this.refusedTools.get(canonicalName);
+        if (refusalGuidance !== undefined) {
+          newToolCalls.push({
+            status: 'error',
+            request: reqInfo,
+            tool: toolInstance,
+            response: createErrorResponse(
+              reqInfo,
+              new Error(
+                `"${reqInfo.name}" was withdrawn earlier in this session after failing ${REPEATED_FAILURE_LIMIT} times for the same reason. This call was NOT run and no further call to it will be. ${refusalGuidance}\n\n` +
+                  `Do not call "${reqInfo.name}" again. Either finish the task with the tools that do work, or state plainly what you cannot do and stop.`,
+              ),
+              ToolErrorType.EXECUTION_DENIED,
+            ),
+            durationMs: 0,
+          });
+          continue;
+        }
+
+        // PLAN 2.3 — a typed tool name never reaches a shell.
+        if (toolInstance.kind === Kind.Execute) {
+          const command =
+            typeof (reqInfo.args as Record<string, unknown> | undefined)?.[
+              'command'
+            ] === 'string'
+              ? ((reqInfo.args as Record<string, string>)['command'] ?? '')
+              : '';
+          // Optional call: not every ToolRegistry shape in the wild (or in
+          // tests) implements this, and a missing enumeration must degrade to
+          // "cannot tell, let it through" rather than throwing and taking every
+          // shell command down with it.
+          const knownToolNames = this.toolRegistry.getAllToolNames?.() ?? [];
+          const token = firstShellToken(command);
+          const spawnedTool =
+            isTypedToolNameForbiddenInShell(token, knownToolNames)
+              ? token
+              : typedToolNameSpawnedInScript(command, knownToolNames);
+          // A research turn's web access must be observable, or the evidence
+          // gate is judging a run it cannot see (diagnosed 2026-07-25 — see
+          // shellReachesNetworkForResearch).
+          if (isResearchTurnActive()) {
+            const network = shellReachesNetworkForResearch(
+              reqInfo.args as Record<string, unknown>,
+            );
+            if (network.detected) {
+              newToolCalls.push({
+                status: 'error',
+                request: reqInfo,
+                tool: toolInstance,
+                response: createErrorResponse(
+                  reqInfo,
+                  new Error(shellResearchRefusal(network.what)),
+                  ToolErrorType.INVALID_TOOL_PARAMS,
+                ),
+                durationMs: 0,
+              });
+              continue;
+            }
+          }
+          if (token && spawnedTool) {
+            newToolCalls.push({
+              status: 'error',
+              request: reqInfo,
+              tool: toolInstance,
+              response: createErrorResponse(
+                reqInfo,
+                new Error(
+                  `"${spawnedTool}" is one of your TOOLS, not a shell program, so this was NOT run — a shell would only answer "'${spawnedTool}' is not recognized as a command". ` +
+                    `Call ${spawnedTool} directly as a tool call with its own arguments, instead of passing it to ${reqInfo.name}` +
+                    `${spawnedTool === token ? '' : ' (it was being spawned from inside the script body)'}.`,
+                ),
+                ToolErrorType.INVALID_TOOL_PARAMS,
+              ),
+              durationMs: 0,
+            });
+            continue;
+          }
+        }
+
         // Reject file-modifying calls when truncated to prevent
         // writing incomplete content, even if params failed schema validation.
         if (reqInfo.wasOutputTruncated && toolInstance.kind === Kind.Edit) {
@@ -2074,9 +2380,7 @@ export class CoreToolScheduler {
               `${TRUNCATION_EDIT_REJECTION}${TRUNCATION_RETRY_LOOP_DIRECTIVE} Increase the response token ceiling with /tokens, then retry with a smaller write/edit.`,
             );
           }
-          const truncationError = new Error(
-            TRUNCATION_EDIT_REJECTION,
-          );
+          const truncationError = new Error(TRUNCATION_EDIT_REJECTION);
           newToolCalls.push({
             status: 'error',
             request: reqInfo,
@@ -2114,7 +2418,9 @@ export class CoreToolScheduler {
 
           const finalError =
             count >= VALIDATION_RETRY_LOOP_THRESHOLD
-              ? new Error(`${invocationOrError.message}${RETRY_LOOP_STOP_DIRECTIVE}`)
+              ? new Error(
+                  `${invocationOrError.message}${RETRY_LOOP_STOP_DIRECTIVE}`,
+                )
               : displayError;
           if (count >= VALIDATION_RETRY_LOOP_THRESHOLD) throw finalError;
 
@@ -2140,12 +2446,14 @@ export class CoreToolScheduler {
         // so answer with a corrective error the model can act on instead of
         // silently executing a no-op (or letting the rut run into the
         // 5-identical-calls kill switch).
+        const argsJson = JSON.stringify(reqInfo.args ?? {});
+        if (reqInfo.prompt_id !== this.mutationSigsPromptId) {
+          this.mutationSigsPromptId = reqInfo.prompt_id;
+          this.executedMutationSigs.clear();
+          this.executedCallSigs.clear();
+        }
         if (toolInstance.kind === Kind.Edit) {
-          if (reqInfo.prompt_id !== this.mutationSigsPromptId) {
-            this.mutationSigsPromptId = reqInfo.prompt_id;
-            this.executedMutationSigs.clear();
-          }
-          const mutationSig = `${canonicalName}:${JSON.stringify(reqInfo.args ?? {})}`;
+          const mutationSig = `${canonicalName}:${argsJson}`;
           if (this.executedMutationSigs.has(mutationSig)) {
             newToolCalls.push({
               status: 'error',
@@ -2155,6 +2463,27 @@ export class CoreToolScheduler {
                 reqInfo,
                 new Error(
                   `You already made this exact ${reqInfo.name} call in this task — the file already reflects it (or it deterministically failed), so repeating it cannot change anything. The call was NOT run again. Read the file to see its actual current state, then take a different action: a different edit, or rewrite the file with write_file.`,
+                ),
+                ToolErrorType.EXECUTION_FAILED,
+              ),
+              durationMs: 0,
+            });
+            continue;
+          }
+        } else if (isRepeatGuardedKind(toolInstance.kind)) {
+          // Same rule for the non-mutating surface. Scoped to the current
+          // mutation epoch, so this only fires when nothing has changed since
+          // the identical call was dispatched.
+          const callSig = `${this.mutationEpoch}:${canonicalName}:${argsJson}`;
+          if (this.executedCallSigs.has(callSig)) {
+            newToolCalls.push({
+              status: 'error',
+              request: reqInfo,
+              tool: toolInstance,
+              response: createErrorResponse(
+                reqInfo,
+                new Error(
+                  `You already made this exact ${reqInfo.name} call in this task, with identical arguments, and nothing has changed on disk since. Running it again would return exactly what it returned before, so it was NOT run. Scroll back and use that earlier result. If it did not tell you what you needed, the answer is a different call — different arguments, or a different tool — not the same one again.`,
                 ),
                 ToolErrorType.EXECUTION_FAILED,
               ),
@@ -2551,7 +2880,12 @@ export class CoreToolScheduler {
               this.config.getInputFormat() !== InputFormat.STREAM_JSON;
 
             if (isNonInteractiveDeny) {
-              const errorMessage = `LAL requires permission to use "${reqInfo.name}", but that permission was declined (non-interactive mode cannot prompt for confirmation).`;
+              const errorMessage = this.classifiedFailureMessage(
+                reqInfo.name,
+                'permission-denied',
+                `LAL requires permission to use "${reqInfo.name}", but that permission was declined: this session is non-interactive and the active approval mode does not cover this tool.`,
+                `Do not retry "${reqInfo.name}" with different arguments — the denial is a policy decision about the tool, not about what you asked it to do. Achieve the goal with a permitted tool instead (read_file, glob, grep_search, list_directory all remain available), or state plainly that the task needs a session started with a wider --approval-mode.`,
+              );
               this.setStatusInternal(
                 reqInfo.callId,
                 'error',
@@ -3311,16 +3645,27 @@ export class CoreToolScheduler {
     const scheduledCall = toolCall;
     const { callId, name: toolName } = scheduledCall.request;
 
-    // Record dispatched mutations for the exact-repeat guard in _schedule.
+    // Record dispatched calls for the two exact-repeat guards in _schedule.
     // Recorded here (not at schedule time) so calls the user denies or
     // cancels never count as "already made".
+    const dispatchedKind = scheduledCall.tool?.kind;
+    if (scheduledCall.request.prompt_id === this.mutationSigsPromptId) {
+      const sig = `${canonicalToolName(toolName)}:${JSON.stringify(scheduledCall.request.args ?? {})}`;
+      if (dispatchedKind === Kind.Edit) {
+        this.executedMutationSigs.add(sig);
+      } else if (isRepeatGuardedKind(dispatchedKind)) {
+        this.executedCallSigs.add(`${this.mutationEpoch}:${sig}`);
+      }
+    }
+    // Advance the epoch after recording, so a mutation does not clear its own
+    // signature, and every read/search/fetch/shell result captured before it is
+    // treated as stale and may legitimately be taken again.
     if (
-      scheduledCall.tool?.kind === Kind.Edit &&
-      scheduledCall.request.prompt_id === this.mutationSigsPromptId
+      dispatchedKind === Kind.Edit ||
+      dispatchedKind === Kind.Delete ||
+      dispatchedKind === Kind.Move
     ) {
-      this.executedMutationSigs.add(
-        `${canonicalToolName(toolName)}:${JSON.stringify(scheduledCall.request.args ?? {})}`,
-      );
+      this.mutationEpoch += 1;
     }
 
     // The tool span is opened in `_schedule` so it covers validating →
@@ -4001,6 +4346,37 @@ export class CoreToolScheduler {
         const candidatePaths = Array.from(
           new Set([...inputPaths.map((p) => unescapePath(p)), ...resultPaths]),
         );
+
+        // A successful mutation proves only that bytes changed. Run the cheap
+        // deterministic artifact gate immediately so malformed JSON/JS/HTML,
+        // conflict markers, and broken DOM references cannot be narrated as a
+        // completed implementation. The report is part of the tool outcome the
+        // model and user see; project tests/browser acceptance remain separate.
+        if (
+          canonicalName === ToolNames.WRITE_FILE ||
+          canonicalName === ToolNames.EDIT
+        ) {
+          for (const candidatePath of candidatePaths.slice(0, 8)) {
+            try {
+              const report = validateArtifact(candidatePath);
+              const instruction =
+                report.status === 'failed'
+                  ? '\nFatal validation failed. Repair this artifact before adding features or claiming completion.'
+                  : report.status === 'partial'
+                    ? '\nMutation sanity passed; no language-specific parser ran. A project check is still required before completion.'
+                    : '\nCheap artifact validation passed. Project checks and runtime acceptance are still required before completion.';
+              content = appendAdditionalContext(
+                content,
+                `${formatArtifactValidation(report)}${instruction}`,
+              );
+            } catch (error) {
+              content = appendAdditionalContext(
+                content,
+                `[artifact_validation status=partial artifact=${JSON.stringify(candidatePath)}]\nValidator could not run: ${error instanceof Error ? error.message : String(error)}\n[/artifact_validation]\nValidation unavailable is not completion evidence.`,
+              );
+            }
+          }
+        }
 
         if (candidatePaths.length > 0) {
           const rulesRegistry = this.config.getConditionalRulesRegistry();

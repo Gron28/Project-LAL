@@ -10,7 +10,7 @@ import {
   type SlashCommandActionReturn,
   CommandKind,
 } from './types.js';
-import { generateSessionRecap } from '@qwen-code/qwen-code-core';
+import { generateSessionRecap } from '@lal/core';
 import type { HistoryItemAwayRecap } from '../types.js';
 import { t } from '../../i18n/index.js';
 

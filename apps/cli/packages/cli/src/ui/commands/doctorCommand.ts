@@ -27,7 +27,7 @@ import { t } from '../../i18n/index.js';
 import {
   collectMemoryDiagnostics,
   type MemoryDiagnostics,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { formatMemoryUsage } from '../utils/formatters.js';
 
 const MEMORY_SUBCOMMAND = 'memory';

@@ -19,6 +19,8 @@
  * monitor.
  */
 
+import { applyLalManagedRuntimePolicy } from './lal-runtime-policy.mjs';
+
 function hasFlag(flag, alias) {
   for (const arg of process.argv.slice(2)) {
     if (arg === '--') {
@@ -33,8 +35,9 @@ function hasFlag(flag, alias) {
 
 // LAL owns distribution and updates. Prevent inherited startup version checks
 // from contacting the upstream npm/GitHub channel; `lal update` uses the local
-// Project-LAL release contract instead.
-process.env.LAL_MANAGED ??= '1';
+// Project-LAL release contract instead. This intentionally overrides a caller
+// supplied value so the supported entrypoint cannot be downgraded.
+applyLalManagedRuntimePolicy(process.env);
 
 function isInProcessFastPath() {
   const first = process.argv[2];

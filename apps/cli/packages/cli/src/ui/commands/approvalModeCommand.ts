@@ -12,11 +12,11 @@ import type {
 } from './types.js';
 import { CommandKind } from './types.js';
 import { t } from '../../i18n/index.js';
-import type { ApprovalMode } from '@qwen-code/qwen-code-core';
+import type { ApprovalMode } from '@lal/core';
 import {
   APPROVAL_MODES,
   ApprovalMode as ApprovalModeEnum,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { emitAutoModeEntryNotices } from '../hooks/useAutoAcceptIndicator.js';
 import { formatApprovalModeName } from '../utils/approvalModeDisplay.js';
 
@@ -35,8 +35,16 @@ function parseApprovalModeArg(arg: string): ApprovalMode | undefined {
 
 export const approvalModeCommand: SlashCommand = {
   name: 'approval-mode',
+  // Shift+Tab is the documented way to cycle approval modes and it is
+  // UNREACHABLE on a phone keyboard — reported 2026-07-25 from Termux over ssh,
+  // where there is no Tab key at all. `/approval-mode yolo` already worked, but
+  // nothing told the user it existed. These aliases make the mode reachable by
+  // typing, which is the only input a phone reliably has.
+  altNames: ['approval', 'permissions-mode', 'yolo', 'auto-edit'],
   get description() {
-    return t('View or change the approval mode for tool usage');
+    return t(
+      'View or change the approval mode for tool usage (e.g. /approval-mode yolo) — works without Shift+Tab',
+    );
   },
   argumentHint: '<mode>',
   kind: CommandKind.BUILT_IN,
@@ -45,11 +53,23 @@ export const approvalModeCommand: SlashCommand = {
     context: CommandContext,
     args: string,
   ): Promise<OpenDialogActionReturn | MessageActionReturn> => {
-    const mode = parseApprovalModeArg(args);
+    // `/yolo` and `/auto-edit` name a mode directly, so an empty argument means
+    // "set that mode" rather than "open the picker". Typing four characters is a
+    // very different cost on a phone than navigating a dialog.
+    // `invocation.name` is the command's PRIMARY name, so it reads
+    // "approval-mode" even when the user typed "/yolo". The alias the user
+    // actually typed is only recoverable from the raw input.
+    const invokedAs = context.invocation?.raw
+      ?.trim()
+      .replace(/^\//, '')
+      .split(/\s+/)[0]
+      ?.toLowerCase();
+    const aliasMode = invokedAs ? parseApprovalModeArg(invokedAs) : undefined;
+    const mode = parseApprovalModeArg(args) ?? (args.trim() ? undefined : aliasMode);
 
     // If no argument provided, open dialog in interactive mode;
     // in non-interactive/ACP, return current state instead
-    if (!args.trim()) {
+    if (!args.trim() && !aliasMode) {
       return {
         type: 'dialog',
         dialog: 'approval-mode',

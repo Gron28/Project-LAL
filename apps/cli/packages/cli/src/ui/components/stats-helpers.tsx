@@ -9,7 +9,7 @@ import { Box, Text } from 'ink';
 import { theme } from '../semantic-colors.js';
 import { t } from '../../i18n/index.js';
 import type { HeatmapIntensity } from '../utils/asciiCharts.js';
-import type { TimeRange } from '@qwen-code/qwen-code-core';
+import type { TimeRange } from '@lal/core';
 
 export type StatsTab = 'session' | 'activity' | 'efficiency';
 

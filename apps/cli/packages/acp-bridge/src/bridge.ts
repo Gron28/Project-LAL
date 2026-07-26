@@ -20,7 +20,7 @@ import type {
 import type {
   ApprovalMode,
   RebuiltSessionArtifactSnapshot,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   DAEMON_TRACEPARENT_META_KEY,
   DAEMON_TRACESTATE_META_KEY,
@@ -29,7 +29,7 @@ import {
   normalizeSnapshotPayload,
   ShellExecutionService,
   type ShellOutputEvent,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { ShellCommandResult } from './bridgeTypes.js';
 import type { AcpChannel } from './channel.js';
 import {

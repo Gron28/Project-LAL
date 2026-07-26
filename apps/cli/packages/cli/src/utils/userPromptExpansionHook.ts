@@ -8,7 +8,7 @@ import type { PartListUnion } from '@google/genai';
 import {
   partToString,
   sanitizeUserPromptExpansionAdditionalContext,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 export function appendUserPromptExpansionAdditionalContext(
   content: PartListUnion,

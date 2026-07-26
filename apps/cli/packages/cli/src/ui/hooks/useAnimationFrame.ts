@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { terminalAnimationsEnabled } from '../utils/terminal-renderer.js';
 
 /**
  * Hook that polls a ref at a fixed interval and smoothly animates the
@@ -44,7 +45,7 @@ export function useAnimationFrame(
   }
 
   useEffect(() => {
-    if (intervalMs === null) return;
+    if (intervalMs === null || !terminalAnimationsEnabled()) return;
 
     // Re-sync when the interval resumes or the ref changed externally
     // (e.g. ref reset to 0 at new turn start while paused).

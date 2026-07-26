@@ -10,7 +10,7 @@ import { ExtensionUpdateState } from '../../state/extensions.js';
 import {
   createDebugLogger,
   getExtensionDisplayName,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { getCurrentLanguage } from '../../../i18n/index.js';
 
 const debugLogger = createDebugLogger('EXTENSIONS_LIST');

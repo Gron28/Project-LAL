@@ -13,7 +13,7 @@ import type {
   ToolCallResponseInfo,
   SessionMetrics,
   McpToolProgressData,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   ApprovalMode,
   OutputFormat,
@@ -22,7 +22,7 @@ import {
   getArenaSystemReminder,
   getMCPServerStatus,
   getPlanModeSystemReminder,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { Part, PartListUnion } from '@google/genai';
 import type {
   CLIUserMessage,

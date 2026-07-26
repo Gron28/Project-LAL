@@ -15,7 +15,7 @@ import {
   type Config,
   type SubagentConfig,
   type SubagentLevel,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { writeStderrLine } from '../utils/stdioHelpers.js';
 import { isServeDebugMode } from './debug-mode.js';
 import {
@@ -79,7 +79,7 @@ import {
   type ServeWorkspaceAgentDetail,
   type ServeWorkspaceAgentSummary,
   type ServeWorkspaceAgentsStatus,
-} from '@qwen-code/acp-bridge/status';
+} from '@lal/acp-bridge/status';
 
 /**
  * Workspace subagent CRUD routes.

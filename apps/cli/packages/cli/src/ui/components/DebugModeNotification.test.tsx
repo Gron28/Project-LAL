@@ -6,11 +6,11 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'ink-testing-library';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import { ConfigContext } from '../contexts/ConfigContext.js';
 import { DebugModeNotification } from './DebugModeNotification.js';
 
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   createDebugLogger: () => ({
     isEnabled: () => false,
     debug: () => undefined,

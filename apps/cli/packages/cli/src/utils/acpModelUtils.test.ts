@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { AuthType, type Config } from '@qwen-code/qwen-code-core';
+import { AuthType, type Config } from '@lal/core';
 import {
   formatAcpModelId,
   isInlineModelOverrideAllowed,

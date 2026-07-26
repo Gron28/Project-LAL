@@ -8,6 +8,7 @@
 import { createUserContent } from '@google/genai';
 import type {
   Content,
+  FunctionDeclaration,
   GenerateContentConfig,
   GenerateContentResponse,
   PartListUnion,
@@ -57,8 +58,39 @@ import {
 } from './turn.js';
 
 // Services
+import {
+  formatAcceptanceReports,
+  hasFatal,
+  validateArtifacts,
+} from '../services/acceptance/index.js';
 import { LoopDetectionService } from '../services/loopDetectionService.js';
+import {
+  judgeCompletion,
+  type TurnToolActivity,
+} from './completionGuards.js';
 import { CommitAttributionService } from '../services/commitAttribution.js';
+import {
+  createResearchTrace,
+  isExplicitWebResearchRequest,
+  isResearchStopRequest,
+  isResearchSynthesis,
+  setResearchTurnActive,
+  recordResearchCall,
+  recordResearchResults,
+  routeResearchToolArgs,
+  routeResearchToolCall,
+  researchContinuation,
+  researchCoverage,
+  researchProviderLooksBroken,
+  researchBrokenProviderReport,
+  researchStopReport,
+  researchSynthesisContinuation,
+  synthesisCitesFetchedSources,
+  RESEARCH_CONTROLLER_INSTRUCTION,
+  RESEARCH_MAX_NUDGES,
+  RESEARCH_MAX_SYNTHESIS_NUDGES,
+  type ResearchTrace,
+} from '../services/research-controller.js';
 
 // Tools
 import type { RelevantAutoMemoryPromptResult } from '../memory/manager.js';
@@ -128,6 +160,7 @@ import {
 } from '../confirmation-bus/types.js';
 import { partToString } from '../utils/partUtils.js';
 import { createHookOutput, SessionStartSource } from '../hooks/types.js';
+import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import { MessageDisplayDispatcher } from './message-display-dispatcher.js';
 
@@ -137,6 +170,14 @@ import { type File, type IdeContext } from '../ide/types.js';
 import { PermissionMode, type StopHookOutput } from '../hooks/types.js';
 
 const MAX_TURNS = 100;
+/**
+ * PLAN 6 — how many times the runtime hands validation failures back before it
+ * stops and reports honestly. Two, because the third attempt on the same defect
+ * has never been the one that fixed it, and each attempt is a full model turn.
+ */
+const MAX_ACCEPTANCE_REPAIR_ATTEMPTS = 2;
+/** Tools whose target path is an artifact the runtime should validate. */
+const MUTATING_FILE_TOOLS = new Set(['write_file', 'edit', 'replace']);
 const MAX_RECENT_TOOL_NAMES_FOR_MEMORY = 20;
 
 export enum SendMessageType {
@@ -219,6 +260,39 @@ export class GeminiClient {
   private cachedGitStatus: string | null | undefined;
   private readonly surfacedRelevantAutoMemoryPaths = new Set<string>();
   private shutdownRequested = false;
+  private researchTrace: ResearchTrace | undefined;
+  /**
+   * Tool names seen during the current request, for the completion guard
+   * (PLAN 2.4). Keyed by prompt_id and reset when a new one starts, mirroring
+   * how researchTrace scopes itself — a recursive Hook turn shares the id, so
+   * a nudge-driven continuation keeps accumulating into the same record.
+   */
+  private completionActivity:
+    | ({ promptId: string } & { toolNames: string[]; verifyNudgeCount: number })
+    | undefined;
+
+  /**
+   * PLAN 6 — acceptance validation state.
+   *
+   * `producedArtifacts` holds the paths a file-mutating tool was asked to write
+   * during THIS request — reset on each new user query, so a later request is not
+   * judged on files an earlier one wrote and already had validated.
+   * `acceptanceRepairAttempts` bounds the repair loop per prompt;
+   * `acceptanceValidatedPrompts` records prompts whose verdict has already been
+   * delivered so a follow-up turn does not re-announce it.
+   */
+  private readonly producedArtifacts = new Set<string>();
+  private readonly acceptanceRepairAttempts = new Map<string, number>();
+  private readonly acceptanceValidatedPrompts = new Set<string>();
+
+  /**
+   * True while the current user request is an explicit external-research
+   * request. Read-only web tools use this to avoid an impossible confirmation
+   * prompt in headless mode after the user has already asked for web research.
+   */
+  isResearchModeActive(): boolean {
+    return this.researchTrace?.enabled === true;
+  }
 
   private readonly loopDetector: LoopDetectionService;
   private lastPromptId: string | undefined = undefined;
@@ -609,6 +683,51 @@ export class GeminiClient {
     this.forceFullIdeContext = true;
   }
 
+  /**
+   * Drop tools the session has already decided it will refuse (PLAN 2.3, 4.3).
+   *
+   * A deny rule is a fact known before the turn starts, but nothing used to act
+   * on it until the model had already spent a turn calling the tool. Measured on
+   * HTML-001 2026-07-24: 7 of 13 tool failures across six runs were the model
+   * discovering `run_shell_command` was denied — trying to start an HTTP server,
+   * trying to locate a browser — one wasted round trip each, and in the worst
+   * run three of them. Advertising a capability the runtime will not honour is
+   * the defect; the circuit breaker downstream can only make it cheaper.
+   *
+   * Deliberately advisory-free: the tool simply is not offered, so there is
+   * nothing for the model to be told to stop doing.
+   */
+  private async withoutUnusableTools(
+    declarations: FunctionDeclaration[],
+  ): Promise<FunctionDeclaration[]> {
+    const pm = this.config.getPermissionManager?.();
+    if (!pm) return declarations;
+    const kept: FunctionDeclaration[] = [];
+    const withheld: string[] = [];
+    for (const declaration of declarations) {
+      const name = declaration.name;
+      if (!name) {
+        kept.push(declaration);
+        continue;
+      }
+      // A tool is withheld only when it can NEVER be approved in this session.
+      // An interactive session can always prompt the user, so this narrows to
+      // hard deny rules, which is exactly what isToolEnabled reports.
+      if (await pm.isToolEnabled(name)) {
+        kept.push(declaration);
+      } else {
+        withheld.push(name);
+      }
+    }
+    if (withheld.length > 0) {
+      recordStartupEvent('lal_tools_withheld', {
+        toolCount: withheld.length,
+        tools: withheld.sort().join(','),
+      });
+    }
+    return kept;
+  }
+
   async setTools(): Promise<void> {
     if (!this.isInitialized()) {
       return;
@@ -617,7 +736,9 @@ export class GeminiClient {
     const toolRegistry = this.config.getToolRegistry();
     await toolRegistry.warmAll();
     const deferredTools = this.resolveDeferredToolsForReminder();
-    const toolDeclarations = toolRegistry.getFunctionDeclarations();
+    const toolDeclarations = await this.withoutUnusableTools(
+      toolRegistry.getFunctionDeclarations(),
+    );
     const tools: Tool[] = [{ functionDeclarations: toolDeclarations }];
     this.getChat().setTools(tools);
     this.queueAddedMcpToolsReminder(deferredTools ?? []);
@@ -1567,6 +1688,18 @@ export class GeminiClient {
       return;
     }
 
+    // One-shot/SDK turns have no durable UI lifetime in which maintenance can
+    // remain genuinely background work. Starting extract + dream agents here
+    // delayed a completed `lal -p` answer by roughly a minute and left host
+    // inference running after the client exited. Interactive sessions retain
+    // the existing background-memory behavior.
+    if (!this.config.isInteractive()) {
+      debugLogger.debug(
+        'Skipping background memory tasks: non-interactive session.',
+      );
+      return;
+    }
+
     // autoSkill counts tool calls and can trigger on both UserQuery and
     // ToolResult turns so the threshold can fire mid-session.
     if (
@@ -1821,6 +1954,15 @@ export class GeminiClient {
     turns: number = MAX_TURNS,
   ): AsyncGenerator<ServerGeminiStreamEvent, Turn> {
     const messageType = options?.type ?? SendMessageType.UserQuery;
+    if (
+      messageType === SendMessageType.ToolResult &&
+      this.researchTrace?.promptId === prompt_id
+    ) {
+      recordResearchResults(
+        this.researchTrace,
+        Array.isArray(request) ? request : [request],
+      );
+    }
     let strippedRetryEntries: Content[] = [];
     // Snapshot of GeminiChat's user-content push counter, taken right after the
     // strip. The Retry's re-submitted content is the first thing the send
@@ -1951,6 +2093,40 @@ export class GeminiClient {
       messageType === SendMessageType.Cron ||
       messageType === SendMessageType.Notification ||
       messageType === SendMessageType.Teammate;
+    if (messageType === SendMessageType.UserQuery) {
+      const promptText = partToString(request);
+      const activeCodeMode = (
+        this.config as Config & { getActiveCodeMode?: () => string | undefined }
+      ).getActiveCodeMode?.();
+      // PLAN 4.2 — an explicit stop ends research at the next turn boundary, and
+      // must not be able to start a new one. Checked before `enabled`, because
+      // "stop researching" contains the word "research" and would otherwise
+      // arm the controller it was trying to switch off.
+      const stopRequested = isResearchStopRequest(promptText);
+      if (stopRequested && this.researchTrace?.enabled) {
+        this.researchTrace.stopRequested = true;
+      }
+      const enabled =
+        !stopRequested &&
+        (activeCodeMode === 'deep-research' ||
+          isExplicitWebResearchRequest(promptText));
+      const carriedStop = stopRequested;
+      this.researchTrace = createResearchTrace(prompt_id, enabled);
+      this.researchTrace.stopRequested = carriedStop;
+      // Let the tool scheduler refuse shell-based web access for the duration of
+      // a research turn. Diagnosed 2026-07-25: the model scraped Google with
+      // python requests instead of calling web_search, so every piece of evidence
+      // was invisible to the gate, which then rejected a synthesis the model had
+      // already delivered.
+      setResearchTurnActive(enabled);
+      // PLAN 6 — a new request gets a fresh artifact set. Without this, every
+      // later request re-validates and re-announces files an earlier one wrote.
+      this.producedArtifacts.clear();
+      if (enabled) {
+        const requestArray = Array.isArray(request) ? request : [request];
+        request = [...requestArray, { text: RESEARCH_CONTROLLER_INSTRUCTION }];
+      }
+    }
     if (isTopLevelInteraction) {
       this.loopDetector.reset(prompt_id);
       this.lastPromptId = prompt_id;
@@ -2397,15 +2573,77 @@ export class GeminiClient {
           : null;
 
       const resultStream = turn.run(model, requestToSend, signal);
+      let visibleResponseText = '';
       let didUpdateIdeContextState = false;
       // Loop-recovery instruction captured mid-stream; the recovery send is
       // deferred until after the stream is closed (see the two guard blocks
       // below — recursing while the stream is open deadlocks the send-lock).
       let pendingLoopRecovery: string | null = null;
+      // Reset the completion-guard record when a NEW request starts. A
+      // recursive Hook turn reuses prompt_id, so the accumulated tool names
+      // and the spent nudge budget survive a continuation — which is what
+      // stops the guard nudging the same request forever.
+      if (this.completionActivity?.promptId !== prompt_id) {
+        this.completionActivity = {
+          promptId: prompt_id,
+          toolNames: [],
+          verifyNudgeCount: 0,
+        };
+      }
+      const completionActivity = this.completionActivity;
       try {
         for await (const event of resultStream) {
+          if (event.type === GeminiEventType.ToolCallRequest) {
+            completionActivity.toolNames.push(event.value.name);
+          }
+          if (
+            event.type === GeminiEventType.ToolCallRequest &&
+            this.researchTrace?.promptId === prompt_id
+          ) {
+            const originalName = event.value.name;
+            event.value.name = routeResearchToolCall(
+              this.researchTrace,
+              originalName,
+              event.value.args,
+            );
+            event.value.args = routeResearchToolArgs(
+              originalName,
+              event.value.name,
+              event.value.args,
+            );
+            if (event.value.name !== originalName) {
+              yield {
+                type: GeminiEventType.HookSystemMessage,
+                value: `Research controller corrected ${originalName} to ${event.value.name} so the intended external research action runs directly and visibly without a shell wrapper.`,
+              };
+            }
+            recordResearchCall(
+              this.researchTrace,
+              event.value.callId,
+              event.value.name,
+              event.value.args,
+            );
+          }
+          // PLAN 6 — remember every artifact this session claims to have
+          // produced, so completion can be validated against the files on disk
+          // rather than against the model's account of them. Recorded at request
+          // time and validated at completion, so a write that failed still gets
+          // its target inspected — a missing file is the most important finding.
+          if (
+            event.type === GeminiEventType.ToolCallRequest &&
+            MUTATING_FILE_TOOLS.has(event.value.name)
+          ) {
+            const args = event.value.args as Record<string, unknown>;
+            const target = args?.['file_path'] ?? args?.['path'];
+            if (typeof target === 'string' && target.trim()) {
+              this.producedArtifacts.add(target);
+            }
+          }
           if (messageDisplay && event.type === GeminiEventType.Content) {
             messageDisplay.addChunk(event.value);
+          }
+          if (event.type === GeminiEventType.Content) {
+            visibleResponseText += event.value;
           }
           if (shouldUpdateIdeContextState && !didUpdateIdeContextState) {
             this.lastSentIdeContext = nextIdeContext;
@@ -2608,6 +2846,160 @@ export class GeminiClient {
 
       // Track API completion time for thinking block idle cleanup
       this.lastApiCompletionTimestamp = Date.now();
+
+      // A deep-research answer without observable search/fetch breadth is an
+      // unsupported completion claim. Continue the same prompt (and preserve
+      // its trace) until the deterministic successful-result floor passes.
+      const researchTrace =
+        this.researchTrace?.promptId === prompt_id
+          ? this.researchTrace
+          : undefined;
+      if (
+        researchTrace?.enabled &&
+        !turn.pendingToolCalls.length &&
+        signal &&
+        !signal.aborted
+      ) {
+        const coverage = researchCoverage(researchTrace);
+        // A stop outranks the gate, the nudge budget, and the provider check.
+        if (researchTrace.stopRequested) {
+          yield {
+            type: GeminiEventType.HookSystemMessage,
+            value: researchStopReport(researchTrace),
+          };
+          researchTrace.enabled = false;
+          setResearchTurnActive(false);
+          normalCompletion = true;
+          return turn;
+        }
+        if (!coverage.passed) {
+          // Before spending a nudge, check whether the tools work at all. A
+          // broken provider cannot be fixed by asking the model again, and each
+          // nudge is a full model turn (PLAN 4.1 / 4.2).
+          const provider = researchProviderLooksBroken(researchTrace);
+          if (provider.broken) {
+            yield {
+              type: GeminiEventType.HookSystemMessage,
+              value: researchBrokenProviderReport(researchTrace),
+            };
+            normalCompletion = true;
+            return turn;
+          }
+          const continuation = researchContinuation(researchTrace);
+          if (researchTrace.nudges < RESEARCH_MAX_NUDGES && boundedTurns > 1) {
+            researchTrace.nudges++;
+            yield {
+              type: GeminiEventType.HookSystemMessage,
+              value: continuation,
+            };
+            yield { type: GeminiEventType.Retry, isContinuation: true };
+            const researchTurn = yield* this.sendMessageStream(
+              [{ text: continuation }],
+              signal,
+              prompt_id,
+              { type: SendMessageType.Hook },
+              boundedTurns - 1,
+            );
+            normalCompletion = true;
+            return researchTurn;
+          }
+          yield {
+            type: GeminiEventType.HookSystemMessage,
+            value: `Research incomplete after ${researchTrace.nudges} continuation attempts: ${coverage.queryCount} successful distinct searches and ${coverage.sourceCount} successfully opened sources (${coverage.attemptedQueryCount} searches and ${coverage.attemptedSourceCount} fetches attempted). Any synthesis shown above is unverified; inspect the failed calls or retry when web access is available.`,
+          };
+        } else if (
+          !isResearchSynthesis(visibleResponseText) ||
+          // A URL proves nothing about where it came from; a model can produce
+          // one from memory, and a fabricated citation is worse than none because
+          // it reads as verified. The synthesis has to name origins this run
+          // actually opened.
+          !synthesisCitesFetchedSources(visibleResponseText, researchTrace).ok
+        ) {
+          const continuation = researchSynthesisContinuation(researchTrace);
+          if (
+            researchTrace.synthesisNudges < RESEARCH_MAX_SYNTHESIS_NUDGES &&
+            boundedTurns > 1
+          ) {
+            researchTrace.synthesisNudges++;
+            yield {
+              type: GeminiEventType.HookSystemMessage,
+              value: continuation,
+            };
+            yield { type: GeminiEventType.Retry, isContinuation: true };
+            const synthesisTurn = yield* this.sendMessageStream(
+              [{ text: continuation }],
+              signal,
+              prompt_id,
+              { type: SendMessageType.Hook },
+              boundedTurns - 1,
+            );
+            normalCompletion = true;
+            return synthesisTurn;
+          }
+          yield {
+            type: GeminiEventType.HookSystemMessage,
+            value: `Research evidence passed the coverage floor, but no substantive evidence-linked final synthesis was produced after ${researchTrace.synthesisNudges} continuation attempts. The run is incomplete; do not treat an empty or citation-free result as researched output.`,
+          };
+        } else if (!researchTrace.announcedPass) {
+          researchTrace.announcedPass = true;
+          yield {
+            type: GeminiEventType.HookSystemMessage,
+            value: `Research coverage and synthesis gates passed: ${coverage.queryCount} successful distinct searches, ${coverage.sourceCount} successfully opened sources, and a substantive evidence-linked final answer.`,
+          };
+        }
+      }
+
+      // PLAN 6 — the runtime decides completion.
+      //
+      // The model has stopped calling tools, which is its completion claim. That
+      // claim is a proposal: validate the artifacts it produced and, if they are
+      // broken, hand the defects back and let it repair them. Bounded, because an
+      // unbounded repair loop is the failure mode this whole plan exists to
+      // remove; when the budget is spent the runtime says so plainly instead of
+      // pretending the work is done (exit gate 6).
+      if (
+        !turn.pendingToolCalls.length &&
+        signal &&
+        !signal.aborted &&
+        this.producedArtifacts.size > 0 &&
+        !this.acceptanceValidatedPrompts.has(prompt_id)
+      ) {
+        const reports = await validateArtifacts([...this.producedArtifacts]);
+        if (reports.length > 0) {
+          const attempts = this.acceptanceRepairAttempts.get(prompt_id) ?? 0;
+          if (hasFatal(reports)) {
+            const message = formatAcceptanceReports(reports);
+            if (attempts < MAX_ACCEPTANCE_REPAIR_ATTEMPTS && boundedTurns > 1) {
+              this.acceptanceRepairAttempts.set(prompt_id, attempts + 1);
+              yield { type: GeminiEventType.HookSystemMessage, value: message };
+              yield { type: GeminiEventType.Retry, isContinuation: true };
+              const repairTurn = yield* this.sendMessageStream(
+                [{ text: message }],
+                signal,
+                prompt_id,
+                { type: SendMessageType.Hook },
+                boundedTurns - 1,
+              );
+              normalCompletion = true;
+              return repairTurn;
+            }
+            // Bounded give-up with an honest report — never a success claim.
+            this.acceptanceValidatedPrompts.add(prompt_id);
+            yield {
+              type: GeminiEventType.HookSystemMessage,
+              value:
+                `Validation still fails after ${attempts} repair attempt(s). The work is ` +
+                `NOT complete and must not be reported as complete.\n\n${message}`,
+            };
+          } else {
+            this.acceptanceValidatedPrompts.add(prompt_id);
+            yield {
+              type: GeminiEventType.HookSystemMessage,
+              value: formatAcceptanceReports(reports),
+            };
+          }
+        }
+      }
 
       // Fire Stop hook through MessageBus (only if hooks are enabled and registered)
       // This must be done before any early returns to ensure hooks are always triggered
@@ -2816,6 +3208,33 @@ export class GeminiClient {
           );
         } catch {
           // Best-effort — don't block the main flow
+        }
+
+        // PLAN 2.4: refuse a completion claim for a turn that wrote files and
+        // never looked at them. This runs BEFORE the skip-next-speaker escape
+        // and before checkNextSpeaker, because it is not a "who talks next"
+        // question — it is whether this turn is allowed to be finished at all.
+        // Bounded by judgeCompletion's own nudge budget, so a model that
+        // ignores it still terminates.
+        const completionVerdict = judgeCompletion(
+          completionActivity satisfies TurnToolActivity,
+        );
+        if (completionVerdict.kind === 'nudge-verify' && boundedTurns > 1) {
+          completionActivity.verifyNudgeCount++;
+          yield {
+            type: GeminiEventType.HookSystemMessage,
+            value: completionVerdict.reason,
+          };
+          yield { type: GeminiEventType.Retry, isContinuation: true };
+          const verifyTurn = yield* this.sendMessageStream(
+            [{ text: completionVerdict.reason }],
+            signal,
+            prompt_id,
+            { ...options, type: SendMessageType.Hook },
+            boundedTurns - 1,
+          );
+          normalCompletion = true;
+          return verifyTurn;
         }
 
         if (this.config.getSkipNextSpeakerCheck()) {
@@ -3043,8 +3462,38 @@ export class GeminiClient {
       // so prior read_file results that were summarised away would still
       // resolve to the file_unchanged placeholder. Clear so post-compaction
       // Reads re-emit bytes the model can no longer see in history.
+      //
+      // PLAN 5 — but not for files the attachment block re-embedded IN FULL.
+      // Those bytes ARE in the new prompt, so clearing their entries produced
+      // exactly the reported symptom: "after compaction the model still knew
+      // what it was doing, but the file-editing subsystem had forgotten the file
+      // was already read", and the next edit demanded a re-read of a file the
+      // model was already looking at. Conversation history and runtime working
+      // state are different things; this is the seam where they were conflated.
       debugLogger.debug('[FILE_READ_CACHE] clear after tryCompressChat');
-      this.config.getFileReadCache().clear();
+      const fileReadCache = this.config.getFileReadCache();
+      fileReadCache.clear();
+      for (const restoredPath of info.fullyRestoredFiles ?? []) {
+        try {
+          // Re-arm from the file's CURRENT stats. If it changed between
+          // restoration and here, the fingerprint differs and the next edit
+          // correctly demands a fresh read — the cache is never told the model
+          // has seen bytes it has not.
+          const stats = fs.statSync(restoredPath);
+          fileReadCache.recordRead(restoredPath, stats, {
+            full: true,
+            cacheable: true,
+          });
+        } catch {
+          // Deleted or unreadable since restoration: leaving it out of the cache
+          // is the safe direction — a re-read reports the real error.
+        }
+      }
+      if (info.fullyRestoredFiles?.length) {
+        debugLogger.debug(
+          `[FILE_READ_CACHE] re-armed ${info.fullyRestoredFiles.length} fully restored file(s) after compaction`,
+        );
+      }
       this.getChat().setLastPromptTokenCount(info.newTokenCount);
       // Re-send a full IDE context blob on the next regular message
       // compression may have summarized away the merged IDE context

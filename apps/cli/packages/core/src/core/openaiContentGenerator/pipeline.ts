@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type OpenAI from 'openai';
 import {
   type GenerateContentParameters,
@@ -31,8 +33,142 @@ import {
   QWEN_STREAM_IDLE_TIMEOUT_MS_ENV,
 } from './constants.js';
 import { createDebugLogger } from '../../utils/debugLogger.js';
+import type { Storage } from '../../config/storage.js';
 
 const debugLogger = createDebugLogger('OPENAI_PIPELINE');
+
+// Below this many raw buffered chars, a truncated tool call is almost
+// certainly metadata (e.g. an empty/near-empty args object), not lost work
+// worth writing a recovery file for.
+const MIN_SALVAGE_CHARS = 300;
+
+/**
+ * Called when a stream dies (rate limit, inactivity timeout, aborted
+ * connection, ...) before a tool call's arguments finished streaming.
+ * Tool-call arguments only ever turn into a real functionCall Part once
+ * finish_reason arrives (see converter.ts); until then they live solely in
+ * `context.toolCallParser`'s in-memory buffer, so an interrupted stream would
+ * otherwise discard everything already generated — e.g. a large write_file's
+ * content, mid-file. Persists the largest buffered call's best-effort repaired
+ * args to disk so the work isn't gone; returns null (never throws) if there's
+ * nothing worth salvaging.
+ */
+/**
+ * Write the salvaged partial content somewhere the model can actually resume
+ * from, and describe how (PLAN 3.1).
+ *
+ * The stash has always been written and never read: LAL reported "saved to
+ * …/recovered-tool-calls/….json instead of being discarded" and then nothing —
+ * no code path reads that file, so the next turn regenerated the whole file from
+ * scratch, burning the context that caused the truncation. This is the "finish
+ * the writer that is half-built" half of 3.1.
+ *
+ * The partial content goes to a sidecar draft next to the target, never to the
+ * target itself: a truncated index.html must not replace a valid one, which is
+ * 3.1's "the previous valid file is untouched throughout".
+ *
+ * Returns resume guidance for the error message, or null when the salvaged call
+ * was not a file write we can stage.
+ */
+function stageResumableDraft(
+  toolName: string,
+  args: Record<string, unknown>,
+): string | null {
+  const filePath = args['file_path'] ?? args['path'] ?? args['absolute_path'];
+  const content = args['content'] ?? args['new_string'];
+  if (typeof filePath !== 'string' || typeof content !== 'string') return null;
+  if (!filePath.trim() || !content) return null;
+
+  const draftPath = `${filePath}.lal-partial`;
+  try {
+    fs.mkdirSync(path.dirname(draftPath), { recursive: true });
+    fs.writeFileSync(draftPath, content, 'utf8');
+  } catch (draftError) {
+    debugLogger.warn('Failed to stage resumable draft', { draftError });
+    return null;
+  }
+
+  // Resume from the last COMPLETE line. The final line was cut mid-token, so
+  // handing it back as if it were finished is how a truncation turns into
+  // corrupt output.
+  const lines = content.split('\n');
+  const completeLineCount = Math.max(0, lines.length - 1);
+  const lastComplete = completeLineCount > 0 ? lines[completeLineCount - 1] : '';
+  const tail = lastComplete.length > 160 ? `…${lastComplete.slice(-160)}` : lastComplete;
+
+  return (
+    `\n\n${content.length} characters (${completeLineCount} complete lines) were ` +
+    `already generated and have been staged at:\n  ${draftPath}\n` +
+    `"${filePath}" itself was NOT modified and still holds its previous contents.\n\n` +
+    `RESUME — do not regenerate what is already written:\n` +
+    `1. read_file "${draftPath}" to see exactly what landed.\n` +
+    `2. The last complete line is:\n     ${tail || '(none)'}\n` +
+    `3. Continue from immediately after that line. Discard the final partial ` +
+    `line — it was cut mid-token.\n` +
+    `4. Write the COMBINED result to "${filePath}" (staged content + your ` +
+    `continuation), then delete the .lal-partial draft.\n` +
+    `Regenerating from the beginning is what exhausted the response that just ` +
+    `failed; it will fail the same way.`
+  );
+}
+
+function salvageInterruptedToolCall(
+  context: RequestContext,
+  storage: Storage,
+): {
+  filePath: string;
+  toolName: string;
+  chars: number;
+  resumeGuidance: string | null;
+} | null {
+  const parser = context.toolCallParser;
+  if (!parser) return null;
+
+  const completedCalls = parser.getCompletedToolCalls();
+  let best: (typeof completedCalls)[number] | null = null;
+  let bestChars = 0;
+  for (const call of completedCalls) {
+    if (!call.name) continue;
+    const chars = parser.getBuffer(call.index).length;
+    if (chars > bestChars) {
+      bestChars = chars;
+      best = call;
+    }
+  }
+  if (!best?.name || bestChars < MIN_SALVAGE_CHARS) return null;
+
+  try {
+    const dir = storage.getRecoveredToolCallsDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, `${Date.now()}-${best.name}.json`);
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify(
+        {
+          toolName: best.name,
+          args: best.args,
+          rawChars: bestChars,
+          savedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    return {
+      filePath,
+      toolName: best.name,
+      chars: bestChars,
+      resumeGuidance: stageResumableDraft(best.name, best.args ?? {}),
+    };
+  } catch (salvageError) {
+    // Never let a salvage failure mask the original stream error.
+    debugLogger.warn('Failed to salvage interrupted tool call', {
+      salvageError,
+    });
+    return null;
+  }
+}
 
 /**
  * Error thrown when the API returns an error embedded as stream content
@@ -578,6 +714,16 @@ export class ContentGenerationPipeline {
         yield pendingFinishResponse;
       }
     } catch (error) {
+      const salvaged = salvageInterruptedToolCall(
+        context,
+        this.config.cliConfig.storage,
+      );
+      if (salvaged && error instanceof Error) {
+        error.message +=
+          `\n\n[lal] The interrupted "${salvaged.toolName}" call had ${salvaged.chars} chars already generated — saved to ${salvaged.filePath} instead of being discarded.` +
+          (salvaged.resumeGuidance ?? '');
+      }
+
       // Re-throw StreamContentError directly so it can be handled by
       // the caller's retry logic (e.g., TPM throttling retry in sendMessageStream)
       if (error instanceof StreamContentError) {

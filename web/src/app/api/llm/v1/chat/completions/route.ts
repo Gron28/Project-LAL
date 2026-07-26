@@ -1,41 +1,16 @@
-import { activatePublicModel, allModels, isPublicModelName, OLLAMA_CLI_CONTEXT, SERVE_PORT, touchServing } from "@/lib/lab";
+import { activatePublicModel, allModels, beginGeneration, contextProfileForModel, isPublicModelName, modelRuntimeSettings, SERVE_PORT, touchServing } from "@/lib/lab";
 import { appendHostObservationForClientDevice } from "@/lib/runs";
+import { recordUsage } from "@/lib/usage-ledger";
 import { acquireCliGpuLease, cliAuthenticatedDeviceId, cliAuthorized, recordCliAccess, streamWithRelease, unauthorizedResponse } from "@/lib/lal-cli";
+// PLAN 2.2 — the allowlist and the prefix rule live in ONE place, shared with
+// the CLI, so the two sides can no longer disagree about what a tool is called.
+import { canonicalToolName, isTerminalTool } from "@lal/protocol";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
 
 type Usage = { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown };
 type Logprob = { logprob?: unknown; token?: unknown; top_logprobs?: Array<{ token?: unknown; logprob?: unknown }> };
-const LAL_TERMINAL_TOOLS = new Set([
-  "read_file",
-  "edit",
-  "write_file",
-  "run_shell_command",
-  // Orientation tools: without list/search the model cannot discover the
-  // project it is asked to change, which manifested as repeat-loops instead
-  // of tool calls.
-  "grep_search",
-  "glob",
-  "list_directory",
-  "todo_write",
-  // One-chat project orchestration. These are deliberately the only larger
-  // synthetic schemas admitted for managed terminals; teams/workflows/CUA
-  // remain outside this small-model boundary.
-  "tool_search",
-  "agent",
-  "task_stop",
-  "web_search",
-  "web_fetch",
-  // Browser acceptance tools remain lazy behind tool_search; admitting them
-  // here lets their eventual schemas and results stay in the same turn.
-  "launch_app",
-  "list_windows",
-  "get_window_state",
-  "page",
-  "screenshot",
-]);
-
 // Budget guards, not documentation removal: a small local model needs the
 // real tool contract to emit correct native tool_calls, but inherited prose
 // must not consume most of a 32k turn.
@@ -79,7 +54,7 @@ function compactToolSchema(value: unknown): unknown {
   return compact;
 }
 
-function compactTools(value: unknown): unknown {
+function compactTools(value: unknown, dropped?: string[]): unknown {
   if (!Array.isArray(value)) return value;
   return value.flatMap((tool) => {
     if (!tool || typeof tool !== "object") return tool;
@@ -87,11 +62,28 @@ function compactTools(value: unknown): unknown {
     const fn = entry.function;
     if (!fn || typeof fn !== "object") return tool;
     const functionDef = fn as Record<string, unknown>;
-    const name = typeof functionDef.name === "string" ? functionDef.name : "tool";
+    const rawName = typeof functionDef.name === "string" ? functionDef.name : "tool";
+    // The computer-use driver advertises its tools PREFIXED (computer_use__page,
+    // computer_use__launch_app, ...) while this allowlist named the bare verbs.
+    // So every browser/page tool tool_search loaded was dropped right here, and
+    // the model — told by system.md to "use tool_search to load the browser/page
+    // tools" — was left with a capability it could never actually call.
+    // Confirmed from a Windows session 2026-07-25. This is PLAN 2.1's fourth
+    // hypothesis: "tools loaded lazily through tool_search are dropped by the
+    // same filter when their schemas arrive, leaving the model to improvise."
+    const name = canonicalToolName(rawName);
     // This is the product boundary, not merely a client preference: old
     // managed settings cannot quietly reintroduce agent teams, generic
     // clarification dialogs, MCP, or workflow tools into a small-model turn.
-    if (!LAL_TERMINAL_TOOLS.has(name)) return [];
+    // PLAN 2.3: a drop is never silent. The client advertised this tool and the
+    // model may have been told about it in the system prompt, so dropping it
+    // here without a word leaves the model to improvise — the leading
+    // hypothesis for the Windows `'agent' is not recognized as a command`
+    // report. The caller logs whatever lands in `dropped`.
+    if (!isTerminalTool(rawName)) {
+      dropped?.push(rawName);
+      return [];
+    }
     return {
       ...entry,
       function: {
@@ -122,7 +114,9 @@ export async function POST(request: Request) {
   }
 
   const startedAt = Date.now();
-  let observedContext = modelInfo?.source === "ollama" ? OLLAMA_CLI_CONTEXT : 32768;
+  const managedSettings = modelRuntimeSettings(model);
+  const plannedContext = contextProfileForModel(model);
+  let observedContext = plannedContext.activeTokens ?? plannedContext.verifiedTokens ?? plannedContext.requestedTokens;
   let streamText = "";
   let lastUsage: Usage | null = null;
   const decoder = new TextDecoder();
@@ -162,19 +156,37 @@ export async function POST(request: Request) {
       k: "usage",
       v: { promptTokens, completionTokens, totalTokens, tokPerSec: completionTokens ? Number((completionTokens / elapsedSeconds).toFixed(1)) : null, ctx: observedContext, conf: null },
     });
+    // The call above only lands when a *running client run* owned by this device
+    // exists (runs.ts filters on executionLocation/status), so ordinary chat and
+    // CLI turns were computing usage and throwing it away — 61 stored events
+    // against ~15,900 think events, all of them HIVE nodes. The ledger records
+    // every request unconditionally.
+    recordUsage({
+      ts: startedAt,
+      dev: deviceId ?? null,
+      devName: request.headers.get("x-lal-device-name") ?? undefined,
+      model,
+      prompt: promptTokens,
+      completion: completionTokens,
+      total: totalTokens,
+      ctx: observedContext,
+      ms: Date.now() - startedAt,
+      src: request.headers.get("x-lal-client-version") ? "cli" : "web",
+    });
   };
 
-  appendHostObservationForClientDevice(deviceId, { k: "model_loading", v: { model, ctx: modelInfo?.source === "ollama" ? 16384 : 32768 } });
+  appendHostObservationForClientDevice(deviceId, { k: "model_loading", v: { model, ctx: observedContext, contextProfile: plannedContext } });
   const release = await acquireCliGpuLease();
   try {
-    const runtime = await activatePublicModel(model, 32768);
+    const runtime = await activatePublicModel(model);
     const isOllama = runtime.backend === "ollama";
     const upstreamModel = runtime.runtimeProfile;
     const runtimeContext = runtime.context;
     const runtimeOffload = runtime.gpuOffload;
     observedContext = runtimeContext;
     touchServing();
-    appendHostObservationForClientDevice(deviceId, { k: "model_ready", v: { model, ctx: runtimeContext, backend: runtime.backend, gpuOffload: runtimeOffload, ...(upstreamModel !== model ? { runtimeProfile: upstreamModel } : {}) } });
+    appendHostObservationForClientDevice(deviceId, { k: "context_profile", v: runtime.contextProfile });
+    appendHostObservationForClientDevice(deviceId, { k: "model_ready", v: { model, ctx: runtimeContext, backend: runtime.backend, contextProfile: runtime.contextProfile, gpuOffload: runtimeOffload, ...(upstreamModel !== model ? { runtimeProfile: upstreamModel } : {}) } });
     // llama.cpp rejects logprobs together with streamed tool definitions. Keep
     // the terminal agent's tool loop working first; request token confidence
     // only for plain streamed turns where this backend supports it.
@@ -184,10 +196,30 @@ export async function POST(request: Request) {
     // must remain valid even if an older managed config requested it.
     delete payloadWithoutLogprobs.logprobs;
     delete payloadWithoutLogprobs.top_logprobs;
+    const clientMaxTokens = typeof payloadWithoutLogprobs.max_tokens === "number" && payloadWithoutLogprobs.max_tokens > 0
+      ? Math.floor(payloadWithoutLogprobs.max_tokens)
+      : null;
+    const managedMaxTokens = managedSettings.maxOutputTokens > 0
+      ? clientMaxTokens == null ? managedSettings.maxOutputTokens : Math.min(clientMaxTokens, managedSettings.maxOutputTokens)
+      : clientMaxTokens;
+    const priorTemplate = payloadWithoutLogprobs.chat_template_kwargs && typeof payloadWithoutLogprobs.chat_template_kwargs === "object"
+      ? payloadWithoutLogprobs.chat_template_kwargs as Record<string, unknown>
+      : {};
+    const managedPayload = {
+      ...payloadWithoutLogprobs,
+      temperature: managedSettings.temperature,
+      top_p: managedSettings.topP,
+      top_k: managedSettings.topK,
+      repeat_penalty: managedSettings.repeatPenalty,
+      ...(managedMaxTokens != null ? { max_tokens: managedMaxTokens } : {}),
+      chat_template_kwargs: { ...priorTemplate, enable_thinking: managedSettings.thinking },
+      ...(isOllama ? { think: managedSettings.thinking } : {}),
+    };
+    const droppedTools: string[] = [];
     const upstreamPayload = payload.stream === true
       ? {
-          ...payloadWithoutLogprobs,
-          ...(hasTools ? { tools: compactTools(payload.tools) } : {}),
+          ...managedPayload,
+          ...(hasTools ? { tools: compactTools(payload.tools, droppedTools) } : {}),
           // Ollama's OpenAI compatibility layer does not reliably accept or
           // return logprobs; only ask llama.cpp for the J-space signal.
           // llama.cpp's OAI layer 400s on `logprobs` + tools + stream, but its
@@ -204,20 +236,36 @@ export async function POST(request: Request) {
             include_usage: true,
           },
         }
-      : payloadWithoutLogprobs;
+      : managedPayload;
+    if (droppedTools.length > 0) {
+      // PLAN 2.3. If this fires, the client and this allowlist disagree about
+      // what the model can do, and the model is being asked to work with a
+      // capability list nobody told it about.
+      console.warn(
+        `[lal-gateway] dropped ${droppedTools.length} tool(s) not in LAL_TERMINAL_TOOLS: ${[...new Set(droppedTools)].sort().join(", ")}`,
+      );
+    }
+    // Mark the GPU as generating for as long as this stream lives. Without it
+    // any unrelated caller deciding the server needs a restart kills this
+    // request mid-token — which is how a half-written index.html used to be
+    // lost to `UND_ERR_SOCKET` (PLAN 3.2). The GPU lease above serializes CLI
+    // turns; this additionally protects them from web chat, deliberate, the
+    // vision model swap, and lens teardown.
+    const endGeneration = beginGeneration();
+    const releaseAll = () => { endGeneration(); release(); };
     const upstream = await fetch(`${isOllama ? "http://127.0.0.1:11434" : `http://127.0.0.1:${SERVE_PORT}`}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: request.headers.get("accept") ?? "application/json" },
       body: JSON.stringify({ ...upstreamPayload, model: upstreamModel }),
       signal: request.signal,
-    });
+    }).catch((e) => { endGeneration(); throw e; });
     if (!upstream.body) {
-      release();
+      releaseAll();
       return new Response(null, { status: upstream.status, headers: upstream.headers });
     }
     const headers = new Headers(upstream.headers);
     headers.set("cache-control", "no-store");
-    return new Response(streamWithRelease(upstream.body, release, {
+    return new Response(streamWithRelease(upstream.body, releaseAll, {
       onChunk: (chunk) => observeStream(chunk),
       onClose: () => { observeStream(undefined, true); publishUsage(); },
     }), { status: upstream.status, headers });

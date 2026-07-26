@@ -16,6 +16,13 @@ import type {
 import type { PermissionDecision } from '../permissions/types.js';
 import { BaseDeclarativeTool, Kind, ToolConfirmationOutcome } from './tools.js';
 import { ToolErrorType } from './tool-error.js';
+import {
+  assessReplaceAllBlastRadius,
+  detectEditRegression,
+  findWhitespaceDriftedMatch,
+  replaceSpan,
+  type DriftedMatch,
+} from './edit-revision.js';
 import { makeRelative, shortenPath, unescapePath } from '../utils/paths.js';
 import { getErrorMessage, isNodeError } from '../utils/errors.js';
 import type { Config } from '../config/config.js';
@@ -151,6 +158,8 @@ class EditToolInvocation implements ToolInvocation<EditToolParams, ToolResult> {
     let finalNewString = params.new_string;
     let finalOldString = params.old_string;
     let occurrences = 0;
+    // Set when the anchor only matched after whitespace normalisation (PLAN 3.3).
+    let driftedSpan: DriftedMatch | null = null;
     let error:
       | { display: string; raw: string; type: ToolErrorType }
       | undefined = undefined;
@@ -296,15 +305,47 @@ class EditToolInvocation implements ToolInvocation<EditToolParams, ToolResult> {
           type: ToolErrorType.ATTEMPT_TO_CREATE_EXISTING_FILE,
         };
       } else if (occurrences === 0) {
-        error = {
-          display: `Failed to edit, could not find the string to replace.`,
-          raw: `Failed to edit, 0 occurrences found for old_string in ${params.file_path}. No edits made. The exact text in old_string was not found. Ensure you're not escaping content incorrectly and check whitespace, indentation, and context. Use ${ReadFileTool.Name} tool to verify.`,
-          type: ToolErrorType.EDIT_NO_OCCURRENCE_FOUND,
-        };
+        // PLAN 3.3 — before failing, try the one drift that can be tolerated
+        // without guessing at meaning: per-line leading/trailing whitespace. A
+        // file re-indented by one space otherwise defeats a correct edit, and the
+        // model answers by re-reading and re-guessing the anchor, which is the
+        // "re-read loops hunting for a valid anchor" this stage exists to end.
+        // Only a UNIQUE drifted match is accepted; an ambiguous one is more
+        // dangerous than no match, because it edits a place nobody looked at.
+        const drifted = findWhitespaceDriftedMatch(
+          currentContent,
+          finalOldString,
+        );
+        if (drifted) {
+          driftedSpan = drifted;
+          occurrences = 1;
+          debugLogger.debug(
+            `[edit] matched old_string in ${params.file_path} after normalising whitespace drift`,
+          );
+        } else {
+          error = {
+            display: `Failed to edit, could not find the string to replace.`,
+            raw: `Failed to edit, 0 occurrences found for old_string in ${params.file_path}. No edits made. The exact text in old_string was not found, and it does not match even when per-line indentation is ignored. Ensure you're not escaping content incorrectly and check whitespace, indentation, and context. Use ${ReadFileTool.Name} tool to verify.`,
+            type: ToolErrorType.EDIT_NO_OCCURRENCE_FOUND,
+          };
+        }
       } else if (!replaceAll && occurrences > 1) {
         error = {
           display: `Failed to edit because the text matches multiple locations. Provide more context or set replace_all to true.`,
           raw: `Failed to edit. Found ${occurrences} occurrences for old_string in ${params.file_path} but replace_all was not enabled.`,
+          type: ToolErrorType.EDIT_EXPECTED_OCCURRENCE_MISMATCH,
+        };
+      } else if (
+        replaceAll &&
+        assessReplaceAllBlastRadius(finalOldString, occurrences)
+      ) {
+        const refusal = assessReplaceAllBlastRadius(
+          finalOldString,
+          occurrences,
+        )!;
+        error = {
+          display: refusal.split('\n')[0],
+          raw: refusal,
           type: ToolErrorType.EDIT_EXPECTED_OCCURRENCE_MISMATCH,
         };
       } else if (finalOldString === finalNewString) {
@@ -323,14 +364,18 @@ class EditToolInvocation implements ToolInvocation<EditToolParams, ToolResult> {
       };
     }
 
-    const newContent = !error
-      ? applyReplacement(
-          currentContent,
-          finalOldString,
-          finalNewString,
-          isNewFile,
-        )
-      : (currentContent ?? '');
+    const newContent = error
+      ? (currentContent ?? '')
+      : driftedSpan && currentContent !== null
+        ? // A span this module located itself, so the replacement is exact even
+          // though the anchor was not.
+          replaceSpan(currentContent, driftedSpan, finalNewString)
+        : applyReplacement(
+            currentContent,
+            finalOldString,
+            finalNewString,
+            isNewFile,
+          );
 
     if (!error && fileExists && currentContent === newContent) {
       error = {
@@ -339,6 +384,30 @@ class EditToolInvocation implements ToolInvocation<EditToolParams, ToolResult> {
         raw: `No changes to apply. The new content is identical to the current content in file: ${params.file_path}`,
         type: ToolErrorType.EDIT_NO_CHANGE,
       };
+    }
+
+    // PLAN 3.3 — an edit may not make the artifact worse. Run the Stage 6
+    // acceptance criteria over both revisions and refuse a patch that introduces
+    // a defect the file did not already have; a pre-existing defect is not held
+    // against the edit, because refusing to let the model touch an already-broken
+    // file makes repair impossible. Nothing is written yet, so "roll back" is
+    // simply "do not write" — the file on disk was never touched.
+    if (!error && fileExists && currentContent !== null) {
+      const regression = await detectEditRegression(
+        params.file_path,
+        currentContent,
+        newContent,
+      );
+      if (regression) {
+        debugLogger.warn(
+          `[edit] refused a damaging patch to ${params.file_path}: ${regression.findings.map((f) => f.code).join(', ')}`,
+        );
+        error = {
+          display: `Edit refused: it would break ${params.file_path} (${regression.findings.map((f) => f.code).join(', ')}). The file is unchanged.`,
+          raw: regression.message,
+          type: ToolErrorType.EDIT_NO_CHANGE,
+        };
+      }
     }
 
     // Scan the full resulting content, not just new_string, so a secret split
@@ -826,6 +895,7 @@ Expectation for required parameters:
     if (teamMemoryError) {
       return teamMemoryError;
     }
+
 
     return null;
   }

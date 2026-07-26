@@ -120,6 +120,7 @@ export enum ToolErrorType {
   WEB_FETCH_NO_URL_IN_PROMPT = 'web_fetch_no_url_in_prompt',
   WEB_FETCH_FALLBACK_FAILED = 'web_fetch_fallback_failed',
   WEB_FETCH_PROCESSING_ERROR = 'web_fetch_processing_error',
+  WEB_SEARCH_FAILED = 'web_search_failed',
 
   // Truncation Errors
   OUTPUT_TRUNCATED = 'output_truncated',

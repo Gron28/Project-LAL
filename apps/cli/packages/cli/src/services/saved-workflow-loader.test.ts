@@ -6,9 +6,9 @@
 
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
   return {
     ...actual,
     listSavedWorkflows: vi.fn(),
@@ -19,7 +19,7 @@ import {
   listSavedWorkflows,
   type Config,
   type SavedWorkflowEntry,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { SavedWorkflowLoader } from './saved-workflow-loader.js';
 import { CommandKind, type CommandContext } from '../ui/commands/types.js';
 

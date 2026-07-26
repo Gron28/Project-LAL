@@ -10,7 +10,7 @@ import {
   Storage,
   FILE_HISTORY_DIR,
   createDebugLogger,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 const debugLogger = createDebugLogger('HOUSEKEEPING');
 

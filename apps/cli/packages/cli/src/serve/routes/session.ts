@@ -23,8 +23,8 @@ import {
   type SessionGroupColor,
   type SessionGroupPresetColor,
   type SessionArchiveState,
-} from '@qwen-code/qwen-code-core';
-import type { SessionArtifactInput } from '@qwen-code/acp-bridge/sessionArtifacts';
+} from '@lal/core';
+import type { SessionArtifactInput } from '@lal/acp-bridge/sessionArtifacts';
 import type { Application, Request, RequestHandler, Response } from 'express';
 import { writeStderrLine } from '../../utils/stdioHelpers.js';
 import {

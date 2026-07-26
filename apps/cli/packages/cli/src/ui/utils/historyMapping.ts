@@ -10,7 +10,7 @@ import {
   CompressionStatus,
   getStartupContextLength,
   isSystemReminderContent,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { isSlashCommand } from './commandUtils.js';
 
 /**

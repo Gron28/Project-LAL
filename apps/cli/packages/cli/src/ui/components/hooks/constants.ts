@@ -8,7 +8,7 @@ import {
   HooksConfigSource,
   HookEventName,
   hookEventSupportsMatcher,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { HookExitCode, HookEventDisplayInfo } from './types.js';
 import { t } from '../../../i18n/index.js';
 

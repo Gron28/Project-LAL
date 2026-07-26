@@ -24,9 +24,9 @@ const coreMock = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
   class TestModelsConfig extends actual.ModelsConfig {
     constructor(options: ConstructorParameters<typeof actual.ModelsConfig>[0]) {
       if (coreMock.throwModelsConfigError) {

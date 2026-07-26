@@ -130,7 +130,7 @@ export * from './services/session-organization-service.js';
 // Backward-compatible type re-exports for tool classes removed from eager loading.
 // These preserve TypeScript type compatibility for downstream consumers.
 // Note: runtime value imports (e.g. `new EditTool(...)`) must use the direct
-// module path (e.g. `@qwen-code/qwen-code-core/dist/tools/edit.js`) as these
+// module path (e.g. `@lal/core/dist/tools/edit.js`) as these
 // classes are now lazy-loaded and are not exported as values from the package root.
 export type { EditTool, EditToolParams } from './tools/edit.js';
 export {
@@ -544,7 +544,6 @@ export * from './utils/sideQuery.js';
 // OAuth & Authentication
 // ============================================================================
 
-export * from './qwen/qwenOAuth2.js';
 
 // ============================================================================
 // Message Bus Types

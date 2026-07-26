@@ -16,7 +16,7 @@ const { mockDebugLogger } = vi.hoisted(() => ({
     error: vi.fn(),
   },
 }));
-vi.mock('@qwen-code/qwen-code-core', () => ({
+vi.mock('@lal/core', () => ({
   createDebugLogger: () => mockDebugLogger,
 }));
 

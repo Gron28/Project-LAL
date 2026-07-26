@@ -27,7 +27,7 @@ import {
   MCPOAuthTokenStorage,
   createDebugLogger,
   matchesAnyServerPattern,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   loadSettings,
   SettingScope as CliSettingScope,

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { HistoryGap } from '@qwen-code/qwen-code-core';
+import type { HistoryGap } from '@lal/core';
 import { t } from '../../i18n/index.js';
 
 /**

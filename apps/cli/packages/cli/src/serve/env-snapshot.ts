@@ -8,12 +8,12 @@ import os from 'node:os';
 import {
   detectRuntime,
   redactProxyCredentials,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import {
   STATUS_SCHEMA_VERSION,
   type ServeEnvCell,
   type ServeWorkspaceEnvStatus,
-} from '@qwen-code/acp-bridge/status';
+} from '@lal/acp-bridge/status';
 
 function formatMemoryUsage(bytes: number): string {
   const gb = bytes / (1024 * 1024 * 1024);

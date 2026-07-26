@@ -71,7 +71,7 @@ describe('installation scripts', () => {
     );
     expect(script).toContain('Node.js 22 or newer is required');
     expect(script).toContain('npm_package_spec()');
-    expect(script).toContain('@qwen-code/qwen-code@latest');
+    expect(script).toContain('@lal/cli@latest');
     expect(script).toContain('Installing Qwen Code version:');
     expect(script).toContain('print_logo');
     expect(script).toContain('supports_truecolor()');
@@ -232,7 +232,7 @@ describe('installation scripts', () => {
     expect(script).toContain('Node.js 22 or newer is required');
     expect(script).toContain('Please install Node.js');
     expect(script).toContain(':NpmPackageSpec');
-    expect(script).toContain('@qwen-code/qwen-code@latest');
+    expect(script).toContain('@lal/cli@latest');
     expect(script).toContain('Installing Qwen Code version:');
     expect(script).toContain('QWEN CODE');
     expect(script).toContain(
@@ -635,7 +635,6 @@ describe('standalone release packaging', () => {
 
     const packageScript = readScript('scripts/create-standalone-package.js');
     expect(packageScript).toContain('Copyright 2025 Qwen Team');
-    expect(packageScript).toContain("'bundled/qc-helper/docs'");
     expect(packageScript).toContain('DIST_ALLOWED_ENTRIES');
     expect(packageScript).toContain('Unexpected dist asset');
     expect(packageScript).toContain('topLevelDistEntryForPath(outDir)');
@@ -1948,7 +1947,7 @@ describe('standalone release packaging', () => {
     );
     const prebuildFile = path.join(
       prebuildDir,
-      '@qwen-code+audio-capture.node',
+      '@lal+audio-capture.node',
     );
     const createdPrebuildDir = !existsSync(prebuildDir);
     const createdPrebuild = !existsSync(prebuildFile);
@@ -1971,7 +1970,7 @@ describe('standalone release packaging', () => {
         'qwen-code',
         'lib',
         'node_modules',
-        '@qwen-code',
+        '@lal',
         'audio-capture',
         'dist',
       );
@@ -3732,7 +3731,7 @@ describe('Linux/macOS installer end-to-end', { timeout: 15000 }, () => {
 
         expect(output).toContain('Falling back to npm installation');
         expect(readScript(npmLog)).toContain(
-          'install -g @qwen-code/qwen-code@latest --registry',
+          'install -g @lal/cli@latest --registry',
         );
       } finally {
         rmSync(tmpDir, { recursive: true, force: true });
@@ -3807,7 +3806,7 @@ describe('Linux/macOS installer end-to-end', { timeout: 15000 }, () => {
       );
 
       expect(readScript(npmLog)).toContain(
-        'install -g @qwen-code/qwen-code@0.15.10 --registry',
+        'install -g @lal/cli@0.15.10 --registry',
       );
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
@@ -4037,7 +4036,7 @@ describe('Windows installer end-to-end', { timeout: 30000 }, () => {
 
         expect(output).toContain('Falling back to npm installation');
         expect(readScript(npmLog)).toContain(
-          'install -g @qwen-code/qwen-code@latest --registry',
+          'install -g @lal/cli@latest --registry',
         );
       } finally {
         rmSync(tmpDir, { recursive: true, force: true });
@@ -4075,7 +4074,7 @@ describe('Windows installer end-to-end', { timeout: 30000 }, () => {
       );
 
       expect(readScript(npmLog)).toContain(
-        'install -g @qwen-code/qwen-code@0.15.10 --registry',
+        'install -g @lal/cli@0.15.10 --registry',
       );
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
@@ -4211,9 +4210,7 @@ function ensureMinimalDist({
 
   mkdirSync(path.join(distPath, 'chunks'), { recursive: true });
   mkdirSync(path.join(distPath, 'vendor'), { recursive: true });
-  mkdirSync(path.join(distPath, 'bundled/qc-helper/docs'), {
-    recursive: true,
-  });
+  mkdirSync(path.join(distPath, 'bundled'), { recursive: true });
   writeFileSync(path.join(distPath, 'cli.js'), 'console.log("qwen");\n');
   if (includeCliEntry) {
     writeFileSync(path.join(distPath, 'cli-entry.js'), 'import "./cli.js";\n');
@@ -4232,7 +4229,7 @@ function ensureMinimalDist({
   writeFileSync(path.join(distPath, 'chunks/index.js'), 'export {};\n');
   writeFileSync(
     path.join(distPath, 'package.json'),
-    JSON.stringify({ name: '@qwen-code/qwen-code', version: '0.0.0' }),
+    JSON.stringify({ name: '@lal/cli', version: '0.0.0' }),
   );
   return { backupPath, distPath };
 }
@@ -4331,7 +4328,7 @@ function createFakeWindowsStandaloneArchive(tmpDir) {
   writeFileSync(path.join(packageRoot, 'node', 'node.exe'), 'fake node.exe\n');
   writeFileSync(
     path.join(packageRoot, 'manifest.json'),
-    JSON.stringify({ name: '@qwen-code/qwen-code', target: 'win-x64' }),
+    JSON.stringify({ name: '@lal/cli', target: 'win-x64' }),
   );
 
   const archive = path.join(outDir, 'qwen-code-win-x64.zip');
@@ -4349,7 +4346,7 @@ function createFakeWindowsStandaloneInstall(installRoot) {
 
   writeFileSync(
     path.join(installDir, 'manifest.json'),
-    JSON.stringify({ name: '@qwen-code/qwen-code', target: 'win-x64' }),
+    JSON.stringify({ name: '@lal/cli', target: 'win-x64' }),
   );
   writeFileSync(
     path.join(installDir, 'bin', 'qwen.cmd'),
@@ -4776,7 +4773,7 @@ function createSymlinkStandaloneArchive(tmpDir) {
   chmodSync(path.join(packageRoot, 'node', 'bin', 'node'), 0o755);
   writeFileSync(
     path.join(packageRoot, 'manifest.json'),
-    JSON.stringify({ name: '@qwen-code/qwen-code', target: 'linux-x64' }),
+    JSON.stringify({ name: '@lal/cli', target: 'linux-x64' }),
   );
 
   const outDir = path.join(tmpDir, 'out');
@@ -4811,7 +4808,7 @@ function createTraversalStandaloneArchive(tmpDir) {
   chmodSync(path.join(packageRoot, 'node', 'bin', 'node'), 0o755);
   writeFileSync(
     path.join(packageRoot, 'manifest.json'),
-    JSON.stringify({ name: '@qwen-code/qwen-code', target: 'linux-x64' }),
+    JSON.stringify({ name: '@lal/cli', target: 'linux-x64' }),
   );
   writeFileSync(path.join(tmpDir, 'qwen-slip'), 'path traversal\n');
 

@@ -7,7 +7,7 @@
 import { memo, useCallback, useMemo } from 'react';
 import type { ErrorInfo } from 'react';
 import { Box, Text } from 'ink';
-import { createDebugLogger } from '@qwen-code/qwen-code-core';
+import { createDebugLogger } from '@lal/core';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
 import { theme } from '../semantic-colors.js';
 import { t } from '../../i18n/index.js';

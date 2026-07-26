@@ -7,7 +7,7 @@
 import { act } from '@testing-library/react';
 import { render } from 'ink-testing-library';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SubagentConfig } from '@qwen-code/qwen-code-core';
+import type { SubagentConfig } from '@lal/core';
 import type {
   KeypressHandler,
   Key,

@@ -8,7 +8,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Storage } from '@qwen-code/qwen-code-core';
+import { Storage } from '@lal/core';
 import { createMockCommandContext } from '../test-utils/mockCommandContext.js';
 import {
   collectSessionPathInfo,

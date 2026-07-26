@@ -29,7 +29,6 @@ import { join } from 'node:path';
 import os from 'node:os';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import cliPkgJson from '../packages/cli/package.json' with { type: 'json' };
 
 const argv = yargs(hideBin(process.argv))
   .option('s', {
@@ -47,8 +46,8 @@ const argv = yargs(hideBin(process.argv))
   .option('i', {
     alias: 'image',
     type: 'string',
-    default: cliPkgJson.config.sandboxImageUri,
-    description: 'use <image> name for custom image',
+    default: process.env.LAL_SANDBOX_IMAGE,
+    description: 'use an explicit LAL-controlled image name',
   })
   .option('output-file', {
     type: 'string',
@@ -76,12 +75,12 @@ if (sandboxCommand === 'sandbox-exec') {
 
 console.log(`using ${sandboxCommand} for sandboxing`);
 
-const image = argv.i;
+const image = argv.i ?? '';
 const dockerFile = argv.f;
 
-if (!image.length) {
-  console.warn(
-    'No default image tag specified in gemini-cli/packages/cli/package.json',
+if (!image) {
+  throw new Error(
+    'Sandbox image is required. Pass --image or set LAL_SANDBOX_IMAGE; inherited registry defaults are disabled.',
   );
 }
 

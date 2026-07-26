@@ -6,7 +6,7 @@
 
 import { render } from 'ink-testing-library';
 import { AnsiOutputText } from './AnsiOutput.js';
-import type { AnsiOutput, AnsiToken } from '@qwen-code/qwen-code-core';
+import type { AnsiOutput, AnsiToken } from '@lal/core';
 
 // Helper to create a valid AnsiToken with default values
 const createAnsiToken = (overrides: Partial<AnsiToken>): AnsiToken => ({

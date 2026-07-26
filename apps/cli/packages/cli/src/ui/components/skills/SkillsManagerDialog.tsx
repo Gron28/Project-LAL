@@ -29,7 +29,7 @@ import type {
   Config,
   SkillConfig,
   SkillLevel,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { LoadedSettings } from '../../../config/settings.js';
 import { SettingScope } from '../../../config/settings.js';
 import { t } from '../../../i18n/index.js';

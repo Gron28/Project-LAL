@@ -6,11 +6,11 @@
 
 import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
-import { isWithinRoot } from '@qwen-code/qwen-code-core';
+import { isWithinRoot } from '@lal/core';
 import { FsError, type FsErrorKind } from './errors.js';
 
 // `canonicalizeWorkspace` and `MAX_WORKSPACE_PATH_LENGTH` lifted to
-// `@qwen-code/acp-bridge` in #4175 PR 22b — the bridge package owns the
+// `@lal/acp-bridge` in #4175 PR 22b — the bridge package owns the
 // cross-module workspace-canonicalization contract directly. Imported
 // here for the local `canonicalizeBoundWorkspaceCached` fast-path AND
 // re-exported so callers like `config.ts` / `settings.ts` /
@@ -20,7 +20,7 @@ import {
   canonicalizeWorkspace,
   canonicalizeWorkspaces,
   MAX_WORKSPACE_PATH_LENGTH,
-} from '@qwen-code/acp-bridge/workspacePaths';
+} from '@lal/acp-bridge/workspacePaths';
 export {
   canonicalizeWorkspace,
   canonicalizeWorkspaces,

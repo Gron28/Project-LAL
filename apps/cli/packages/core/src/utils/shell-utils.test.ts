@@ -1254,3 +1254,76 @@ describe('buildShellExecWarnings', () => {
     ).toEqual([COMMAND_SUBSTITUTION_WARNING]);
   });
 });
+
+// Windows shell preference (Tier 2 #9). The operator uses cmd.exe on Windows and
+// asked for bash: cmd.exe cannot chain with ';' or newlines and its single
+// quotes do not quote, all of which the model keeps attempting. Git Bash is
+// already fully supported by the quoting/guidance paths — it was simply never
+// selected unless MSYSTEM was set, which it is not when `lal` starts from cmd.
+//
+// Loaded through a fresh module per case because the bash-path lookup memoises
+// in module scope.
+describe('getShellConfiguration on Windows prefers a real bash.exe', () => {
+
+  async function load(opts: {
+    bashExists: boolean;
+    env?: Record<string, string | undefined>;
+  }) {
+    vi.resetModules();
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      return {
+        ...actual,
+        constants: actual.constants,
+        accessSync: (p: string, mode?: number) => {
+          if (typeof p === 'string' && p.toLowerCase().endsWith('bash.exe')) {
+            if (opts.bashExists) return undefined;
+            throw new Error('ENOENT');
+          }
+          return actual.accessSync(p, mode);
+        },
+      };
+    });
+    mockPlatform.mockReturnValue('win32');
+    for (const key of ['ComSpec', 'MSYSTEM', 'TERM', 'LAL_SHELL', 'PATH']) {
+      delete process.env[key];
+    }
+    Object.assign(process.env, opts.env ?? {});
+    const mod = await import('./shell-utils.js');
+    return mod.getShellConfiguration();
+  }
+
+  afterEach(() => {
+    vi.doUnmock('node:fs');
+    vi.resetModules();
+  });
+
+  it('uses bash when Git Bash is installed, even with MSYSTEM unset', async () => {
+    const config = await load({ bashExists: true });
+    expect(config.shell).toBe('bash');
+    expect(config.argsPrefix).toEqual(['-c']);
+    expect(config.executable.toLowerCase()).toContain('bash.exe');
+  });
+
+  it('falls back to cmd.exe when no bash.exe exists', async () => {
+    const config = await load({ bashExists: false });
+    expect(config.shell).toBe('cmd');
+    expect(config.argsPrefix).toEqual(['/d', '/s', '/c']);
+  });
+
+  it('honours LAL_SHELL=cmd even when bash is installed', async () => {
+    const config = await load({ bashExists: true, env: { LAL_SHELL: 'cmd' } });
+    expect(config.shell).toBe('cmd');
+  });
+
+  it('honours LAL_SHELL=powershell even when bash is installed', async () => {
+    const config = await load({
+      bashExists: true,
+      env: {
+        LAL_SHELL: 'powershell',
+        ComSpec: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      },
+    });
+    expect(config.shell).toBe('powershell');
+  });
+});

@@ -13,7 +13,7 @@ import {
   Storage,
   type Config,
   type ExtensionMutationEvent,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { ExtensionRefreshState } from './extension-refresh-state.js';
 
 const debugLogger = createDebugLogger('EXTENSION_FILE_WATCHER');

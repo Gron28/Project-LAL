@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { SessionService } from '@qwen-code/qwen-code-core';
+import { SessionService } from '@lal/core';
 import { SessionNotFoundError } from '../acp-session-bridge.js';
 import {
   collectSessionData,

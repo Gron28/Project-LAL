@@ -869,6 +869,11 @@ async function runOverridePath(
         subagent.getFinalText(),
         mode,
       );
+      if (typeof finalText === 'string' && !finalText.trim()) {
+        throw new Error(
+          `Workflow subagent ${workflowAgentId} exited without a model-visible result; any workspace mutations are partial and unreviewed.`,
+        );
+      }
       // P5 R1: token reporting moved up to the single site after
       // `subagent.execute()` returns — see the `reportTokens(...)` call
       // above the schema/non-schema branching.

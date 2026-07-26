@@ -5,7 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Config } from '@qwen-code/qwen-code-core';
+import type { Config } from '@lal/core';
 import { reloadPluginsCommand } from './reload-plugins-command.js';
 import type { CommandContext } from './types.js';
 import { reloadPluginsRuntime } from '../../config/extension-runtime-reload.js';

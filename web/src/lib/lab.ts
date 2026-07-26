@@ -6,10 +6,57 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, ChildProcess, execSync } from "node:child_process";
 import { gradeItem, stripThink, type BenchItem } from "./graders";
+import { resolvePlatformDirectories } from "./host-profile";
+import { ContextProfileStore, contextCandidates, contextHardwareFingerprint, makeContextProfile, readGgufContextLength } from "./context-profile";
+import type { ContextProfile } from "@lal/protocol";
 export type { BenchItem } from "./graders";
+export type ModelRuntimeSettings = {
+  contextTokens: number;
+  maxOutputTokens: number;
+  gpuLayers: number | null;
+  temperature: number;
+  topP: number;
+  topK: number;
+  repeatPenalty: number;
+  thinking: boolean;
+  updatedAt: string | null;
+};
 
 const ROOT = path.resolve(process.cwd(), "..");
 export const MODELS_DIR = path.join(ROOT, "models");
+/** Legacy checkout models remain readable during migration. New verified imports
+ * live in the external owner-data root and are discovered by every existing
+ * chat/code/HIVE selector through this one function. */
+export function modelDirectories(): string[] {
+  return [...new Set([MODELS_DIR, path.join(resolvePlatformDirectories().data, "models")])];
+}
+export type ModelScanRoot = {
+  kind: "gguf" | "ollama";
+  path: string;
+  exists: boolean;
+  readable: boolean;
+  detail?: string;
+};
+
+/** Human-readable discovery facts for the Models UI. Discovery remains
+ * read-only: a missing owner-data directory is a valid empty state, while a
+ * present-but-unreadable directory is surfaced as a failure instead of being
+ * silently converted to "0 models". */
+export function modelScanRoots(): ModelScanRoot[] {
+  const roots: ModelScanRoot[] = modelDirectories().map((directory) => {
+    const exists = fs.existsSync(directory);
+    if (!exists) return { kind: "gguf", path: directory, exists: false, readable: true };
+    try { fs.accessSync(directory, fs.constants.R_OK); return { kind: "gguf", path: directory, exists: true, readable: true }; }
+    catch (error) { return { kind: "gguf", path: directory, exists: true, readable: false, detail: error instanceof Error ? error.message : String(error) }; }
+  });
+  const exists = fs.existsSync(OLLAMA_STORE);
+  if (!exists) roots.push({ kind: "ollama", path: OLLAMA_STORE, exists: false, readable: true });
+  else {
+    try { fs.accessSync(OLLAMA_STORE, fs.constants.R_OK); roots.push({ kind: "ollama", path: OLLAMA_STORE, exists: true, readable: true }); }
+    catch (error) { roots.push({ kind: "ollama", path: OLLAMA_STORE, exists: true, readable: false, detail: error instanceof Error ? error.message : String(error) }); }
+  }
+  return roots;
+}
 const LLAMA_DIR = path.join(ROOT, "llama", "llama-b9835");
 const LLAMA_SERVER = path.join(LLAMA_DIR, "llama-server");
 const OLLAMA_STORE = "/usr/share/ollama/.ollama/models";
@@ -18,6 +65,12 @@ const CONVOS_DIR = path.join(DATA, "conversations");
 const EXPERIMENTS_DIR = path.join(DATA, "experiments");
 const SETTINGS_FILE = path.join(DATA, "settings.json");
 export const SERVE_PORT = 8099;
+export function localRuntimeAvailability() {
+  return {
+    llamaServer: fs.existsSync(LLAMA_SERVER) ? "available" as const : "missing" as const,
+    ollamaStore: fs.existsSync(OLLAMA_STORE) ? "available" as const : "missing" as const,
+  };
+}
 
 // Training env vars — defaults target this project's dev box (AMD RDNA2 on Linux via
 // ROCm/HIP). HSA_* vars are ROCm-specific and are simply ignored by CUDA/CPU torch, so
@@ -47,7 +100,17 @@ export const DEFAULT_OPTIONS: Options = {
   num_ctx: 8192, num_predict: -1, num_gpu: null,
   temperature: 0.6, top_p: 0.9, top_k: 40, repeat_penalty: 1.1,
 };
-type SettingsFile = { model?: string; options?: Partial<Options>; system?: string; web?: boolean; groundDocs?: boolean; serveIdleMinutes?: number };
+type SettingsFile = {
+  model?: string;
+  options?: Partial<Options>;
+  modelSettings?: Record<string, Partial<ModelRuntimeSettings>>;
+  system?: string;
+  web?: boolean;
+  groundDocs?: boolean;
+  serveIdleMinutes?: number;
+};
+const CONTEXT_PROFILES_FILE = path.join(DATA, "context-profiles.json");
+const contextProfiles = new ContextProfileStore(CONTEXT_PROFILES_FILE);
 
 // serveIdleMinutes: llama-server auto-unloads after this long with no model use
 // and no live run (0 = never). Before this existed, the singleton stayed GPU-
@@ -60,7 +123,7 @@ export function readSettings() {
   const models = publicModels();
   const model = s.model && models.find((m) => m.name === s.model) ? s.model! : models[0]?.name ?? "";
   return {
-    model, options: { ...DEFAULT_OPTIONS, ...(s.options || {}) }, system: s.system ?? "", web: !!s.web, groundDocs: !!s.groundDocs,
+    model, options: { ...DEFAULT_OPTIONS, ...(s.options || {}) }, modelSettings: s.modelSettings ?? {}, system: s.system ?? "", web: !!s.web, groundDocs: !!s.groundDocs,
     serveIdleMinutes: typeof s.serveIdleMinutes === "number" ? s.serveIdleMinutes : DEFAULT_SERVE_IDLE_MINUTES,
   };
 }
@@ -73,8 +136,68 @@ export function writeSettings(patch: SettingsFile) {
   if (patch.groundDocs !== undefined) s.groundDocs = patch.groundDocs;
   if (patch.serveIdleMinutes !== undefined) s.serveIdleMinutes = patch.serveIdleMinutes;
   if (patch.options) s.options = { ...(s.options || {}), ...patch.options };
+  if (patch.modelSettings) {
+    s.modelSettings = { ...(s.modelSettings || {}) };
+    for (const [model, values] of Object.entries(patch.modelSettings)) {
+      s.modelSettings[model] = { ...(s.modelSettings[model] || {}), ...values };
+    }
+  }
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(s, null, 2));
   return s;
+}
+
+function finiteNumber(value: unknown, fallback: number, min: number, max: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+}
+
+/** The one durable per-model policy read by Web, CLI, and the runtime gateway. */
+export function modelRuntimeSettings(model: string): ModelRuntimeSettings {
+  const settings = readSettings();
+  const saved = settings.modelSettings[model] ?? {};
+  const nativeMaximum = nativeContextLimit(model);
+  const info = publicModels().find((item) => item.name === model);
+  const safeUnsavedDefault = info?.source === "local" ? Math.min(32_768, nativeMaximum ?? 32_768) : OLLAMA_CLI_CONTEXT;
+  const fallbackContext = Math.max(safeUnsavedDefault, settings.options.num_ctx || DEFAULT_OPTIONS.num_ctx);
+  const contextMaximum = nativeMaximum ?? 1_048_576;
+  return {
+    contextTokens: Math.round(finiteNumber(saved.contextTokens, fallbackContext, 2_048, contextMaximum)),
+    maxOutputTokens: Math.round(finiteNumber(saved.maxOutputTokens, settings.options.num_predict, -1, 262_144)),
+    gpuLayers: saved.gpuLayers === null ? null : Math.round(finiteNumber(saved.gpuLayers, settings.options.num_gpu ?? 99, 0, 999)),
+    temperature: finiteNumber(saved.temperature, settings.options.temperature, 0, 2),
+    topP: finiteNumber(saved.topP, settings.options.top_p, 0, 1),
+    topK: Math.round(finiteNumber(saved.topK, settings.options.top_k, 0, 10_000)),
+    repeatPenalty: finiteNumber(saved.repeatPenalty, settings.options.repeat_penalty, 0, 2),
+    thinking: typeof saved.thinking === "boolean" ? saved.thinking : true,
+    updatedAt: typeof saved.updatedAt === "string" ? saved.updatedAt : null,
+  };
+}
+
+export function writeModelRuntimeSettings(model: string, patch: Partial<ModelRuntimeSettings>): ModelRuntimeSettings {
+  if (!publicModels().some((item) => item.name === model)) throw new Error(`unknown model: ${model}`);
+  const current = modelRuntimeSettings(model);
+  const nativeMaximum = nativeContextLimit(model) ?? 1_048_576;
+  const next: ModelRuntimeSettings = {
+    contextTokens: Math.round(finiteNumber(patch.contextTokens, current.contextTokens, 2_048, nativeMaximum)),
+    maxOutputTokens: Math.round(finiteNumber(patch.maxOutputTokens, current.maxOutputTokens, -1, 262_144)),
+    gpuLayers: patch.gpuLayers === null ? null : patch.gpuLayers === undefined ? current.gpuLayers : Math.round(finiteNumber(patch.gpuLayers, current.gpuLayers ?? 99, 0, 999)),
+    temperature: finiteNumber(patch.temperature, current.temperature, 0, 2),
+    topP: finiteNumber(patch.topP, current.topP, 0, 1),
+    topK: Math.round(finiteNumber(patch.topK, current.topK, 0, 10_000)),
+    repeatPenalty: finiteNumber(patch.repeatPenalty, current.repeatPenalty, 0, 2),
+    thinking: typeof patch.thinking === "boolean" ? patch.thinking : current.thinking,
+    updatedAt: new Date().toISOString(),
+  };
+  writeSettings({ modelSettings: { [model]: next } });
+  return next;
+}
+
+export function allModelRuntimeSettings(): Record<string, ModelRuntimeSettings> {
+  return Object.fromEntries(publicModels().map((model) => [model.name, modelRuntimeSettings(model.name)]));
+}
+
+export function modelSettingsRevision(): string {
+  const settings = readSettings();
+  return crypto.createHash("sha256").update(JSON.stringify({ model: settings.model, models: allModelRuntimeSettings() })).digest("hex").slice(0, 16);
 }
 
 // A local model is one or both of <name>-q4.gguf / <name>-f16.gguf. q4 is preferred
@@ -82,9 +205,8 @@ export function writeSettings(patch: SettingsFile) {
 // its q4 fits VRAM entirely. The f16 is kept as the requantization source.
 const GGUF_SUFFIXES = ["-q4.gguf", "-f16.gguf"] as const;
 export function modelFile(name: string): string | null {
-  for (const suf of GGUF_SUFFIXES) {
-    const p = path.join(MODELS_DIR, name + suf);
-    if (fs.existsSync(p)) return p;
+  for (const directory of modelDirectories()) for (const suf of GGUF_SUFFIXES) {
+    const p = path.join(directory, name + suf); if (fs.existsSync(p)) return p;
   }
   return null;
 }
@@ -95,16 +217,14 @@ export function deleteModel(name: string, source: "local" | "ollama" = "local") 
     return;
   }
   if (servingModel() === name) stopServing();
-  for (const suf of GGUF_SUFFIXES) {
-    try { fs.unlinkSync(path.join(MODELS_DIR, name + suf)); } catch {}
-  }
+  for (const directory of modelDirectories()) for (const suf of GGUF_SUFFIXES) try { fs.unlinkSync(path.join(directory, name + suf)); } catch {}
 }
 export function renameModel(oldName: string, newName: string): { ok: boolean; error?: string } {
   const clean = newName.replace(/[^a-zA-Z0-9_-]/g, "");
   if (!clean) return { ok: false, error: "invalid name" };
-  const pairs = GGUF_SUFFIXES
-    .map((suf) => ({ src: path.join(MODELS_DIR, oldName + suf), dst: path.join(MODELS_DIR, clean + suf) }))
-    .filter((p) => fs.existsSync(p.src));
+  const pairs = modelDirectories().flatMap((directory) => GGUF_SUFFIXES
+    .map((suf) => ({ src: path.join(directory, oldName + suf), dst: path.join(directory, clean + suf) }))
+    .filter((p) => fs.existsSync(p.src)));
   if (!pairs.length) return { ok: false, error: "model not found" };
   if (pairs.some((p) => fs.existsSync(p.dst))) return { ok: false, error: "name already taken" };
   if (servingModel() === oldName) stopServing();
@@ -119,30 +239,88 @@ export function renameModel(oldName: string, newName: string): { ok: boolean; er
 }
 
 export type ModelInfo = { name: string; source: "local" | "ollama"; path: string; gb: number };
-export const MANAGED_MODEL_PROFILE_SUFFIX = "-lal-cli-16k";
-export const OLLAMA_CLI_CONTEXT = 16384;
+// Context-agnostic on purpose. The suffix used to be "-lal-cli-16k" and the
+// number in the NAME is exactly what rotted when the value changed, so it no
+// longer encodes one.
+export const MANAGED_MODEL_PROFILE_SUFFIX = "-lal-cli-ctx";
+/**
+ * Context baked into the managed Ollama profile, raised from 16,384 on
+ * 2026-07-25 after measuring what this box actually does.
+ *
+ * The 16k cap was assumed to be protecting VRAM. It was not: gemma4:12b is 7.6 GB
+ * of weights against 7.98 GB of VRAM, so at 16k it was ALREADY running 23% on the
+ * CPU. Gemma's interleaved sliding-window attention means only the global layers
+ * scale with context, so KV growth is unusually cheap here. Measured on an
+ * RX 6650 XT (8 GB) with the desktop running:
+ *
+ *   ctx      total    CPU/GPU    generation   (ollama 0.30.10)
+ *   16,384   8.7 GB   23%/77%    14.0 tok/s
+ *   32,768   8.8 GB   24%/76%    -
+ *   65,536   9.0 GB   29%/71%    11.5 tok/s
+ *   102,400  9.1 GB   32%/68%    10.2 tok/s
+ *
+ * Re-measured on ollama 0.32.3 the same day (weights unchanged - the pull returned
+ * the identical manifest, so this is a runtime win, not a model one). Full curve:
+ *
+ *   ctx      total    CPU/GPU    generation   vs 16k
+ *   16,384   7.9 GB   12%/88%    14.9 tok/s   -
+ *   32,768   8.0 GB   14%/86%    14.4 tok/s   -3%
+ *   65,536   8.2 GB   19%/81%    12.3 tok/s   -17%
+ *   102,400  8.3 GB   23%/77%    11.4 tok/s   -24%
+ *
+ * The knee is at 32,768: doubling the context costs 3%. Everything above it is
+ * paid for in KV cache displacing model layers onto the CPU. 102,400 is set
+ * because it was asked for explicitly; 32,768 is the value to choose if
+ * generation speed matters more than reach.
+ *
+ * Note the cost is STANDING, not usage-based: the KV cache is allocated when the
+ * model loads, so a short conversation at num_ctx=102,400 still generates at
+ * 11.4 tok/s rather than 14.9.
+ *
+ * Separately measured, and the real long-context tax: prefill runs at ~336 tok/s,
+ * so a COLD 100k prompt costs ~5 minutes before the first token. Incremental turns
+ * reuse the KV prefix and do not pay this, but Ollama unloads the model after ~5
+ * minutes idle and the cache dies with it, so a pause turns the next turn into a
+ * cold start. Raising OLLAMA_KEEP_ALIVE is NOT the fix on this box: 8.3 GB resident
+ * would starve llama-server's own model on an 8 GB card.
+ *
+ * So 6.25x the context costs 0.4 GB and ~27% of generation speed. That trade was
+ * requested explicitly; 65,536 is the cheaper middle if speed regresses too far
+ * in practice.
+ *
+ * NOT MEASURED: prompt-eval time on a genuinely long prompt. Generation was timed
+ * with a short one. With a third of the model on CPU, filling 100k tokens of
+ * context will be materially slower than filling 16k, and that cost lands before
+ * the first token appears.
+ */
+export const OLLAMA_CLI_CONTEXT = 102_400;
 export function isPublicModelName(name: string): boolean {
   return !name.endsWith(MANAGED_MODEL_PROFILE_SUFFIX);
 }
 export function publicModels(): ModelInfo[] {
   return allModels().filter((model) => isPublicModelName(model.name));
 }
+function preferredRuntimeBackend(model: ModelInfo | undefined): "ollama" | "llama.cpp" {
+  return model?.source === "ollama" && /gemma/i.test(model.name) ? "ollama" : "llama.cpp";
+}
 export type ServingLora = { key: string; path: string };
 export type LoraRequest = { id: number; scale: number }[];
 export function allModels(): ModelInfo[] {
   const out: ModelInfo[] = [];
   try {
-    const files = fs.readdirSync(MODELS_DIR);
     const seen = new Set<string>();
-    for (const suf of GGUF_SUFFIXES)               // q4 first — it wins when both exist
+    for (const directory of modelDirectories()) {
+      let files: string[] = []; try { files = fs.readdirSync(directory); } catch { continue; }
+      for (const suf of GGUF_SUFFIXES)               // q4 first — it wins when both exist
       for (const f of files)
         if (f.endsWith(suf)) {
           const name = f.slice(0, -suf.length);
           if (seen.has(name)) continue;
           seen.add(name);
-          const p = path.join(MODELS_DIR, f);
+          const p = path.join(directory, f);
           out.push({ name, source: "local", path: p, gb: +(fs.statSync(p).size / 1e9).toFixed(1) });
         }
+    }
   } catch {}
   const base = path.join(OLLAMA_STORE, "manifests");
   const walk = (d: string) => {
@@ -168,21 +346,116 @@ export function allModels(): ModelInfo[] {
 }
 
 // ---- llama-server singleton (persists across requests in one Node process) ----
-type Srv = { proc: ChildProcess | null; model: string | null; ollamaModel: string | null; ollamaCtx?: number; ollamaOffload?: string | null; lastUsedAt?: number; loras: ServingLora[]; ctx: number; offload?: string | null };
+type Srv = { proc: ChildProcess | null; model: string | null; ollamaModel: string | null; ollamaCtx?: number; ollamaOffload?: string | null; lastUsedAt?: number; loras: ServingLora[]; ctx: number; offload?: string | null; inflight?: number };
 const g = globalThis as unknown as { __lab_srv?: Srv; __lab_idle_reaper?: ReturnType<typeof setInterval> };
 if (!g.__lab_srv) g.__lab_srv = { proc: null, model: null, ollamaModel: null, loras: [], ctx: 0 };
 const srv = g.__lab_srv;
 if (!Array.isArray(srv.loras)) srv.loras = [];
 if (!Number.isFinite(srv.ctx)) srv.ctx = 0;
+// A restart or module reload leaves no stream alive; never inherit a stale count.
+if (!Number.isFinite(srv.inflight)) srv.inflight = 0;
 
-async function health(): Promise<boolean> {
-  try { return (await fetch(`http://127.0.0.1:${SERVE_PORT}/health`)).ok; } catch { return false; }
+// A single unhealthy probe must never authorize a kill. The bare fetch here
+// used to have no timeout and a catch that turned EVERY error into "dead" —
+// one dropped probe was enough to send SIGKILL to a server that was mid-way
+// through streaming somebody's file (2026-07-24 diagnosis, PLAN 3.2).
+// How long a restart waits for live generations to finish before refusing.
+// Generous on purpose: a slow local model emitting a whole HTML file can hold
+// the stream for a minute, and killing it is strictly worse than waiting.
+const RESTART_DRAIN_MS = 120_000;
+const HEALTH_TIMEOUT_MS = 2_000;
+const HEALTH_FAILURES_BEFORE_DEAD = 3;
+
+async function healthProbe(): Promise<boolean> {
+  try {
+    const r = await fetch(`http://127.0.0.1:${SERVE_PORT}/health`,
+                          { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
+    return r.ok;
+  } catch { return false; }
 }
+
+/** True only after consecutive failures — a transient blip is not death. */
+async function health(): Promise<boolean> {
+  for (let attempt = 0; attempt < HEALTH_FAILURES_BEFORE_DEAD; attempt++) {
+    if (await healthProbe()) return true;
+    if (attempt < HEALTH_FAILURES_BEFORE_DEAD - 1) await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
+// ---- in-flight generation guard ----
+// The GPU is a singleton and several unrelated callers (the CLI gateway, web
+// chat, deliberate, the vision model swap in agent-tools, lens teardown) each
+// decide independently whether the server needs restarting. Before this guard
+// existed, any of those decisions executed an unconditional `kill -9` on a
+// server that could be streaming — the model's half-written file died with it,
+// which is exactly the "file writing gets stopped mid-generation" report.
+//
+// Callers that stream from llama-server MUST wrap the stream in
+// `beginGeneration()` … `release()` so a restart can drain instead of kill.
+export function generationsInFlight(): number { return srv.inflight ?? 0; }
+export function beginGeneration(): () => void {
+  srv.inflight = (srv.inflight ?? 0) + 1;
+  touchServing();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    srv.inflight = Math.max(0, (srv.inflight ?? 1) - 1);
+    touchServing();
+  };
+}
+
+/** Wait for live streams to finish. Returns false if they outlast the wait. */
+async function drainGenerations(waitMs: number): Promise<boolean> {
+  const deadline = Date.now() + waitMs;
+  while (generationsInFlight() > 0) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return true;
+}
+
 export function servingModel() { return srv.model ?? srv.ollamaModel; }
-export function stopServing() {
-  try { srv.proc?.kill("SIGKILL"); } catch {}
-  try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
+
+/**
+ * Free the GPU for another backend, waiting for live generations rather than
+ * killing them. Returns false if something is still streaming after `waitMs`,
+ * leaving the server up — the caller must handle that instead of proceeding.
+ */
+export async function parkServing(waitMs = RESTART_DRAIN_MS): Promise<boolean> {
+  if (!(await drainGenerations(waitMs))) return false;
+  return stopServing(false);
+}
+
+/**
+ * Stop the served model.
+ *
+ * `force` is for deliberate owner actions (deleting or renaming a model, an
+ * explicit unload) where the caller has already accepted that any running
+ * generation dies. Everything else should leave it false and handle `false`:
+ * killing a live stream is how partial files get lost.
+ */
+export function stopServing(force = true): boolean {
+  if (!force && generationsInFlight() > 0) return false;
+  killServerProcess();
   srv.proc = null; srv.model = null; srv.loras = []; srv.ctx = 0; srv.offload = null;
+  return true;
+}
+
+/**
+ * Kill the llama-server we own. The pattern-based `pkill` is a last resort for
+ * orphans left by a previous Node process — it matches on the port alone, so
+ * running it while we hold a healthy tracked child is how an unrelated
+ * in-flight request got killed. Only sweep when we have no child to kill.
+ */
+function killServerProcess() {
+  const tracked = srv.proc;
+  if (tracked) {
+    try { tracked.kill("SIGKILL"); } catch {}
+    return;
+  }
+  try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
 }
 
 export function markOllamaServing(model: string, context: number, offload: string | null) {
@@ -311,24 +584,99 @@ export type ActivatedModelRuntime = {
   backend: "ollama" | "llama.cpp";
   context: number;
   gpuOffload: string;
+  contextProfile: ContextProfile;
 };
+
+function contextIdentity(model: string, backend: "ollama" | "llama.cpp"): string {
+  const info = publicModels().find((item) => item.name === model);
+  let artifact = `${info?.path ?? model}:unknown`;
+  try {
+    const stat = info ? fs.statSync(info.path) : null;
+    if (stat) artifact = `${info!.path}:${stat.size}:${stat.mtimeMs}`;
+  } catch {}
+  let runtime: string = backend;
+  if (backend === "llama.cpp") {
+    try { const stat = fs.statSync(LLAMA_SERVER); runtime = `${backend}:${stat.size}:${stat.mtimeMs}`; } catch {}
+  }
+  return crypto.createHash("sha256").update(`${artifact}\n${contextHardwareFingerprint(runtime)}`).digest("hex");
+}
+
+const nativeContextCache = new Map<string, number | null>();
+function nativeContextLimit(model: string): number | null {
+  const info = publicModels().find((item) => item.name === model);
+  if (!info || preferredRuntimeBackend(info) === "ollama") return null;
+  try {
+    const stat = fs.statSync(info.path), key = `${info.path}:${stat.size}:${stat.mtimeMs}`;
+    if (nativeContextCache.has(key)) return nativeContextCache.get(key) ?? null;
+    const value = readGgufContextLength(info.path);
+    nativeContextCache.set(key, value);
+    return value;
+  } catch { return null; }
+}
+
+export function contextProfileForModel(model: string): ContextProfile {
+  const info = publicModels().find((item) => item.name === model);
+  const backend = preferredRuntimeBackend(info);
+  const fingerprint = contextIdentity(model, backend);
+  const cached = contextProfiles.get(fingerprint);
+  const runtime = servingRuntimeStatus();
+  const active = runtime.alive && runtime.model === model && runtime.backend === backend ? runtime.context : null;
+  const maximum = nativeContextLimit(model);
+  const requested = Math.min(modelRuntimeSettings(model).contextTokens, maximum ?? Number.POSITIVE_INFINITY);
+  if (cached) {
+    const verified = cached.verifiedTokens;
+    return {
+    ...cached, modelMaxTokens: maximum ?? cached.modelMaxTokens, requestedTokens: requested,
+    // Verification is durable, residency is not. Never present the last
+    // successful allocation/offload as active after the backend was unloaded.
+    activeTokens: active,
+    gpuOffload: active ? runtime.gpuOffload : null,
+    verification: active
+      ? active >= requested ? "verified" : "degraded"
+      : verified != null && verified >= requested ? "verified" : "planned",
+    source: active ? "runtime" : "cache",
+    ...(verified != null && verified < requested
+      ? { reason: `requested ${requested} tokens; highest verified allocation is ${verified}` }
+      : {}),
+  };
+  }
+  return makeContextProfile({ model, backend, modelMaxTokens: maximum, requestedTokens: requested, activeTokens: active, fingerprint, source: active ? "runtime" : "fallback", gpuOffload: active ? runtime.gpuOffload : null });
+}
+
+export function resolvedContextTarget(model: string, minimum = 0): number {
+  const profile = contextProfileForModel(model);
+  const requested = Math.max(minimum, profile.requestedTokens);
+  return profile.modelMaxTokens ? Math.min(requested, profile.modelMaxTokens) : requested;
+}
+
+function recordVerifiedContext(model: string, backend: "ollama" | "llama.cpp", requested: number, active: number, offload: string): ContextProfile {
+  const previous = contextProfileForModel(model);
+  const profile = makeContextProfile({
+    model, backend, modelMaxTokens: previous.modelMaxTokens,
+    requestedTokens: requested, activeTokens: active, verifiedTokens: Math.max(previous.verifiedTokens ?? 0, active),
+    fingerprint: contextIdentity(model, backend), source: "runtime", gpuOffload: offload,
+    ...(active < requested ? { reason: `backend allocated ${active} of ${requested} requested tokens` } : {}),
+  });
+  contextProfiles.put(profile);
+  return profile;
+}
 
 export function managedOllamaModel(model: string): string {
   const candidate = `${model}${MANAGED_MODEL_PROFILE_SUFFIX}`;
   if (model.toLowerCase().includes("gemma")) {
     if (!allModels().some((item) => item.name === candidate)) {
-      throw new Error(`managed 16K profile is missing for ${model}; run update-all.sh`);
+      throw new Error(`managed long-context profile is missing for ${model}; run update-all.sh`);
     }
     return candidate;
   }
   return model;
 }
 
-export async function verifyOllamaRuntime(model: string): Promise<{ context: number; offload: string }> {
+export async function verifyOllamaRuntime(model: string, requestedContext = OLLAMA_CLI_CONTEXT): Promise<{ context: number; offload: string }> {
   const loaded = await fetch("http://127.0.0.1:11434/api/generate", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model, prompt: "", stream: false, keep_alive: "10m" }),
+    body: JSON.stringify({ model, prompt: "", stream: false, keep_alive: "10m", options: { num_ctx: requestedContext, num_predict: 1 } }),
     signal: AbortSignal.timeout(180_000),
   });
   if (!loaded.ok) throw new Error(`Ollama failed to load ${model}: HTTP ${loaded.status}`);
@@ -348,15 +696,15 @@ export async function verifyOllamaRuntime(model: string): Promise<{ context: num
 }
 
 /** Single-GPU model handoff used by both settings switches and inference. */
-export async function activatePublicModel(model: string, minContext = 32768): Promise<ActivatedModelRuntime> {
+export async function activatePublicModel(model: string, minContext = 0): Promise<ActivatedModelRuntime> {
   const info = publicModels().find((item) => item.name === model);
   if (!info) throw new Error(`unknown or internal model: ${model}`);
   const current = servingRuntimeStatus();
-  const expectedBackend = info.source === "ollama" ? "ollama" : "llama.cpp";
+  const expectedBackend = preferredRuntimeBackend(info);
   // Gemma is exposed by its public name but deliberately runs through the
   // visible managed 16K Ollama profile. Do not compare that profile against
   // the generic 32K llama.cpp request or it will be unloaded on every turn.
-  const requiredContext = info.source === "ollama" ? OLLAMA_CLI_CONTEXT : minContext;
+  const requiredContext = expectedBackend === "ollama" ? resolvedContextTarget(model, Math.max(OLLAMA_CLI_CONTEXT, minContext)) : resolvedContextTarget(model, minContext);
   const canReuseCurrent =
     current.alive &&
     current.model === model &&
@@ -366,14 +714,18 @@ export async function activatePublicModel(model: string, minContext = 32768): Pr
     await stopAllServing();
   }
 
-  if (info.source === "ollama") {
+  if (expectedBackend === "ollama") {
     // llama.cpp and Ollama share one GPU. Ensure the old local process is gone
     // before asking Ollama to make the requested profile resident.
     if (servingRuntimeStatus().backend === "llama.cpp") await stopAllServing();
     const runtimeProfile = managedOllamaModel(model);
-    const verified = await verifyOllamaRuntime(runtimeProfile);
+    const verified = await verifyOllamaRuntime(runtimeProfile, requiredContext);
+    if (verified.context < requiredContext) {
+      throw new Error(`Ollama loaded ${model} with ${verified.context} context, expected at least ${requiredContext}`);
+    }
     markOllamaServing(model, verified.context, verified.offload);
-    return { model, runtimeProfile, backend: "ollama", context: verified.context, gpuOffload: verified.offload };
+    const contextProfile = recordVerifiedContext(model, "ollama", requiredContext, verified.context, verified.offload);
+    return { model, runtimeProfile, backend: "ollama", context: verified.context, gpuOffload: verified.offload, contextProfile };
   }
 
   await ensureServing(model, requiredContext);
@@ -385,7 +737,55 @@ export async function activatePublicModel(model: string, minContext = 32768): Pr
     throw new Error(`llama.cpp loaded ${model} with ${verified.context ?? "unknown"} context, expected at least ${requiredContext}`);
   }
   if (!verified.gpuOffload) throw new Error(`llama.cpp did not report GPU/offload state for ${model}`);
-  return { model, runtimeProfile: model, backend: "llama.cpp", context: verified.context!, gpuOffload: verified.gpuOffload };
+  const contextProfile = recordVerifiedContext(model, "llama.cpp", requiredContext, verified.context!, verified.gpuOffload);
+  return { model, runtimeProfile: model, backend: "llama.cpp", context: verified.context!, gpuOffload: verified.gpuOffload, contextProfile };
+}
+
+/** Explicit, disruptive optimization pass used by the Models UI. */
+export async function probePublicModelContext(model: string, emit?: (profile: ContextProfile) => void): Promise<ContextProfile> {
+  const initial = contextProfileForModel(model);
+  const candidates = contextCandidates(initial.modelMaxTokens);
+  const ascending = candidates.filter((value) => value >= 32_768).sort((a, b) => a - b);
+  const fallbacks = candidates.filter((value) => value < 32_768).sort((a, b) => b - a);
+  let best: ContextProfile | null = null;
+  const probe = async (candidate: number): Promise<boolean> => {
+    emit?.({ ...initial, requestedTokens: candidate, verification: "probing", reason: undefined });
+    try {
+      await stopAllServing();
+      // Passing the candidate bypasses no limit: activatePublicModel clamps to
+      // native metadata and verifies the backend-reported allocation.
+      const runtime = await activatePublicModel(model, candidate);
+      const smoke = await fetch(runtime.backend === "ollama" ? "http://127.0.0.1:11434/api/chat" : `http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(runtime.backend === "ollama"
+          ? { model: runtime.runtimeProfile, messages: [{ role: "user", content: "Reply OK" }], stream: false, options: { num_ctx: candidate, num_predict: 1 }, keep_alive: -1 }
+          : { model, messages: [{ role: "user", content: "Reply OK" }], stream: false, max_tokens: 1, temperature: 0 }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!smoke.ok) throw new Error(`inference smoke returned HTTP ${smoke.status}`);
+      best = runtime.contextProfile;
+      emit?.(best);
+      return runtime.context >= candidate;
+    } catch (error) {
+      const failed = makeContextProfile({ model, backend: initial.backend, modelMaxTokens: initial.modelMaxTokens, requestedTokens: candidate, verifiedTokens: best?.verifiedTokens ?? null, activeTokens: null, fingerprint: initial.fingerprint, source: "runtime", reason: error instanceof Error ? error.message : String(error) });
+      if (best) {
+        best = { ...best, reason: `higher ${candidate}-token probe failed: ${failed.reason}` };
+        contextProfiles.put(best);
+      }
+      emit?.(failed);
+      return false;
+    }
+  };
+  for (const candidate of ascending) {
+    if (!(await probe(candidate))) break;
+  }
+  if (!best) {
+    for (const candidate of fallbacks) {
+      if (await probe(candidate)) break;
+    }
+  }
+  if (!best) throw new Error(`no adaptive context candidate passed for ${model}`);
+  return best;
 }
 
 export async function ensureServing(model: string, minCtx = 0, loras: ServingLora[] = []): Promise<void> {
@@ -399,14 +799,58 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
   }
   const requestedLoras = JSON.stringify(normalizedLoras);
   const loadedLoras = JSON.stringify(srv.loras);
-  const o = readSettings().options;
-  const ctx = Math.max(o.num_ctx || 8192, minCtx);
+  const runtimeSettings = modelRuntimeSettings(model);
+  const ctx = Math.max(runtimeSettings.contextTokens, minCtx);
   // Enforce one-GPU ownership even on the healthy-local-server fast path below.
   // Ollama has no relationship to our singleton state, so it may still hold a
   // previous Gemma after a cancelled Hive run.
   await unloadOllamaAll();
   clearOllamaServing();
-  if (srv.model === model && requestedLoras === loadedLoras && srv.ctx >= ctx && srv.proc && srv.proc.exitCode === null && (await health())) return;
+  // PLAN 3.2 asked for exactly this: "instrument the five clauses and log which
+  // one trips". The in-flight guard fixed HTML-001 8/10 -> 10/10, but WHICH clause
+  // decided to restart was never proven, so the attribution ("most likely the
+  // health() fix") is still reasoning rather than evidence. Each clause is now
+  // evaluated separately and the first failing one is named. Cheap: five boolean
+  // comparisons and one log line on a path that is about to spawn a process.
+  const fastPathChecks: Array<[string, () => boolean | Promise<boolean>]> = [
+    ['model differs', () => srv.model === model],
+    ['lora set differs', () => requestedLoras === loadedLoras],
+    ['serving context too small', () => srv.ctx >= ctx],
+    ['no server process', () => Boolean(srv.proc)],
+    ['server process exited', () => !srv.proc || srv.proc.exitCode === null],
+    ['health probe failed', async () => await health()],
+  ];
+  let trippedClause: string | null = null;
+  for (const [reason, check] of fastPathChecks) {
+    if (!(await check())) {
+      trippedClause = reason;
+      break;
+    }
+  }
+  if (!trippedClause) return;
+  console.warn(
+    `[lal-serve] restarting llama-server for "${model}": ${trippedClause} ` +
+    `(have model=${srv.model} ctx=${srv.ctx} exit=${srv.proc?.exitCode ?? 'none'}; want ctx>=${ctx})`,
+  );
+
+  // Past this line we are going to kill and relaunch the server. If anything is
+  // still streaming, that kill destroys a generation in progress — on
+  // 2026-07-24 that was two of ten HTML-001 runs losing a half-written
+  // index.html to `UND_ERR_SOCKET: other side closed`. Let live work finish
+  // first, and if it will not, refuse loudly instead of killing silently.
+  //
+  // The one exception is a server that is already gone: there is no stream left
+  // to protect, and blocking the relaunch would strand every waiting caller.
+  const serverAlreadyDead = !srv.proc || srv.proc.exitCode !== null;
+  if (!serverAlreadyDead && generationsInFlight() > 0) {
+    const drained = await drainGenerations(RESTART_DRAIN_MS);
+    if (!drained) {
+      throw new Error(
+        `GPU is busy: ${generationsInFlight()} generation(s) still streaming after ` +
+        `${Math.round(RESTART_DRAIN_MS / 1000)}s. Refusing to restart the model server ` +
+        `mid-stream — retry once the current turn finishes.`);
+    }
+  }
   // The lens tool needs the whole card to itself, same as training (see runLensScript).
   if (lensState.running) throw new Error("GPU is busy: a lens run is in progress. Try again after it finishes.");
   // A trainer may be running OUTSIDE this app (CLI runs write the same out/ logs but
@@ -427,8 +871,7 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
   const ctxArg = String(ctx);
 
   const tryServe = async (ngl: number, waitMs: number): Promise<boolean> => {
-    try { srv.proc?.kill("SIGKILL"); } catch {}
-    try { execSync(`pkill -9 -f "llama-server.*--port ${SERVE_PORT}"`); } catch {}
+    killServerProcess();
     srv.proc = null; srv.model = null; srv.loras = []; srv.ctx = 0;
     await new Promise((r) => setTimeout(r, 400));
     const env: NodeJS.ProcessEnv = { ...process.env, LD_LIBRARY_PATH: LLAMA_DIR };
@@ -452,8 +895,15 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
     const loraArgs = normalizedLoras.length
       ? [...normalizedLoras.flatMap((adapter) => ["--lora", adapter.path]), "--lora-init-without-apply"]
       : [];
+    // Long-context Vulkan needs short watchdog-safe submissions, flash
+    // attention, and a compact KV cache. A real 100,051-token Qwen3.5 prompt
+    // completed on this host with this profile; the former 512/f16/auto setup
+    // reset the AMD device at 13,824 tokens despite passing a tiny smoke test.
+    const longContextArgs = ctx > 32_768 && ngl > 0
+      ? ["-b", "256", "-ub", "256", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1"]
+      : ["-b", "512", "-ub", "512"];
     const proc = spawn(LLAMA_SERVER,
-      ["-m", mi.path, "-ngl", String(ngl), "--host", "127.0.0.1", "--port", String(SERVE_PORT), "-c", ctxArg, "--jinja", "-b", "512", "-ub", "512", ...loraArgs],
+      ["-m", mi.path, "-ngl", String(ngl), "--host", "127.0.0.1", "--port", String(SERVE_PORT), "-c", ctxArg, "--jinja", ...longContextArgs, ...loraArgs],
       { env, stdio: logFd === undefined ? "ignore" : ["ignore", logFd, logFd] });
     if (logFd !== undefined) try { fs.closeSync(logFd); } catch {}
     srv.proc = proc; srv.model = model; srv.loras = normalizedLoras; srv.ctx = ctx;
@@ -468,7 +918,7 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
     return false;
   };
 
-  const configuredNgl = o.num_gpu == null ? 99 : o.num_gpu;
+  const configuredNgl = runtimeSettings.gpuLayers == null ? 99 : runtimeSettings.gpuLayers;
   // graceful degradation like Ollama: try full GPU, then partial offloads, then CPU —
   // so a big model still serves (just slower) when something else is holding VRAM.
   const ladder = (configuredNgl > 0 ? [configuredNgl, 24, 12, 0] : [0])
@@ -772,12 +1222,34 @@ const benchKey = (suite: string, model: string) => (suite + "__" + model).replac
 export function saveBench(suite: string, result: Record<string, unknown>) {
   try { fs.writeFileSync(path.join(BENCH_DIR, benchKey(suite, String(result.model)) + ".json"), JSON.stringify({ ...result, suite, ts: Date.now() })); } catch {}
 }
+/**
+ * A saved suite result the benchmark UI can actually render.
+ *
+ * This exists because the directory is a plain folder of .json files and anything
+ * that lands in it used to be served as a result. The HTML-001 harness was pointed
+ * at `--out web/.data/bench/…` on 2026-07-24 and wrote four run reports with no
+ * `cats`, `score`, `total` or `model`; `/api/bench` returned them, and the
+ * benchmark page threw on `result.cats[cat]` and rendered nothing at all. A
+ * foreign file in a data directory must degrade to "not shown", never to a blank
+ * page — so shape is checked here, at the one place that reads the directory.
+ */
+function isRenderableBenchResult(r: unknown): boolean {
+  if (!r || typeof r !== "object") return false;
+  const b = r as Record<string, unknown>;
+  return typeof b.model === "string" && b.model !== ""
+    && typeof b.score === "number" && typeof b.total === "number"
+    && !!b.cats && typeof b.cats === "object"
+    && (b.results === undefined || Array.isArray(b.results));
+}
+
 export function listBench() {
   const out: Record<string, unknown>[] = [];
+  const skipped: string[] = [];
   try {
     for (const f of fs.readdirSync(BENCH_DIR))
       if (f.endsWith(".json")) { try {
         const r = JSON.parse(fs.readFileSync(path.join(BENCH_DIR, f), "utf8"));
+        if (!isRenderableBenchResult(r)) { skipped.push(f); continue; }
         // anti-goalpost guard: a pinned baseline whose suite has since been edited
         // (rev bumped) is flagged stale rather than silently compared against new items.
         if (r.pinned) {
@@ -785,8 +1257,11 @@ export function listBench() {
           r.stale = curRev != null && r.pinnedRev != null && curRev !== r.pinnedRev;
         }
         out.push(r);
-      } catch {} }
+      } catch { skipped.push(f); } }
   } catch {}
+  // Named, not silent: a skipped file is either junk to remove or a real result
+  // with a bad shape, and only the operator can tell which.
+  if (skipped.length) console.warn(`[lal-bench] ignored ${skipped.length} non-result file(s) in .data/bench: ${skipped.join(", ")}`);
   return out.sort((a, b) => ((a.ts as number) || 0) - ((b.ts as number) || 0));
 }
 export function deleteBench(suite: string, model: string) {
@@ -955,9 +1430,24 @@ export function retrieveDocs(query: string, k = 4): string {
 }
 
 // ---- web search (DuckDuckGo HTML, no API key) ----
+const HTML_NAMED_ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
+  mdash: "—", ndash: "–", hellip: "…",
+  lsquo: "‘", rsquo: "’", ldquo: "“", rdquo: "”",
+};
+function decodeEntities(s: string) {
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, ent) => {
+    if (ent[0] === "#") {
+      const code = ent[1] === "x" || ent[1] === "X"
+        ? parseInt(ent.slice(2), 16)
+        : parseInt(ent.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+    }
+    return HTML_NAMED_ENTITIES[ent.toLowerCase()] ?? m;
+  });
+}
 function stripHtml(s: string) {
-  return s.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&#x27;/g, "'")
-    .replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
+  return decodeEntities(s.replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
 }
 export async function webSearch(q: string): Promise<string> {
   try {
@@ -1306,7 +1796,11 @@ export async function runLensScript(model: string, messages: { role: string; con
   lensState.model = model;
   const parked = servingModel();
   try {
-    if (parked) stopServing();
+    // Lens wants the whole card, but a terminal may still be mid-generation.
+    // Drain rather than kill (PLAN 3.2).
+    if (parked && !(await parkServing())) {
+      throw new Error("GPU is busy: a generation is still streaming. Try the lens run again once it finishes.");
+    }
     await unloadOllamaAll();
 
     const args = ["--model", modelPath, "--messages", JSON.stringify(messages), ...(opts.topK ? ["--top_k", String(opts.topK)] : [])];
@@ -1413,7 +1907,7 @@ export function listExperiments(): ExperimentRecord[] {
 
 type SpecialistTrainingRole = "coordinator_planner" | "coder_repairer" | "verifier";
 const SPECIALIST_ROLES = new Set<SpecialistTrainingRole>(["coordinator_planner", "coder_repairer", "verifier"]);
-// The shared-base hot-swap design (docs/hive-specialist-training.md) assumes every role's
+// The shared-base hot-swap design assumes every role's
 // adapter sits on ONE loaded base for cheap per-request switching — that only holds within
 // a base. Training a role on a different base (e.g. mistralai/Ministral-3-8B-Instruct-2512,
 // verified compatible 2026-07-12 after stream_quantize_load gained multimodal-wrapper

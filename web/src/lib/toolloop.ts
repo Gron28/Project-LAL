@@ -5,6 +5,9 @@
 import type { Executor } from "./tools";
 import { TOOL_DEFS, normalizeToolArgs, toolCallExample, validateToolArguments, type ToolDef } from "./tools";
 import { managedPrompt } from "./lal-prompts";
+import type { ToolLoopEvent } from "@lal/protocol";
+
+export type { ToolLoopEvent } from "@lal/protocol";
 
 export type ToolLoopMsg = {
   role: "system" | "user" | "assistant" | "tool";
@@ -14,43 +17,6 @@ export type ToolLoopMsg = {
   name?: string;
 };
 
-export type ToolLoopEvent =
-  // p = the model's probability for the token(s) in this delta (0-1). alts = the
-  // top competing tokens, attached when the choice has meaningful ambiguity (p < 0.8) —
-  // this is tier 1 of "see inside the model's head": every run's ledger records
-  // not just what the model said but how sure it was and what it almost said.
-  | { k: "text"; v: string; p?: number; alts?: [string, number][] }
-  | { k: "think"; v: string; p?: number }
-  | { k: "tool_request"; v: { id: string; name: string; args: Record<string, unknown> } }
-  // Live progress WHILE a tool call's arguments are still decoding. A code agent
-  // spends most of its wall-clock inside write_file calls, and tool_request only
-  // fires once the whole call has finished streaming — observed live 2026-07-09:
-  // 80 seconds of dead air (GPU pinned, zero events) while gemma4:12b decoded one
-  // write_file. Throttled to ~1/s; carries a tail preview, not cumulative content.
-  | { k: "tool_progress"; v: { id: string; name: string; chars: number; preview: string } }
-  | { k: "tool_result"; v: { id: string; name: string; ok: boolean; output: string } }
-  | { k: "round" }
-  | { k: "max_rounds"; v: number }
-  | { k: "act_nudge" }
-  | { k: "model_swap"; v: { from: string | null; to: string } }
-  | { k: "think_recovered"; v: { count: number } }
-  | { k: "forced_verify" }
-  | { k: "mutation_required_nudge"; v: { count: number } }
-  | { k: "stall_nudge" }
-  | { k: "research_depth_nudge"; v: { count: number; min: number } }
-  // Live meter: emitted after each round from llama-server's usage/timings so the
-  // UI can show context fill (promptTokens+completionTokens vs ctx) and decode speed.
-  | { k: "usage"; v: { promptTokens: number; completionTokens: number; totalTokens: number; tokPerSec: number | null; ctx: number; conf?: { avg: number; min: number; low: number } | null } }
-  // The model's final answer was cut off by the per-round token cap (finish_reason
-  // "length") rather than finishing — the "Continue" affordance keys off this.
-  | { k: "truncated"; v: { round: number } }
-  // Refuse a request before it reaches the inference backend when its estimated
-  // input plus reserved output/tool-result space would overflow the context.
-  | { k: "context_limit"; v: { estimatedTokens: number; reserveTokens: number; ctx: number } }
-  // Older tool outputs were trimmed in place to fit the context window instead of
-  // failing the run (deep-research died at round 12/64 from accumulated search
-  // results, 2026-07-09). The most recent rounds are always kept intact.
-  | { k: "context_compacted"; v: { trimmed: number } };
 
 // Trim the bodies of old tool results, oldest first, keeping the newest
 // `keepTail` messages untouched — the model keeps its recent working set and a
@@ -351,7 +317,11 @@ export async function runToolLoop(opts: {
       // Reserve only the minimum viable completion here. The actual request is
       // clamped below to the room left after the current prompt; reserving a
       // fixed 30% of the context rejected otherwise-valid tool turns early.
-      const reserveTokens = 512 + 1024;
+      // The floor is 40960 (not the old 512) so a write_file/edit call generating
+      // a whole file never gets cut off mid-generation while there is genuinely
+      // room left in ctx — modes now serve at ctx:65536 to make room for this.
+      const MIN_COMPLETION_TOKENS = 40_960;
+      const reserveTokens = MIN_COMPLETION_TOKENS + 1024;
       if (estimatedTokens + reserveTokens >= opts.ctx) {
         // Try shrinking before failing: old tool outputs are the bulk of a long
         // transcript and the least valuable part of it.
@@ -368,7 +338,7 @@ export async function runToolLoop(opts: {
       // Fit the actual request to the remaining context after tool schemas and
       // transcript content. A fixed reservation can otherwise pass preflight
       // while the backend rejects the request as "too many tokens".
-      body.max_tokens = Math.min(maxTokens, Math.max(512, opts.ctx - estimatedTokens - 1024));
+      body.max_tokens = Math.min(maxTokens, Math.max(MIN_COMPLETION_TOKENS, opts.ctx - estimatedTokens - 1024));
     }
     // llama-server occasionally returns a transient 5xx immediately after a
     // long/truncated tool-call turn. Retrying the exact idempotent inference

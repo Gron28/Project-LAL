@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { FatalSandboxError, QWEN_DIR } from '@qwen-code/qwen-code-core';
+import { FatalSandboxError, QWEN_DIR } from '@lal/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isContainerPathWithinWorkdir } from './sandbox-path.js';
 import { resolveSeatbeltProfileFile, start_sandbox } from './sandbox.js';

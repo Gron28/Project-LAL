@@ -14,7 +14,7 @@ import {
 import {
   getProjectSummaryPrompt,
   runSideQuery,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import type { HistoryItemSummary } from '../types.js';
 import { t } from '../../i18n/index.js';
 

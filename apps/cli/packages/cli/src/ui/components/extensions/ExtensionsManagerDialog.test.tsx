@@ -22,8 +22,8 @@ import type {
   Extension,
   DiscoveredPlugin,
   ExtensionSource,
-} from '@qwen-code/qwen-code-core';
-import { mcpServerRequiresOAuth } from '@qwen-code/qwen-code-core';
+} from '@lal/core';
+import { mcpServerRequiresOAuth } from '@lal/core';
 import type { ExtensionUpdateState } from '../../state/extensions.js';
 
 // The Installed tab reads real user/workspace settings from disk when MCP

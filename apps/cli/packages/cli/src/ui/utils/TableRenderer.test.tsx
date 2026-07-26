@@ -456,7 +456,12 @@ describe('<TableRenderer />', () => {
       18,
     );
 
-    expect(foregroundAtText(output, 'reset')).toBeUndefined();
+    // Cell text is painted in the theme foreground, so "no colour at all" is
+    // unreachable. What a reset must do is drop the *cell's* colour back to
+    // that default — the same 38;2;r;g;b shape asserted for the wrapped case.
+    const foreground = foregroundAtText(output, 'reset');
+    expect(foreground).not.toBe('38;5;45');
+    expect(foreground).toMatch(/^38;2;/);
     expectAllLinesToHaveSameVisibleWidth(output);
   });
 
@@ -467,7 +472,12 @@ describe('<TableRenderer />', () => {
       18,
     );
 
-    expect(foregroundAtText(output, 'reset')).toBeUndefined();
+    // Cell text is painted in the theme foreground, so "no colour at all" is
+    // unreachable. What a reset must do is drop the *cell's* colour back to
+    // that default — the same 38;2;r;g;b shape asserted for the wrapped case.
+    const foreground = foregroundAtText(output, 'reset');
+    expect(foreground).not.toBe('38;5;45');
+    expect(foreground).toMatch(/^38;2;/);
     expectAllLinesToHaveSameVisibleWidth(output);
   });
 

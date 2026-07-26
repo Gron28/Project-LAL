@@ -37,7 +37,7 @@ import {
   type ConfigParameters,
   type MCPServerConfig,
   MAX_SUBAGENT_DEPTH_LIMIT,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { extensionsCommand } from '../commands/extensions.js';
 import { hooksCommand } from '../commands/hooks.js';
 import { normalizeDisabledToolList } from './normalizeDisabledTools.js';
@@ -60,7 +60,6 @@ import { getCliVersion } from '../utils/version.js';
 import { loadSandboxConfig } from './sandboxConfig.js';
 import { appEvents } from '../utils/events.js';
 import { mcpCommand } from '../commands/mcp.js';
-import { channelCommand } from '../commands/channel.js';
 import { authCommand } from '../commands/auth.js';
 import { reviewCommand } from '../commands/review.js';
 import { serveCommand } from '../commands/serve.js';
@@ -151,6 +150,7 @@ export interface CliArgs {
   yolo: boolean | undefined;
   bare: boolean | undefined;
   safeMode?: boolean | undefined;
+  safeTerminal?: boolean | undefined;
   approvalMode: string | undefined;
   telemetry: boolean | undefined;
   telemetryTarget: string | undefined;
@@ -625,6 +625,12 @@ export async function parseArguments(): Promise<CliArgs> {
       description:
         'Disable all customizations (context files, hooks, extensions, skills, MCP servers) for troubleshooting.',
     })
+    .option('safe-terminal', {
+      type: 'boolean',
+      description:
+        'Disable terminal animation and cursor-driven viewport rendering for compatibility.',
+      default: false,
+    })
     .option('proxy', {
       type: 'string',
       description: 'Proxy for LAL, like schema://user:password@host:port',
@@ -1075,7 +1081,6 @@ export async function parseArguments(): Promise<CliArgs> {
     // Register Hooks subcommands
     .command(hooksCommand)
     // Register Channel subcommands
-    .command(channelCommand)
     // Register /review skill helpers (presubmit checks, cleanup)
     .command(reviewCommand)
     // Register `qwen serve` (Stage 1 daemon)
@@ -1786,6 +1791,29 @@ export async function loadCliConfig(
       }
     };
 
+    // PLAN 4.3 — a headless run has a stated posture instead of a silent
+    // refusal. DEFAULT denies edit and write_file here, which made
+    // `lal -p "write a file"` unable to write the file: the agent reported that
+    // write_file "requires explicit permission which cannot be granted in
+    // non-interactive mode" and stopped. That is defensible for a shell
+    // one-liner and wrong for an agent asked to build a website, so an
+    // unattended run with no explicit posture gets workspace writes.
+    //
+    // Shell stays denied — decided 2026-07-24. `--approval-mode=yolo` grants it
+    // when that is what the caller wants. The posture is announced below so it
+    // is discoverable rather than inferred.
+    // Narrow deliberately to a run that was actually given work to do. A bare
+    // `lal` on a non-TTY is non-interactive by accident of plumbing, not an
+    // unattended agent run, and must not silently acquire a write posture.
+    const posturedByDefault =
+      (hasQuery || hasPrompt) &&
+      !argv.approvalMode &&
+      !argv.yolo &&
+      !settings.tools?.approvalMode;
+    if (posturedByDefault && approvalMode === ApprovalMode.DEFAULT) {
+      approvalMode = ApprovalMode.AUTO_EDIT;
+    }
+
     switch (approvalMode) {
       case ApprovalMode.PLAN:
       case ApprovalMode.DEFAULT:
@@ -1816,6 +1844,21 @@ export async function loadCliConfig(
         break;
       default:
         break;
+    }
+
+    // State the posture. An unattended run that silently cannot do what it was
+    // asked is the failure mode this replaces (PLAN 4.3).
+    if (approvalMode !== ApprovalMode.YOLO) {
+      const shellDenied = mergedDeny.includes(ToolNames.SHELL as string);
+      const writesAllowed =
+        approvalMode === ApprovalMode.AUTO_EDIT &&
+        !mergedDeny.includes(ToolNames.WRITE_FILE as string);
+      writeStderrLine(
+        `headless: approval-mode=${approvalMode}; ` +
+          `workspace writes ${writesAllowed ? 'auto-approved' : 'DENIED'}; ` +
+          `shell ${shellDenied ? 'withheld' : 'allowed'}` +
+          `${shellDenied ? ' (--approval-mode=yolo to enable)' : ''}`,
+      );
     }
   }
 
@@ -2071,7 +2114,9 @@ export async function loadCliConfig(
     // still initialize after render unless an initial prompt is present.
     deferTelemetryInitialization: interactive && !isAcpMode && !question,
     outboundCorrelation: settings.outboundCorrelation,
-    usageStatisticsEnabled: settings.privacy?.usageStatisticsEnabled ?? true,
+    // The retained upstream setting is accepted for compatibility but never
+    // enables Alibaba RUM on the supported LAL entrypoint.
+    usageStatisticsEnabled: false,
     clearContextOnIdle: settings.context?.clearContextOnIdle,
     fileFiltering: settings.context?.fileFiltering,
     plansDirectory: settings.plansDirectory,
@@ -2117,25 +2162,6 @@ export async function loadCliConfig(
           publicBaseUrl: settings.artifact?.oss?.publicBaseUrl,
         }
       : undefined,
-    // CDP tunnel (Plan C, #5626): with the tunnel on, browser automation goes
-    // through the CDP tunnel (far lighter than the OS-level computer-use
-    // driver), so disable computer-use to keep the agent off that heavy path.
-    computerUseEnabled: (() => {
-      const tunnelOn = process.env['QWEN_SERVE_CDP_TUNNEL_OVER_WS'] === '1';
-      // Surface the override when it contradicts an explicit opt-in, so the
-      // effective config isn't a silent surprise during debugging.
-      if (tunnelOn && settings.tools?.computerUse?.enabled === true) {
-        writeStderrLine(
-          'qwen serve: ignoring tools.computerUse.enabled=true — the CDP ' +
-            'tunnel (QWEN_SERVE_CDP_TUNNEL_OVER_WS) routes browser automation ' +
-            'through the CDP tunnel, so computer-use stays disabled.',
-        );
-      }
-      return tunnelOn ? false : (settings.tools?.computerUse?.enabled ?? true);
-    })(),
-    computerUseMaxImageDimension:
-      settings.tools?.computerUse?.maxImageDimension,
-    computerUseIdleTimeoutMs: settings.tools?.computerUse?.idleTimeoutMs,
     emitToolUseSummaries: settings.experimental?.emitToolUseSummaries ?? true,
     listExtensions: argv.listExtensions || false,
     locale: resolveLocaleForExtensions(settings),
@@ -2202,8 +2228,11 @@ export async function loadCliConfig(
       bareMode || safeMode
         ? false
         : (settings.memory?.enableTeamMemorySync ?? false),
+    // Default OFF — see settingsSchema's enableAutoSkill comment. The fallback
+    // here has to agree with the schema default or the setting's documented value
+    // is a lie for anyone who never wrote it to their settings file.
     enableAutoSkill:
-      bareMode || safeMode ? false : (settings.memory?.enableAutoSkill ?? true),
+      bareMode || safeMode ? false : (settings.memory?.enableAutoSkill ?? false),
     autoSkillConfirm:
       bareMode || safeMode
         ? false

@@ -10,7 +10,7 @@ import {
   AgentStatus,
   ArenaEventType,
   AuthType,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { arenaCommand } from './arenaCommand.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 
@@ -22,9 +22,9 @@ const arenaManagerMocks = vi.hoisted(() => ({
   }>,
 }));
 
-vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
+vi.mock('@lal/core', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+    await importOriginal<typeof import('@lal/core')>();
 
   class MockArenaManager {
     emitter = new EventEmitter();

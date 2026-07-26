@@ -61,7 +61,6 @@ const DIST_REQUIRED_PATHS = [
   'cli-entry.js',
   'chunks',
   'vendor',
-  'bundled/qc-helper',
 ];
 const DIST_ALLOWED_ENTRIES = new Set([
   'cli.js',
@@ -77,6 +76,9 @@ const DIST_ALLOWED_ENTRIES = new Set([
   'package.json',
   'README.md',
   'LICENSE',
+  // Always copied into dist/ by prepare-package.js's copyDocumentationFiles,
+  // same as README.md/LICENSE above.
+  'NOTICE-LAL.md',
   'locales',
   'examples',
   // Web Shell SPA served at the daemon root by `qwen serve` (index.html +
@@ -339,10 +341,10 @@ function copyRuntimeAssets(packageRoot, outDir) {
   );
 }
 
-// Bundle the @qwen-code/audio-capture native addon (compiled JS + only this
+// Bundle the @lal/audio-capture native addon (compiled JS + only this
 // target's prebuild + its runtime dep node-gyp-build) into lib/node_modules so
 // streaming voice works in standalone installs. The addon is esbuild-external
-// and resolved at runtime via import('@qwen-code/audio-capture') from
+// and resolved at runtime via import('@lal/audio-capture') from
 // lib/cli.js, so lib/node_modules is where Node looks. Without it, standalone
 // users fall back to SoX/arecord (batch only) — #5502 follow-up #5590.
 function copyNativeAddon(packageRoot, target) {
@@ -373,7 +375,7 @@ function copyNativeAddon(packageRoot, target) {
   );
 
   const modulesDir = path.join(packageRoot, 'lib', 'node_modules');
-  const addonDest = path.join(modulesDir, '@qwen-code', 'audio-capture');
+  const addonDest = path.join(modulesDir, '@lal', 'audio-capture');
   fs.mkdirSync(addonDest, { recursive: true });
 
   // Trimmed manifest: keep type/exports so ESM resolution works; drop the
@@ -697,6 +699,10 @@ exec "$ROOT/node/bin/node" --expose-gc "$ROOT/lib/cli.js" "$@"
 
   const windowsShim = `@echo off
 setlocal
+rem Switch the console to UTF-8 so non-ASCII output (web search results,
+rem accented file contents, etc.) doesn't render as mojibake under the
+rem legacy OEM code page cmd.exe starts with by default.
+chcp 65001 >nul
 set "ROOT=%~dp0.."
 if "%~1"=="serve" goto serve
 "%ROOT%\\node\\node.exe" --expose-gc "%ROOT%\\lib\\cli.js" %*

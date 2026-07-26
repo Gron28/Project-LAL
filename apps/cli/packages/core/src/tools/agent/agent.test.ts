@@ -1324,7 +1324,7 @@ describe('AgentTool', () => {
       expect(partToString(result.llmContent)).toBe(raw);
     });
 
-    it('explains successful subagents with no model-visible output', async () => {
+    it('fails subagents with no model-visible output', async () => {
       vi.mocked(mockAgent.getFinalText).mockReturnValue(
         '<analysis>scratch only</analysis>',
       );
@@ -1340,9 +1340,10 @@ describe('AgentTool', () => {
       ).createInvocation(params);
       const result = await invocation.execute();
 
-      expect(partToString(result.llmContent)).toBe(
-        '(subagent produced no model-visible output)',
+      expect(partToString(result.llmContent)).toContain(
+        'partial and unreviewed',
       );
+      expect(result.error?.message).toContain('model-visible result');
     });
 
     it('passes custom ignore files into worktree isolation file service', async () => {
@@ -3753,7 +3754,7 @@ describe('AgentTool', () => {
       );
     });
 
-    it('stores a fallback for background results with no model-visible text', async () => {
+    it('fails background results with no model-visible text', async () => {
       vi.mocked(mockAgent.getFinalText).mockReturnValue(
         '<analysis>scratch only</analysis>',
       );
@@ -3769,9 +3770,9 @@ describe('AgentTool', () => {
       await invocation.execute();
       await vi.runAllTimersAsync();
 
-      expect(mockRegistry.complete).toHaveBeenCalledWith(
+      expect(mockRegistry.fail).toHaveBeenCalledWith(
         expect.any(String),
-        '(subagent produced no model-visible output)',
+        expect.stringContaining('partial and unreviewed'),
         expect.any(Object),
       );
     });

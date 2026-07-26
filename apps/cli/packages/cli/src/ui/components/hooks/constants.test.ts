@@ -9,7 +9,7 @@ import {
   HookEventName,
   HooksConfigSource,
   hookEventSupportsMatcher,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 
 vi.mock('../../../i18n/index.js', () => ({
   t: vi.fn((key: string) => key),

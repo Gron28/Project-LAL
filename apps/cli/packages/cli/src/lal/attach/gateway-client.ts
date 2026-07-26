@@ -19,7 +19,7 @@
 // bearer header + device headers OPPORTUNISTICALLY (forward-compatible with
 // a future gate) but never refuses to call `/api/agent/*` just because no
 // token is configured.
-import { PROTOCOL_VERSION } from '@qwen-code/qwen-code-core';
+import { PROTOCOL_VERSION } from '@lal/core';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,7 +29,22 @@ import path from 'node:path';
  * HANDOFF/memory notes: "app is port 8770 not 3000"). */
 export const DEFAULT_GATEWAY_ORIGIN = 'http://localhost:8770';
 
-export const CLI_CLIENT_VERSION = '0.1.0-lal.17';
+/**
+ * Version this client reports to the host.
+ *
+ * Was a hardcoded literal, and it drifted: it still said `0.1.0-lal.28` while
+ * package.json was at `0.1.0-lal.30`, so every device record on the host — the
+ * only remote diagnostic we have when something fails on Windows — named a
+ * build the user was not running. Two hours were spent on 2026-07-24 reasoning
+ * from that number.
+ *
+ * `process.env.CLI_VERSION` is substituted at bundle time from package.json by
+ * esbuild.config.js, so this now cannot drift. The literal fallback is for
+ * unbundled test/dev runs only, and is intentionally an obvious non-version
+ * rather than a plausible one.
+ */
+export const CLI_CLIENT_VERSION =
+  process.env['CLI_VERSION']?.trim() || 'unbundled-dev';
 
 export interface GatewayRunMeta {
   id: string;

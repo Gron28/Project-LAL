@@ -9,7 +9,7 @@ import * as path from 'node:path';
 import { promises as fsp, realpathSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
-import { hashDaemonWorkspace } from '@qwen-code/qwen-code-core';
+import { hashDaemonWorkspace } from '@lal/core';
 import { createServeApp } from './server.js';
 import { ClientMcpSenderRegistry } from './acp-http/client-mcp-sender-registry.js';
 import {

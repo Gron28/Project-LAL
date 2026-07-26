@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Config, ToolArtifact } from '@qwen-code/qwen-code-core';
+import type { Config, ToolArtifact } from '@lal/core';
 import type { Part } from '@google/genai';
 import type {
   SessionUpdate,

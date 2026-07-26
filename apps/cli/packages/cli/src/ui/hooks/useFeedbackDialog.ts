@@ -8,7 +8,7 @@ import {
   type UserFeedbackRating,
   isNodeError,
   Storage,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import { StreamingState, MessageType, type HistoryItem } from '../types.js';
 import { SettingScope, type LoadedSettings } from '../../config/settings.js';
 import type { SessionStatsState } from '../contexts/SessionContext.js';

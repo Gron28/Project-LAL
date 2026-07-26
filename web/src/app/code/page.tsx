@@ -12,6 +12,7 @@ import RunPanel from "@/components/code/run-panel";
 import AgentSettings from "@/components/agent/agent-settings";
 import StatsHud, { StatsGlance, type Usage } from "@/components/agent/stats-hud";
 import CertaintyWave, { type TokenAlternatives } from "@/components/agent/certainty-wave";
+import { useModelSettingsSync } from "@/app/agent/use-model-settings-sync";
 import { useNavCollapsed } from "@/app/nav-context";
 
 type Ev =
@@ -297,6 +298,7 @@ export default function CodePage() {
   const [approval, setApproval] = useState<{ id: string; name: string; args: Record<string, unknown> } | null>(null);
   const [convos, setConvos] = useState<Convo[]>([]);
   const [convoId, setConvoId] = useState("");
+  useModelSettingsSync({ model, adoptDefault: !convoId, setModel, setModels, setThinking: setThink });
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [attached, setAttached] = useState<{ name: string; dataUrl: string }[]>([]);
   const [revealedIdx, setRevealedIdx] = useState<number | null>(null); // long-press reveal (touch)

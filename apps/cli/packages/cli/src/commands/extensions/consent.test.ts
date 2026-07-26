@@ -13,7 +13,7 @@ import {
 import type {
   ExtensionConfig,
   ClaudeMarketplaceConfig,
-} from '@qwen-code/qwen-code-core';
+} from '@lal/core';
 import prompts from 'prompts';
 
 vi.mock('../../i18n/index.js', () => ({

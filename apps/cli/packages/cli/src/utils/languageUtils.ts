@@ -12,7 +12,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { Storage } from '@qwen-code/qwen-code-core';
+import { Storage } from '@lal/core';
 import {
   detectSystemLanguage,
   getLanguageNameFromLocale,
