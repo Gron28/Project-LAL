@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { activatePublicModel, allModels, contextProfileForModel, readSettings, resolvedContextTarget, getConvo, saveConvo, newId, webSearch, retrieveDocs, servingModel, modelRuntimeSettings, SERVE_PORT, type Convo } from "@/lib/lab";
+import { activatePublicModel, allModels, contextProfileForModel, readSettings, resolvedContextTarget, getConvo, saveConvo, newId, webSearch, retrieveDocs, servingModel, modelRuntimeSettings, ollamaSupportsThinking, SERVE_PORT, type Convo } from "@/lib/lab";
 import { startRun, type EmitFn } from "@/lib/runs";
 
 export const dynamic = "force-dynamic";
@@ -121,6 +121,7 @@ export async function POST(req: NextRequest) {
       emit({ k: "model_loading", v: { model: visionModel, ctx: visionCtx, contextProfile: contextProfileForModel(visionModel) } });
       const parked = servingModel();
       const runtime = await activatePublicModel(visionModel, visionCtx);
+      const effectiveThink = think && await ollamaSupportsThinking(runtime.runtimeProfile);
 
       const ollamaMessages = incoming.map((m, i) =>
         i === incoming.length - 1 && m.role === "user"
@@ -136,12 +137,16 @@ export async function POST(req: NextRequest) {
         const upstream = await fetch("http://127.0.0.1:11434/api/chat", {
           method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: runtime.runtimeProfile, messages: ollamaMessages, stream: true, think,
+          model: runtime.runtimeProfile, messages: ollamaMessages, stream: true, think: effectiveThink,
           options: { temperature: runtimeSettings.temperature, top_p: runtimeSettings.topP, top_k: runtimeSettings.topK, num_ctx: runtime.context, num_predict: runtimeSettings.maxOutputTokens },
         }),
           signal,
         });
-        if (!upstream.ok || !upstream.body) throw new Error("vision upstream error: " + upstream.status);
+        if (!upstream.ok) {
+          const detail = await upstream.text().catch(() => "");
+          throw new Error(`vision upstream error: ${upstream.status}${detail ? ` — ${detail}` : ""}`);
+        }
+        if (!upstream.body) throw new Error("vision upstream error: response body missing");
         emit({ k: "context_profile", v: runtime.contextProfile });
         emit({ k: "model_ready", v: { model: visionModel, ctx: runtime.context, backend: runtime.backend, contextProfile: runtime.contextProfile, runtimeProfile: runtime.runtimeProfile } });
         await pumpOllama(upstream, emit, signal, acc, runtime.context);
@@ -166,6 +171,9 @@ export async function POST(req: NextRequest) {
     emit({ k: "model_loading", v: { model: requestedModel, ctx: requestedContext, contextProfile: contextProfileForModel(requestedModel) } });
     const runtime = await activatePublicModel(requestedModel, requestedContext);
     const useOllama = runtime.backend === "ollama";
+    const effectiveThink = useOllama
+      ? think && await ollamaSupportsThinking(runtime.runtimeProfile)
+      : think;
 
     const payload: Record<string, unknown> = {
       model: runtime.runtimeProfile,
@@ -192,11 +200,15 @@ export async function POST(req: NextRequest) {
       if (useOllama) {
         const upstream = await fetch("http://127.0.0.1:11434/api/chat", {
           method: "POST", headers: { "content-type": "application/json" }, signal,
-          body: JSON.stringify({ model: runtime.runtimeProfile, messages: system ? [{ role: "system", content: system }, ...incoming] : incoming, stream: true, think,
+          body: JSON.stringify({ model: runtime.runtimeProfile, messages: system ? [{ role: "system", content: system }, ...incoming] : incoming, stream: true, think: effectiveThink,
             options: { temperature: runtimeSettings.temperature, top_p: runtimeSettings.topP, top_k: runtimeSettings.topK, num_ctx: runtime.context, num_predict: runtimeSettings.maxOutputTokens },
           }),
         });
-        if (!upstream.ok || !upstream.body) throw new Error("Ollama upstream error: " + upstream.status);
+        if (!upstream.ok) {
+          const detail = await upstream.text().catch(() => "");
+          throw new Error(`Ollama upstream error: ${upstream.status}${detail ? ` — ${detail}` : ""}`);
+        }
+        if (!upstream.body) throw new Error("Ollama upstream error: response body missing");
         emit({ k: "context_profile", v: runtime.contextProfile });
         emit({ k: "model_ready", v: { model: requestedModel, ctx: runtime.context, backend: runtime.backend, contextProfile: runtime.contextProfile, runtimeProfile: runtime.runtimeProfile } });
         await pumpOllama(upstream, emit, signal, acc, runtime.context);

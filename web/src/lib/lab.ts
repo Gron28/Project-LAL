@@ -6,7 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, ChildProcess, execSync } from "node:child_process";
 import { gradeItem, stripThink, type BenchItem } from "./graders";
-import { resolvePlatformDirectories } from "./host-profile";
+import { resolveOllamaModelsDirectory, resolvePlatformDirectories } from "./host-profile";
 import { ContextProfileStore, contextCandidates, contextHardwareFingerprint, makeContextProfile, readGgufContextLength } from "./context-profile";
 import type { ContextProfile } from "@lal/protocol";
 export type { BenchItem } from "./graders";
@@ -59,7 +59,7 @@ export function modelScanRoots(): ModelScanRoot[] {
 }
 const LLAMA_DIR = path.join(ROOT, "llama", "llama-b9835");
 const LLAMA_SERVER = path.join(LLAMA_DIR, "llama-server");
-const OLLAMA_STORE = "/usr/share/ollama/.ollama/models";
+const OLLAMA_STORE = resolveOllamaModelsDirectory();
 const DATA = path.join(process.cwd(), ".data");
 const CONVOS_DIR = path.join(DATA, "conversations");
 const EXPERIMENTS_DIR = path.join(DATA, "experiments");
@@ -100,6 +100,7 @@ export const DEFAULT_OPTIONS: Options = {
   num_ctx: 8192, num_predict: -1, num_gpu: null,
   temperature: 0.6, top_p: 0.9, top_k: 40, repeat_penalty: 1.1,
 };
+const WINDOWS_OLLAMA_CONTEXT = 8_192;
 type SettingsFile = {
   model?: string;
   options?: Partial<Options>;
@@ -156,7 +157,9 @@ export function modelRuntimeSettings(model: string): ModelRuntimeSettings {
   const saved = settings.modelSettings[model] ?? {};
   const nativeMaximum = nativeContextLimit(model);
   const info = publicModels().find((item) => item.name === model);
-  const safeUnsavedDefault = info?.source === "local" ? Math.min(32_768, nativeMaximum ?? 32_768) : OLLAMA_CLI_CONTEXT;
+  const safeUnsavedDefault = info?.source === "local"
+    ? Math.min(32_768, nativeMaximum ?? 32_768)
+    : process.platform === "win32" ? WINDOWS_OLLAMA_CONTEXT : OLLAMA_CLI_CONTEXT;
   const fallbackContext = Math.max(safeUnsavedDefault, settings.options.num_ctx || DEFAULT_OPTIONS.num_ctx);
   const contextMaximum = nativeMaximum ?? 1_048_576;
   return {
@@ -301,7 +304,12 @@ export function publicModels(): ModelInfo[] {
   return allModels().filter((model) => isPublicModelName(model.name));
 }
 function preferredRuntimeBackend(model: ModelInfo | undefined): "ollama" | "llama.cpp" {
-  return model?.source === "ollama" && /gemma/i.test(model.name) ? "ollama" : "llama.cpp";
+  // Linux keeps its measured llama.cpp/Vulkan path for most Ollama blobs.
+  // The Windows checkout does not ship that Linux runtime, so every model
+  // installed through Ollama must stay behind Ollama's native Windows server.
+  return model?.source === "ollama" && (process.platform === "win32" || /gemma/i.test(model.name))
+    ? "ollama"
+    : "llama.cpp";
 }
 export type ServingLora = { key: string; path: string };
 export type LoraRequest = { id: number; scale: number }[];
@@ -602,6 +610,28 @@ function contextIdentity(model: string, backend: "ollama" | "llama.cpp"): string
 }
 
 const nativeContextCache = new Map<string, number | null>();
+const ollamaThinkingCache = new Map<string, boolean>();
+
+export async function ollamaSupportsThinking(model: string): Promise<boolean> {
+  const cached = ollamaThinkingCache.get(model);
+  if (cached !== undefined) return cached;
+  try {
+    const response = await fetch("http://127.0.0.1:11434/api/show", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) return false;
+    const body = await response.json() as { capabilities?: string[] };
+    const supported = body.capabilities?.includes("thinking") ?? false;
+    ollamaThinkingCache.set(model, supported);
+    return supported;
+  } catch {
+    return false;
+  }
+}
+
 function nativeContextLimit(model: string): number | null {
   const info = publicModels().find((item) => item.name === model);
   if (!info || preferredRuntimeBackend(info) === "ollama") return null;
@@ -663,7 +693,9 @@ function recordVerifiedContext(model: string, backend: "ollama" | "llama.cpp", r
 
 export function managedOllamaModel(model: string): string {
   const candidate = `${model}${MANAGED_MODEL_PROFILE_SUFFIX}`;
-  if (model.toLowerCase().includes("gemma")) {
+  // The managed Gemma profile is tuned for the Linux workstation's GPU.
+  // Windows uses the public Ollama model with its own conservative context.
+  if (process.platform !== "win32" && model.toLowerCase().includes("gemma")) {
     if (!allModels().some((item) => item.name === candidate)) {
       throw new Error(`managed long-context profile is missing for ${model}; run update-all.sh`);
     }
@@ -673,6 +705,20 @@ export function managedOllamaModel(model: string): string {
 }
 
 export async function verifyOllamaRuntime(model: string, requestedContext = OLLAMA_CLI_CONTEXT): Promise<{ context: number; offload: string }> {
+  try {
+    const health = await fetch("http://127.0.0.1:11434/api/version", {
+      signal: AbortSignal.timeout(3_000),
+    });
+    if (!health.ok) throw new Error(`HTTP ${health.status}`);
+  } catch {
+    const recovery = process.platform === "win32"
+      ? "Start Ollama, or relaunch LAL with start-local-windows.cmd."
+      : "Start Ollama and retry.";
+    throw new Error(
+      "Ollama is not running or not responding at 127.0.0.1:11434. " +
+      recovery,
+    );
+  }
   const loaded = await fetch("http://127.0.0.1:11434/api/generate", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -692,7 +738,7 @@ export async function verifyOllamaRuntime(model: string, requestedContext = OLLA
   const size = runtime.size ?? 0;
   const sizeVram = runtime.size_vram ?? 0;
   const offload = sizeVram > 0 ? `gpu:${Math.round((sizeVram / Math.max(1, size)) * 100)}%` : "cpu";
-  return { context: context || OLLAMA_CLI_CONTEXT, offload };
+  return { context: context || requestedContext, offload };
 }
 
 /** Single-GPU model handoff used by both settings switches and inference. */
@@ -704,7 +750,13 @@ export async function activatePublicModel(model: string, minContext = 0): Promis
   // Gemma is exposed by its public name but deliberately runs through the
   // visible managed 16K Ollama profile. Do not compare that profile against
   // the generic 32K llama.cpp request or it will be unloaded on every turn.
-  const requiredContext = expectedBackend === "ollama" ? resolvedContextTarget(model, Math.max(OLLAMA_CLI_CONTEXT, minContext)) : resolvedContextTarget(model, minContext);
+  const requiresManagedLinuxProfile =
+    expectedBackend === "ollama" &&
+    process.platform !== "win32" &&
+    /gemma/i.test(model);
+  const requiredContext = expectedBackend === "ollama"
+    ? resolvedContextTarget(model, requiresManagedLinuxProfile ? Math.max(OLLAMA_CLI_CONTEXT, minContext) : minContext)
+    : resolvedContextTarget(model, minContext);
   const canReuseCurrent =
     current.alive &&
     current.model === model &&

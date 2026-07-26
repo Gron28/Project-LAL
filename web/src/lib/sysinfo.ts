@@ -3,6 +3,7 @@
 // from the original api/sysinfo/route.ts — pure move, no behavior change.
 import fs from "node:fs";
 import { execSync } from "node:child_process";
+import os from "node:os";
 
 export type SysInfo = {
   cpu: number; ramUsedGb: number; ramTotalGb: number; ramPct: number;
@@ -11,9 +12,12 @@ export type SysInfo = {
 };
 
 function cpuSnap() {
-  const p = fs.readFileSync("/proc/stat", "utf8").split("\n")[0].trim().split(/\s+/).slice(1).map(Number);
-  const idle = p[3] + (p[4] || 0);
-  const total = p.reduce((a, b) => a + b, 0);
+  const times = os.cpus().map((cpu) => cpu.times);
+  const idle = times.reduce((sum, time) => sum + time.idle, 0);
+  const total = times.reduce(
+    (sum, time) => sum + time.user + time.nice + time.sys + time.idle + time.irq,
+    0,
+  );
   return { idle, total };
 }
 function num(p: string): number | null { try { return parseInt(fs.readFileSync(p, "utf8")); } catch { return null; } }
@@ -40,12 +44,8 @@ export async function readSysInfo(): Promise<SysInfo> {
     cpu = Math.max(0, Math.round(100 * (1 - (b.idle - a.idle) / Math.max(1, b.total - a.total))));
   } catch {}
 
-  let mt = 0, ma = 0;
-  try {
-    const mi = fs.readFileSync("/proc/meminfo", "utf8");
-    mt = +(mi.match(/MemTotal:\s+(\d+)/)?.[1] || 0);
-    ma = +(mi.match(/MemAvailable:\s+(\d+)/)?.[1] || 0);
-  } catch {}
+  const mt = os.totalmem();
+  const ma = os.freemem();
 
   const card = "/sys/class/drm/card1/device";
   const vu = num(card + "/mem_info_vram_used");
@@ -59,8 +59,8 @@ export async function readSysInfo(): Promise<SysInfo> {
 
   return {
     cpu,
-    ramUsedGb: +((mt - ma) / 1048576).toFixed(1),
-    ramTotalGb: +(mt / 1048576).toFixed(1),
+    ramUsedGb: +((mt - ma) / 1073741824).toFixed(1),
+    ramTotalGb: +(mt / 1073741824).toFixed(1),
     ramPct: mt ? Math.round((100 * (mt - ma)) / mt) : 0,
     gpu: num(card + "/gpu_busy_percent"),
     vramUsedGb: vu ? +(vu / 1e9).toFixed(1) : null,

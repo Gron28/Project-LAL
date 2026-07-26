@@ -13,30 +13,43 @@ export type PlatformDirectoryEnvironment = { platform?: NodeJS.Platform; homedir
 
 function nonEmpty(value: string | undefined): string | undefined { return value?.trim() || undefined; }
 function homeDirectory(input: PlatformDirectoryEnvironment): string { return nonEmpty(input.homedir) ?? os.homedir(); }
+function pathForPlatform(platform: NodeJS.Platform): typeof path.posix {
+  return platform === "win32" ? path.win32 : path.posix;
+}
 function windowsLocalData(input: PlatformDirectoryEnvironment): string {
   const env = input.env ?? process.env;
-  return nonEmpty(env.LOCALAPPDATA) ?? nonEmpty(env.APPDATA) ?? path.join(homeDirectory(input), "AppData", "Local");
+  return nonEmpty(env.LOCALAPPDATA) ?? nonEmpty(env.APPDATA) ?? path.win32.join(homeDirectory(input), "AppData", "Local");
+}
+
+export function resolveOllamaModelsDirectory(input: PlatformDirectoryEnvironment = {}): string {
+  const platform = input.platform ?? process.platform;
+  const platformPath = pathForPlatform(platform);
+  const override = nonEmpty((input.env ?? process.env).OLLAMA_MODELS);
+  if (override) return platformPath.resolve(override);
+  if (platform === "win32" || platform === "darwin") return platformPath.join(homeDirectory(input), ".ollama", "models");
+  return "/usr/share/ollama/.ollama/models";
 }
 
 /** Resolve roots without assuming a checkout, username, or drive letter. */
 export function resolvePlatformDirectories(input: PlatformDirectoryEnvironment = {}): PlatformDirectories {
   const platform = input.platform ?? process.platform;
+  const platformPath = pathForPlatform(platform);
   const env = input.env ?? process.env;
   const home = homeDirectory(input);
   if (platform === "win32") {
     const local = windowsLocalData(input);
-    return { config: path.join(local, "Project-LAL"), data: path.join(local, "Project-LAL"), state: path.join(local, "Project-LAL", "State"), cache: path.join(local, "Project-LAL", "Cache"), runtime: path.join(nonEmpty(env.TEMP) ?? nonEmpty(input.tmpdir) ?? os.tmpdir(), "Project-LAL") };
+    return { config: platformPath.join(local, "Project-LAL"), data: platformPath.join(local, "Project-LAL"), state: platformPath.join(local, "Project-LAL", "State"), cache: platformPath.join(local, "Project-LAL", "Cache"), runtime: platformPath.join(nonEmpty(env.TEMP) ?? nonEmpty(input.tmpdir) ?? os.tmpdir(), "Project-LAL") };
   }
   if (platform === "darwin") {
-    const library = path.join(home, "Library");
-    return { config: path.join(library, "Application Support", "Project-LAL"), data: path.join(library, "Application Support", "Project-LAL"), state: path.join(library, "Application Support", "Project-LAL", "State"), cache: path.join(library, "Caches", "Project-LAL"), runtime: path.join(nonEmpty(env.TMPDIR) ?? nonEmpty(input.tmpdir) ?? os.tmpdir(), "Project-LAL") };
+    const library = platformPath.join(home, "Library");
+    return { config: platformPath.join(library, "Application Support", "Project-LAL"), data: platformPath.join(library, "Application Support", "Project-LAL"), state: platformPath.join(library, "Application Support", "Project-LAL", "State"), cache: platformPath.join(library, "Caches", "Project-LAL"), runtime: platformPath.join(nonEmpty(env.TMPDIR) ?? nonEmpty(input.tmpdir) ?? os.tmpdir(), "Project-LAL") };
   }
   return {
-    config: path.join(nonEmpty(env.XDG_CONFIG_HOME) ?? path.join(home, ".config"), "project-lal"),
-    data: path.join(nonEmpty(env.XDG_DATA_HOME) ?? path.join(home, ".local", "share"), "project-lal"),
-    state: path.join(nonEmpty(env.XDG_STATE_HOME) ?? path.join(home, ".local", "state"), "project-lal"),
-    cache: path.join(nonEmpty(env.XDG_CACHE_HOME) ?? path.join(home, ".cache"), "project-lal"),
-    runtime: path.join(nonEmpty(env.XDG_RUNTIME_DIR) ?? nonEmpty(input.tmpdir) ?? os.tmpdir(), "project-lal"),
+    config: platformPath.join(nonEmpty(env.XDG_CONFIG_HOME) ?? platformPath.join(home, ".config"), "project-lal"),
+    data: platformPath.join(nonEmpty(env.XDG_DATA_HOME) ?? platformPath.join(home, ".local", "share"), "project-lal"),
+    state: platformPath.join(nonEmpty(env.XDG_STATE_HOME) ?? platformPath.join(home, ".local", "state"), "project-lal"),
+    cache: platformPath.join(nonEmpty(env.XDG_CACHE_HOME) ?? platformPath.join(home, ".cache"), "project-lal"),
+    runtime: platformPath.join(nonEmpty(env.XDG_RUNTIME_DIR) ?? nonEmpty(input.tmpdir) ?? os.tmpdir(), "project-lal"),
   };
 }
 

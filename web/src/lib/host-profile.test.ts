@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collectRedactedHostFacts, parseHostCompatibilityProfile, parseRecipeRequirements, resolvePlatformDirectories } from "./host-profile.ts";
+import { collectRedactedHostFacts, parseHostCompatibilityProfile, parseRecipeRequirements, resolveOllamaModelsDirectory, resolvePlatformDirectories } from "./host-profile.ts";
 
 test("platform directory resolver follows XDG defaults and explicit roots", () => {
   assert.deepEqual(resolvePlatformDirectories({ platform: "linux", homedir: "/owner", tmpdir: "/tmp", env: {} }), { config: "/owner/.config/project-lal", data: "/owner/.local/share/project-lal", state: "/owner/.local/state/project-lal", cache: "/owner/.cache/project-lal", runtime: "/tmp/project-lal" });
@@ -8,7 +8,12 @@ test("platform directory resolver follows XDG defaults and explicit roots", () =
 });
 test("platform directory resolver uses local application data on Windows", () => {
   const directories = resolvePlatformDirectories({ platform: "win32", homedir: "C:\\Users\\owner", tmpdir: "C:\\Temp", env: { LOCALAPPDATA: "D:\\OwnerData", TEMP: "D:\\Temp" } });
-  assert.equal(directories.config, "D:\\OwnerData/Project-LAL"); assert.equal(directories.data, "D:\\OwnerData/Project-LAL"); assert.equal(directories.cache, "D:\\OwnerData/Project-LAL/Cache"); assert.equal(directories.runtime, "D:\\Temp/Project-LAL");
+  assert.equal(directories.config, "D:\\OwnerData\\Project-LAL"); assert.equal(directories.data, "D:\\OwnerData\\Project-LAL"); assert.equal(directories.cache, "D:\\OwnerData\\Project-LAL\\Cache"); assert.equal(directories.runtime, "D:\\Temp\\Project-LAL");
+});
+test("Ollama model root follows explicit configuration and platform defaults", () => {
+  assert.equal(resolveOllamaModelsDirectory({ platform: "linux", homedir: "/owner", env: {} }), "/usr/share/ollama/.ollama/models");
+  assert.equal(resolveOllamaModelsDirectory({ platform: "win32", homedir: "C:\\Users\\owner", env: {} }), "C:\\Users\\owner\\.ollama\\models");
+  assert.equal(resolveOllamaModelsDirectory({ platform: "win32", homedir: "C:\\Users\\owner", env: { OLLAMA_MODELS: "D:\\isolated-models" } }), "D:\\isolated-models");
 });
 test("host profile and recipe schemas reject unknown and unsafe values", () => {
   assert.equal(parseHostCompatibilityProfile({ schemaVersion: 1, id: "linux-amd-current", service: { bind: "loopback", port: 3000 }, storage: { quotasMiB: { cache: 512 } }, compatibilityPacks: ["amd-rocm"] }).service?.port, 3000);

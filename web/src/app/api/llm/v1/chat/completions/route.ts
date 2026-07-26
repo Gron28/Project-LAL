@@ -1,4 +1,4 @@
-import { activatePublicModel, allModels, beginGeneration, contextProfileForModel, isPublicModelName, modelRuntimeSettings, SERVE_PORT, touchServing } from "@/lib/lab";
+import { activatePublicModel, allModels, beginGeneration, contextProfileForModel, isPublicModelName, modelRuntimeSettings, ollamaSupportsThinking, SERVE_PORT, touchServing } from "@/lib/lab";
 import { appendHostObservationForClientDevice } from "@/lib/runs";
 import { recordUsage } from "@/lib/usage-ledger";
 import { acquireCliGpuLease, cliAuthenticatedDeviceId, cliAuthorized, recordCliAccess, streamWithRelease, unauthorizedResponse } from "@/lib/lal-cli";
@@ -180,6 +180,9 @@ export async function POST(request: Request) {
   try {
     const runtime = await activatePublicModel(model);
     const isOllama = runtime.backend === "ollama";
+    const effectiveThinking = isOllama
+      ? managedSettings.thinking && await ollamaSupportsThinking(runtime.runtimeProfile)
+      : managedSettings.thinking;
     const upstreamModel = runtime.runtimeProfile;
     const runtimeContext = runtime.context;
     const runtimeOffload = runtime.gpuOffload;
@@ -212,8 +215,8 @@ export async function POST(request: Request) {
       top_k: managedSettings.topK,
       repeat_penalty: managedSettings.repeatPenalty,
       ...(managedMaxTokens != null ? { max_tokens: managedMaxTokens } : {}),
-      chat_template_kwargs: { ...priorTemplate, enable_thinking: managedSettings.thinking },
-      ...(isOllama ? { think: managedSettings.thinking } : {}),
+      chat_template_kwargs: { ...priorTemplate, enable_thinking: effectiveThinking },
+      ...(isOllama ? { think: effectiveThinking } : {}),
     };
     const droppedTools: string[] = [];
     const upstreamPayload = payload.stream === true
