@@ -223,29 +223,20 @@ describe('createContentGenerator - ERR_MODULE_NOT_FOUND handling', () => {
     ).rejects.toThrow('network timeout');
   });
 
-  it('should preserve module-not-found errors from QWEN OAuth setup', async () => {
-    const moduleError = new Error("Cannot find module '../qwen/stale.js'");
-    (moduleError as NodeJS.ErrnoException).code = 'ERR_MODULE_NOT_FOUND';
-    qwenMockState.oauthError = moduleError;
-
-    try {
-      await createContentGenerator(
+  it('reports a clear error when settings still name the removed QWEN OAuth provider', async () => {
+    // The hosted provider was deleted with the rest of the inherited cloud
+    // surface (PLAN 7.2). The enum member is deliberately kept so an existing
+    // settings.json naming it fails with an actionable message rather than an
+    // opaque unsupported-authType error.
+    await expect(
+      createContentGenerator(
         {
           model: 'test-model',
           authType: AuthType.QWEN_OAUTH,
         },
         mockConfig,
-      );
-      expect.unreachable('should have thrown');
-    } catch (error) {
-      expect(error).toBeInstanceOf(Error);
-      const err = error as Error;
-      expect(err.message).toMatch(
-        /updated in the background and needs to be restarted/,
-      );
-      expect(err.message).toMatch(/qwen-oauth/);
-      expect(err.cause).toBe(moduleError);
-    }
+      ),
+    ).rejects.toThrow(/hosted Qwen OAuth provider has been removed/);
   });
 });
 

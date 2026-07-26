@@ -629,9 +629,10 @@ describe('DeviceFlowRegistry — polling state machine', () => {
     // browser" property. A future commit that re-introduces one fails
     // here loudly.
     const dir = path.dirname(fileURLToPath(import.meta.url));
+    // qwen-device-flow-provider.ts was deleted with the hosted cloud surface
+    // (PLAN 7.2); the property it was checked for still holds for what remains.
     const sources = [
       fs.readFileSync(path.join(dir, 'device-flow.ts'), 'utf8'),
-      fs.readFileSync(path.join(dir, 'qwen-device-flow-provider.ts'), 'utf8'),
     ];
     const forbiddenPatterns = [
       // Static imports

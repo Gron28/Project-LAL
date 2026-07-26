@@ -14091,7 +14091,10 @@ describe('createServeApp', () => {
             },
           },
           auth: {
-            supportedDeviceFlowProviders: ['qwen-oauth'],
+            // No built-in device-flow providers remain after the hosted cloud
+            // surface was removed (PLAN 7.2); the registry still accepts
+            // injected ones.
+            supportedDeviceFlowProviders: [],
             pendingDeviceFlowCount: 0,
           },
         },
@@ -17201,6 +17204,9 @@ describe('auth device-flow routes', () => {
     const app = createServeApp({ ...baseOpts, token: 'tkn' }, undefined, {
       bridge,
       deviceFlowRegistry: registry,
+      // No built-in providers remain (PLAN 7.2), so the route rejects an
+      // unknown providerId before the injected registry is consulted.
+      deviceFlowProviders: [makeFakeProvider().provider],
     });
 
     const startRes = await request(app)
@@ -17277,6 +17283,10 @@ describe('auth device-flow routes', () => {
     const app = createServeApp({ ...baseOpts, token: 'tkn' }, undefined, {
       bridge,
       deviceFlowRegistry: fakeRegistry,
+      // The built-in 'qwen-oauth' provider went with the hosted cloud surface
+      // (PLAN 7.2), so the route would now reject the id as unknown before
+      // reaching the registry. Inject the fake so this still tests the cap.
+      deviceFlowProviders: [makeFakeProvider().provider],
     });
 
     const res = await request(app)

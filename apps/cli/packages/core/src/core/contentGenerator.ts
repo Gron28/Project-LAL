@@ -374,29 +374,14 @@ export async function createContentGenerator(
       );
       baseGenerator = createOpenAIContentGenerator(generatorConfig, config);
     } else if (authType === AuthType.QWEN_OAUTH) {
-      const { getQwenOAuthClient: getQwenOauthClient } = await import(
-        '../qwen/qwenOAuth2.js'
+      // The hosted Qwen OAuth provider was removed with the rest of the
+      // inherited cloud surface (PLAN 7.2). The enum member is kept so a
+      // settings.json still naming it produces this explicit error instead of
+      // an opaque "unsupported authType" from the fall-through below.
+      throw new Error(
+        'The hosted Qwen OAuth provider has been removed. Configure a local ' +
+          'or OpenAI-compatible provider instead (security.auth.selectedType).',
       );
-      const { QwenContentGenerator } = await import(
-        '../qwen/qwenContentGenerator.js'
-      );
-
-      try {
-        const qwenClient = await getQwenOauthClient(
-          config,
-          isInitialAuth ? { requireCachedCredentials: true } : undefined,
-        );
-        baseGenerator = new QwenContentGenerator(
-          qwenClient,
-          generatorConfig,
-          config,
-        );
-      } catch (error) {
-        if (getModuleNotFoundError(error)) {
-          throw error;
-        }
-        throw new Error(error instanceof Error ? error.message : String(error));
-      }
     } else if (authType === AuthType.USE_ANTHROPIC) {
       const { createAnthropicContentGenerator } = await import(
         './anthropicContentGenerator/index.js'

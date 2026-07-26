@@ -544,7 +544,6 @@ export * from './utils/sideQuery.js';
 // OAuth & Authentication
 // ============================================================================
 
-export * from './qwen/qwenOAuth2.js';
 
 // ============================================================================
 // Message Bus Types
