@@ -9,13 +9,13 @@ describe('resolveTerminalRenderer', () => {
   it('keeps animations off until interactive startup selects a renderer', () => {
     expect(terminalAnimationsEnabled()).toBe(false);
   });
-  it('uses a viewport for a capable interactive terminal', () => {
+  it('defaults a capable interactive terminal to inline/static rendering', () => {
     expect(
       resolveTerminalRenderer({
         isTTY: true,
         environment: { TERM: 'xterm-256color' },
       }),
-    ).toBe('viewport');
+    ).toBe('static');
   });
   it('falls back to static for dumb, redirected, CI, and safe-terminal output', () => {
     expect(
@@ -63,10 +63,10 @@ describe('remote sessions default to the static renderer (2026-07-25)', () => {
   // across an ssh link.
   const base = { isTTY: true, screenReader: false };
 
-  it('stays on viewport for a local tty', () => {
+  it('uses static for a local tty too — the terminal owns scrollback', () => {
     expect(
       resolveTerminalRenderer({ ...base, environment: { TERM: 'xterm-256color' } }),
-    ).toBe('viewport');
+    ).toBe('static');
   });
 
   it('switches to static when reached over ssh', () => {

@@ -49,7 +49,24 @@ export function resolveTerminalRenderer(input: {
   //
   // Override in either direction with LAL_TERMINAL_RENDERER=viewport|static.
   if (isRemoteSession(environment)) return 'static';
-  return 'viewport';
+  // Default to `static` everywhere, matching how Claude Code's terminal
+  // behaves: render inline, never take the alternate screen, and let the
+  // TERMINAL own scrollback.
+  //
+  // `viewport` takes the alternate screen, which has no scrollback of its own.
+  // With mouse reporting off (the default since text selection was fixed) the
+  // terminal then translates the wheel into arrow keys — byte-identical to
+  // real arrows, so the app cannot tell them apart and routes them to prompt
+  // history. Reported from the field as "the scrollwheel picks previous
+  // messages instead of scrolling the chat".
+  //
+  // There is no setting that makes viewport give both wheel-scroll and
+  // drag-select: with mouse reporting ON the app gets the wheel but the
+  // terminal stops painting selections, and with it OFF the wheel becomes
+  // arrows. Inline rendering sidesteps the choice entirely — the terminal
+  // scrolls its own buffer and selects its own text, exactly as it does for
+  // every other CLI. Opt back in with LAL_TERMINAL_RENDERER=viewport.
+  return 'static';
 }
 
 /** True when this process is attached to a terminal on the other end of ssh. */

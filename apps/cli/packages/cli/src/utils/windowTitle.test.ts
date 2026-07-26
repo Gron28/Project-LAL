@@ -25,7 +25,7 @@ describe('computeWindowTitle', () => {
 
   it('should use default Qwen title when CLI_TITLE is not set', () => {
     const result = computeWindowTitle();
-    expect(result).toBe('Qwen - qwen');
+    expect(result).toBe('LAL - lal');
   });
 
   it('should use CLI_TITLE environment variable when set', () => {
@@ -36,7 +36,7 @@ describe('computeWindowTitle', () => {
 
   it('should use Qwen prefix with folder name when CLI_TITLE is not set', () => {
     const result = computeWindowTitle('my-project');
-    expect(result).toBe('Qwen - my-project');
+    expect(result).toBe('LAL - my-project');
   });
 
   it('should prefer CLI_TITLE over folder name', () => {
@@ -60,7 +60,7 @@ describe('computeWindowTitle', () => {
 
   it('should fall back to default when folderName is empty string', () => {
     const result = computeWindowTitle('');
-    expect(result).toBe('Qwen - qwen');
+    expect(result).toBe('LAL - lal');
   });
 });
 
@@ -195,7 +195,7 @@ describe('formatSessionWindowTitle', () => {
 
   it('should fall back to computeWindowTitle when sessionName is null', () => {
     expect(formatSessionWindowTitle(null, 'my-project')).toBe(
-      'Qwen - my-project',
+      'LAL - my-project',
     );
   });
 
@@ -209,6 +209,6 @@ describe('formatSessionWindowTitle', () => {
   });
 
   it('should use default title when sessionName is null and no folder', () => {
-    expect(formatSessionWindowTitle(null)).toBe('Qwen - qwen');
+    expect(formatSessionWindowTitle(null)).toBe('LAL - lal');
   });
 });

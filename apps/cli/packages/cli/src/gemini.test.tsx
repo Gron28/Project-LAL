@@ -1944,15 +1944,14 @@ describe('startInteractiveUI', () => {
     expect(renderSpy).toHaveBeenCalledTimes(1);
     const [reactElement, options] = renderSpy.mock.calls[0];
 
-    // Verify render options. alternateScreen tracks the resolved renderer:
-    // startInteractiveUI resolves 'viewport' for a local terminal and 'static'
-    // over ssh, and only viewport takes the alternate screen. This suite runs
-    // with no ssh vars set, so viewport/true is the correct expectation — the
-    // remote case is covered by terminal-renderer.test.ts.
+    // alternateScreen tracks the resolved renderer, which now defaults to
+    // 'static' everywhere (inline rendering, terminal owns scrollback) so the
+    // wheel is never translated into arrow keys. Only an explicit
+    // LAL_TERMINAL_RENDERER=viewport takes the alternate screen.
     expect(options).toEqual({
       exitOnCtrlC: false,
       isScreenReaderEnabled: false,
-      alternateScreen: true,
+      alternateScreen: false,
     });
 
     // Verify React element structure is valid (but don't deep dive into JSX internals)
