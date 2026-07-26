@@ -2349,6 +2349,52 @@ describe('Gemini Client (client.ts)', () => {
       expect(cacheClear).toHaveBeenCalled();
     });
 
+    it('nudges verification when a turn wrote a file and never inspected it (PLAN 2.4)', async () => {
+      // The guard that stops "I created the file, it works" when nothing ever
+      // read it back — the shape behind the field-reported hallucinated
+      // verifications.
+      client['chat'] = {
+        addHistory: vi.fn(),
+        getHistory: vi.fn().mockReturnValue([]),
+        getHistoryLength: vi.fn().mockReturnValue(1),
+        stripOrphanedUserEntriesFromHistory: vi.fn().mockReturnValue([]),
+        repairOrphanedToolUseTurns: vi.fn().mockReturnValue({ injected: [] }),
+      } as unknown as GeminiChat;
+      let round = 0;
+      mockTurnRunFn.mockImplementation(() =>
+        (async function* () {
+          if (round++ === 0) {
+            yield {
+              type: GeminiEventType.ToolCallRequest,
+              value: { name: 'write_file', args: {}, callId: 'c1' },
+            };
+          }
+          yield { type: GeminiEventType.Content, value: 'Done — it works.' };
+        })(),
+      );
+
+      const seen: string[] = [];
+      const stream = client.sendMessageStream(
+        [{ text: 'make a page' }],
+        new AbortController().signal,
+        'prompt-verify-guard',
+        { type: SendMessageType.UserQuery },
+      );
+      for await (const ev of stream) {
+        if (ev.type === GeminiEventType.HookSystemMessage) {
+          seen.push(String(ev.value));
+        }
+      }
+
+      expect(
+        seen.some((m) => /never inspected the result/.test(m)),
+      ).toBe(true);
+      // And it must not nudge forever: the budget is spent after one.
+      expect(seen.filter((m) => /never inspected the result/.test(m))).toHaveLength(
+        1,
+      );
+    });
+
     it('restores stripped retry entries when session token limit skips send', async () => {
       const retryEntry: Content = {
         role: 'user',

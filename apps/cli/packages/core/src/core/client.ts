@@ -64,6 +64,10 @@ import {
   validateArtifacts,
 } from '../services/acceptance/index.js';
 import { LoopDetectionService } from '../services/loopDetectionService.js';
+import {
+  judgeCompletion,
+  type TurnToolActivity,
+} from './completionGuards.js';
 import { CommitAttributionService } from '../services/commitAttribution.js';
 import {
   createResearchTrace,
@@ -257,6 +261,15 @@ export class GeminiClient {
   private readonly surfacedRelevantAutoMemoryPaths = new Set<string>();
   private shutdownRequested = false;
   private researchTrace: ResearchTrace | undefined;
+  /**
+   * Tool names seen during the current request, for the completion guard
+   * (PLAN 2.4). Keyed by prompt_id and reset when a new one starts, mirroring
+   * how researchTrace scopes itself — a recursive Hook turn shares the id, so
+   * a nudge-driven continuation keeps accumulating into the same record.
+   */
+  private completionActivity:
+    | ({ promptId: string } & { toolNames: string[]; verifyNudgeCount: number })
+    | undefined;
 
   /**
    * PLAN 6 — acceptance validation state.
@@ -2566,8 +2579,23 @@ export class GeminiClient {
       // deferred until after the stream is closed (see the two guard blocks
       // below — recursing while the stream is open deadlocks the send-lock).
       let pendingLoopRecovery: string | null = null;
+      // Reset the completion-guard record when a NEW request starts. A
+      // recursive Hook turn reuses prompt_id, so the accumulated tool names
+      // and the spent nudge budget survive a continuation — which is what
+      // stops the guard nudging the same request forever.
+      if (this.completionActivity?.promptId !== prompt_id) {
+        this.completionActivity = {
+          promptId: prompt_id,
+          toolNames: [],
+          verifyNudgeCount: 0,
+        };
+      }
+      const completionActivity = this.completionActivity;
       try {
         for await (const event of resultStream) {
+          if (event.type === GeminiEventType.ToolCallRequest) {
+            completionActivity.toolNames.push(event.value.name);
+          }
           if (
             event.type === GeminiEventType.ToolCallRequest &&
             this.researchTrace?.promptId === prompt_id
@@ -3180,6 +3208,33 @@ export class GeminiClient {
           );
         } catch {
           // Best-effort — don't block the main flow
+        }
+
+        // PLAN 2.4: refuse a completion claim for a turn that wrote files and
+        // never looked at them. This runs BEFORE the skip-next-speaker escape
+        // and before checkNextSpeaker, because it is not a "who talks next"
+        // question — it is whether this turn is allowed to be finished at all.
+        // Bounded by judgeCompletion's own nudge budget, so a model that
+        // ignores it still terminates.
+        const completionVerdict = judgeCompletion(
+          completionActivity satisfies TurnToolActivity,
+        );
+        if (completionVerdict.kind === 'nudge-verify' && boundedTurns > 1) {
+          completionActivity.verifyNudgeCount++;
+          yield {
+            type: GeminiEventType.HookSystemMessage,
+            value: completionVerdict.reason,
+          };
+          yield { type: GeminiEventType.Retry, isContinuation: true };
+          const verifyTurn = yield* this.sendMessageStream(
+            [{ text: completionVerdict.reason }],
+            signal,
+            prompt_id,
+            { ...options, type: SendMessageType.Hook },
+            boundedTurns - 1,
+          );
+          normalCompletion = true;
+          return verifyTurn;
         }
 
         if (this.config.getSkipNextSpeakerCheck()) {
