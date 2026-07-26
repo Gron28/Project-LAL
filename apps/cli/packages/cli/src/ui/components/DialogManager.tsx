@@ -18,7 +18,6 @@ import { PluginChoicePrompt } from './PluginChoicePrompt.js';
 import { ThemeDialog } from './ThemeDialog.js';
 import { SettingsDialog } from './SettingsDialog.js';
 import { StatusLineDialog } from './StatusLineDialog.js';
-import { QwenOAuthProgress } from './QwenOAuthProgress.js';
 import { ExternalAuthProgress } from './ExternalAuthProgress.js';
 import { AuthDialog } from '../auth/AuthDialog.js';
 import { EditorSettingsDialog } from './EditorSettingsDialog.js';
@@ -429,26 +428,10 @@ export const DialogManager = ({
       );
     }
 
-    // OpenAI authentication now handled through AuthDialog with coding-plan/custom sub-modes
-    // Qwen OAuth remains as a separate flow
-    if (uiState.auth.pendingAuthType === AuthType.QWEN_OAUTH) {
-      return (
-        <QwenOAuthProgress
-          deviceAuth={uiState.auth.qwenAuthState.deviceAuth || undefined}
-          authStatus={uiState.auth.qwenAuthState.authStatus}
-          authMessage={uiState.auth.qwenAuthState.authMessage}
-          onTimeout={() => {
-            uiActions.auth.onAuthError('Qwen OAuth authentication timed out.');
-            uiActions.auth.cancelAuthentication();
-            uiActions.auth.setAuthState(AuthState.Updating);
-          }}
-          onCancel={() => {
-            uiActions.auth.cancelAuthentication();
-            uiActions.auth.setAuthState(AuthState.Updating);
-          }}
-        />
-      );
-    }
+    // OpenAI authentication is handled through AuthDialog. The Qwen OAuth
+    // device-code progress panel was removed with the hosted provider
+    // (PLAN 7.2); selecting that authType now fails in createContentGenerator
+    // with an explicit message instead of opening a flow that cannot complete.
   }
   if (uiState.isTrustDialogOpen) {
     return (
