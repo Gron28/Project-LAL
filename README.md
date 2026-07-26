@@ -52,16 +52,6 @@ measured on that card with a desktop session running, not extrapolated — e.g. 
 12B at 102,400 context: 8.3 GB resident, 23%/77% CPU/GPU, 11.4 tok/s generation and
 ~336 tok/s prefill.
 
-### Where it is genuinely weaker
-
-- HTML-001 does not yet pass its bar (9 of 10 unattended on Windows). Until it does,
-  reliability claims are aspirations.
-- 3,173 of 3,491 tracked files are an inherited CLI fork; only ~1,200 lines are
-  provably dead, so reduction is product surgery, not cleanup.
-- There is no RAG story. AnythingLLM does that properly and this does not.
-- One GPU means one model at a time; concurrency is serialised no matter what the
-  scheduler believes.
-
 ### Who it is for
 
 Someone who wants to *improve* a local model against their own tasks, on hardware the

@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { terminalAnimationsEnabled } from '../utils/terminal-renderer.js';
 
 const TIMER_REFRESH_INTERVAL_MS = 500;
 
@@ -33,7 +32,7 @@ export const useTimer = (
   resetKey: unknown,
   isPaused = false,
 ) => {
-  const effectiveActive = isActive && terminalAnimationsEnabled();
+  const effectiveActive = isActive;
   const [elapsedTime, setElapsedTime] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const activeSinceRef = useRef<number | null>(null);
