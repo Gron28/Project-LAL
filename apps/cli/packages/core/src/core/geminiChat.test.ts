@@ -1618,8 +1618,8 @@ describe('GeminiChat', async () => {
             },
           ],
           // The send path window-clamps every main-turn request; with a
-          // near-empty prompt the 32K default ceiling binds.
-          config: { maxOutputTokens: 32_000 },
+          // near-empty prompt the shared 40K default ceiling binds.
+          config: { maxOutputTokens: 40_960 },
         },
         'prompt-id-1',
       );
@@ -4048,7 +4048,7 @@ describe('GeminiChat', async () => {
       );
     });
 
-    it('sends the default ceiling when the window has room (unknown model → 32K)', async () => {
+    it('sends the shared default ceiling when the window has room (unknown model → 40K)', async () => {
       vi.mocked(mockConfig.getContentGeneratorConfig).mockReturnValue({
         authType: AuthType.USE_GEMINI,
         model: 'test-model',
@@ -4085,11 +4085,11 @@ describe('GeminiChat', async () => {
         /* consume */
       }
 
-      // Room = 200K − ~50K − 10K = ~140K; the 32K default ceiling binds.
+      // Room = 200K − ~50K − 10K = ~140K; the 40K default ceiling binds.
       const requestConfig = vi.mocked(
         mockContentGenerator.generateContentStream,
       ).mock.calls[0][0].config as { maxOutputTokens?: number };
-      expect(requestConfig.maxOutputTokens).toBe(32_000);
+      expect(requestConfig.maxOutputTokens).toBe(40_960);
     });
 
     it('uses QWEN_CODE_MAX_OUTPUT_TOKENS as the ceiling when set', async () => {

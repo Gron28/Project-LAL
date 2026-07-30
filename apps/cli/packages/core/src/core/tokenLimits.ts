@@ -9,7 +9,16 @@ type TokenCount = number;
 export type TokenLimitType = 'input' | 'output';
 
 export const DEFAULT_TOKEN_LIMIT: TokenCount = 200_000; // 200K tokens
-export const DEFAULT_OUTPUT_TOKEN_LIMIT: TokenCount = 32_000; // 32K tokens
+/**
+ * Shared fallback for models whose output capacity is not in OUTPUT_PATTERNS.
+ *
+ * Keep this aligned with the Web runtime and code-mode defaults.  The old
+ * 32K/8K split meant an unknown local model could be allowed 32K by the
+ * provider layer but still be cut off at 8K by the agent preset.  40K is a
+ * request ceiling, not a promise to consume it: known lower-capacity models
+ * and the remaining-context clamp still win.
+ */
+export const DEFAULT_OUTPUT_TOKEN_LIMIT: TokenCount = 40_960;
 
 export const ESCALATED_MAX_TOKENS: TokenCount = 1_000_000;
 

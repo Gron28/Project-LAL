@@ -1944,14 +1944,13 @@ describe('startInteractiveUI', () => {
     expect(renderSpy).toHaveBeenCalledTimes(1);
     const [reactElement, options] = renderSpy.mock.calls[0];
 
-    // alternateScreen tracks the resolved renderer, which now defaults to
-    // 'static' everywhere (inline rendering, terminal owns scrollback) so the
-    // wheel is never translated into arrow keys. Only an explicit
-    // LAL_TERMINAL_RENDERER=viewport takes the alternate screen.
+    // alternateScreen tracks the resolved renderer. Auto uses the managed
+    // viewport on Windows (avoids normal-buffer cursor drift after a Static
+    // append such as /export) and inline/static elsewhere.
     expect(options).toEqual({
       exitOnCtrlC: false,
       isScreenReaderEnabled: false,
-      alternateScreen: false,
+      alternateScreen: process.platform === 'win32',
     });
 
     // Verify React element structure is valid (but don't deep dive into JSX internals)

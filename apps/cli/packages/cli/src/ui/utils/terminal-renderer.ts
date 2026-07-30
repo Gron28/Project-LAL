@@ -7,11 +7,13 @@ export function resolveTerminalRenderer(input: {
   configured?: string;
   legacyViewport?: boolean;
   environment?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
   isTTY?: boolean;
   screenReader?: boolean;
   safeTerminal?: boolean;
 }): ResolvedTerminalRenderer {
   const environment = input.environment ?? process.env;
+  const platform = input.platform ?? process.platform;
   const override = environment['LAL_TERMINAL_RENDERER'];
   const requested = input.safeTerminal
     ? 'static'
@@ -49,9 +51,21 @@ export function resolveTerminalRenderer(input: {
   //
   // Override in either direction with LAL_TERMINAL_RENDERER=viewport|static.
   if (isRemoteSession(environment)) return 'static';
-  // Default to `static` everywhere, matching how Claude Code's terminal
-  // behaves: render inline, never take the alternate screen, and let the
-  // TERMINAL own scrollback.
+  // Windows' normal-buffer cursor can fall one row out of sync after Ink
+  // commits new <Static> output while the dynamic composer changes height
+  // (observed after /export). Every later repaint then scrolls the whole
+  // transcript: once per typed character, and once per elapsed-time tick while
+  // the model responds. The managed viewport owns fixed screen rows and avoids
+  // that cursor-relative normal-buffer path entirely.
+  //
+  // Keep explicit `terminalRenderer: static`, LAL_TERMINAL_RENDERER=static,
+  // --safe-terminal, screen-reader, redirected, and remote sessions as escape
+  // hatches above. Auto only selects viewport for a local interactive Windows
+  // TTY.
+  if (platform === 'win32') return 'viewport';
+  // Default non-Windows terminals to `static`, matching how Claude Code's
+  // terminal behaves: render inline, never take the alternate screen, and let
+  // the TERMINAL own scrollback.
   //
   // `viewport` takes the alternate screen, which has no scrollback of its own.
   // With mouse reporting off (the default since text selection was fixed) the

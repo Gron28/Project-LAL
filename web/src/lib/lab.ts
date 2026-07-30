@@ -98,7 +98,7 @@ export type Options = {
   temperature: number; top_p: number; top_k: number; repeat_penalty: number;
 };
 export const DEFAULT_OPTIONS: Options = {
-  num_ctx: 8192, num_predict: -1, num_gpu: null,
+  num_ctx: 8192, num_predict: 40_960, num_gpu: null,
   temperature: 0.6, top_p: 0.9, top_k: 40, repeat_penalty: 1.1,
 };
 type SettingsFile = {
@@ -157,12 +157,29 @@ export function modelRuntimeSettings(model: string): ModelRuntimeSettings {
   const saved = settings.modelSettings[model] ?? {};
   const nativeMaximum = nativeContextLimit(model);
   const info = publicModels().find((item) => item.name === model);
-  const safeUnsavedDefault = info?.source === "local" ? Math.min(32_768, nativeMaximum ?? 32_768) : OLLAMA_CLI_CONTEXT;
+  const backend = preferredRuntimeBackend(info);
+  const verifiedContext = info
+    ? contextProfiles.get(contextIdentity(model, backend))?.verifiedTokens
+    : null;
+  // A successful probe is stronger evidence than the old blanket 32K local
+  // default. Reuse it for models without a saved override so a model verified
+  // at 64K can actually receive a 40K generation request. Native capacity
+  // still caps the request, and unprobed models retain the conservative 32K.
+  const safeUnsavedDefault = info?.source === "local"
+    ? Math.min(verifiedContext ?? 32_768, nativeMaximum ?? verifiedContext ?? 32_768)
+    : OLLAMA_CLI_CONTEXT;
   const fallbackContext = Math.max(safeUnsavedDefault, settings.options.num_ctx || DEFAULT_OPTIONS.num_ctx);
   const contextMaximum = nativeMaximum ?? 1_048_576;
+  const savedMaxOutputTokens =
+    typeof saved.maxOutputTokens === "number" && saved.maxOutputTokens > 0
+      ? saved.maxOutputTokens
+      : undefined;
   return {
     contextTokens: Math.round(finiteNumber(saved.contextTokens, fallbackContext, 2_048, contextMaximum)),
-    maxOutputTokens: Math.round(finiteNumber(saved.maxOutputTokens, settings.options.num_predict, -1, 262_144)),
+    // Legacy -1 meant "let the mode decide", which made the effective value
+    // invisible and varied between Web and CLI. Treat absent/non-positive
+    // per-model values as inheritance from the explicit global default.
+    maxOutputTokens: Math.round(finiteNumber(savedMaxOutputTokens, settings.options.num_predict, 512, 262_144)),
     gpuLayers: saved.gpuLayers === null ? null : Math.round(finiteNumber(saved.gpuLayers, settings.options.num_gpu ?? 99, 0, 999)),
     temperature: finiteNumber(saved.temperature, settings.options.temperature, 0, 2),
     topP: finiteNumber(saved.topP, settings.options.top_p, 0, 1),
@@ -190,6 +207,20 @@ export function writeModelRuntimeSettings(model: string, patch: Partial<ModelRun
   };
   writeSettings({ modelSettings: { [model]: next } });
   return next;
+}
+
+/** Remove a model's saved overrides so it inherits the shared global options
+ * again. Context/runtime probing remains separate and can still establish a
+ * safe active context for the model when it is loaded. */
+export function resetModelRuntimeSettings(model: string): ModelRuntimeSettings {
+  if (!publicModels().some((item) => item.name === model)) throw new Error(`unknown model: ${model}`);
+  let settings: SettingsFile = {};
+  try { settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")); } catch {}
+  if (settings.modelSettings && Object.prototype.hasOwnProperty.call(settings.modelSettings, model)) {
+    delete settings.modelSettings[model];
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  }
+  return modelRuntimeSettings(model);
 }
 
 export function allModelRuntimeSettings(): Record<string, ModelRuntimeSettings> {
@@ -636,11 +667,16 @@ export function contextProfileForModel(model: string): ContextProfile {
   const runtime = servingRuntimeStatus();
   const active = runtime.alive && runtime.model === model && runtime.backend === backend ? runtime.context : null;
   const maximum = nativeContextLimit(model);
-  const requested = Math.min(modelRuntimeSettings(model).contextTokens, maximum ?? Number.POSITIVE_INFINITY);
+  // Ollama artifacts do not expose GGUF metadata through nativeContextLimit,
+  // but a cached probe may still carry a discovered model maximum. Respect it
+  // when resolving the request instead of advertising/requesting 100K from a
+  // model already known to top out at 40K.
+  const effectiveMaximum = maximum ?? cached?.modelMaxTokens ?? null;
+  const requested = Math.min(modelRuntimeSettings(model).contextTokens, effectiveMaximum ?? Number.POSITIVE_INFINITY);
   if (cached) {
     const verified = cached.verifiedTokens;
     return {
-    ...cached, modelMaxTokens: maximum ?? cached.modelMaxTokens, requestedTokens: requested,
+    ...cached, modelMaxTokens: effectiveMaximum, requestedTokens: requested,
     // Verification is durable, residency is not. Never present the last
     // successful allocation/offload as active after the backend was unloaded.
     activeTokens: active,
@@ -654,7 +690,7 @@ export function contextProfileForModel(model: string): ContextProfile {
       : {}),
   };
   }
-  return makeContextProfile({ model, backend, modelMaxTokens: maximum, requestedTokens: requested, activeTokens: active, fingerprint, source: active ? "runtime" : "fallback", gpuOffload: active ? runtime.gpuOffload : null });
+  return makeContextProfile({ model, backend, modelMaxTokens: effectiveMaximum, requestedTokens: requested, activeTokens: active, fingerprint, source: active ? "runtime" : "fallback", gpuOffload: active ? runtime.gpuOffload : null });
 }
 
 export function resolvedContextTarget(model: string, minimum = 0): number {

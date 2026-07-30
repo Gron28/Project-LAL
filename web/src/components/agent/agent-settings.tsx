@@ -125,7 +125,7 @@ export default function AgentSettings(p: AgentSettingsProps) {
           <Section title="Context & output">
             {opts ? <>
               <Slider label="Context size" hint="Per-model window shared with Chat and CLI." min={2048} max={262144} step={1024} value={opts.contextTokens} onChange={(v) => saveOpts({ contextTokens: v })} />
-              <Num label="Max output" hint="-1 = until done. Raise to avoid truncated long code/answers." value={opts.maxOutputTokens} onChange={(v) => saveOpts({ maxOutputTokens: v })} />
+              <Num label="Max output" hint="Per-model override. The shared global default is managed on the Models page (40,960 recommended)." value={opts.maxOutputTokens} onChange={(v) => saveOpts({ maxOutputTokens: v })} />
               <Num label="GPU layers" hint="-1 = auto. Lower to offload to CPU." value={opts.gpuLayers ?? -1} onChange={(v) => saveOpts({ gpuLayers: v < 0 ? null : v })} />
             </> : <p className="text-xs text-[var(--muted)]">Loading…</p>}
           </Section>

@@ -13,9 +13,19 @@ describe('resolveTerminalRenderer', () => {
     expect(
       resolveTerminalRenderer({
         isTTY: true,
+        platform: 'linux',
         environment: { TERM: 'xterm-256color' },
       }),
     ).toBe('static');
+  });
+  it('uses the managed viewport for an automatic local Windows terminal', () => {
+    expect(
+      resolveTerminalRenderer({
+        isTTY: true,
+        platform: 'win32',
+        environment: { TERM: 'xterm-256color', WT_SESSION: 'window-id' },
+      }),
+    ).toBe('viewport');
   });
   it('falls back to static for dumb, redirected, CI, and safe-terminal output', () => {
     expect(
@@ -43,6 +53,7 @@ describe('resolveTerminalRenderer', () => {
       resolveTerminalRenderer({
         configured: 'static',
         isTTY: true,
+        platform: 'win32',
         environment: { TERM: 'xterm' },
       }),
     ).toBe('static');
@@ -63,9 +74,13 @@ describe('remote sessions default to the static renderer (2026-07-25)', () => {
   // across an ssh link.
   const base = { isTTY: true, screenReader: false };
 
-  it('uses static for a local tty too — the terminal owns scrollback', () => {
+  it('uses static for a local non-Windows tty — the terminal owns scrollback', () => {
     expect(
-      resolveTerminalRenderer({ ...base, environment: { TERM: 'xterm-256color' } }),
+      resolveTerminalRenderer({
+        ...base,
+        platform: 'linux',
+        environment: { TERM: 'xterm-256color' },
+      }),
     ).toBe('static');
   });
 
@@ -74,6 +89,7 @@ describe('remote sessions default to the static renderer (2026-07-25)', () => {
       expect(
         resolveTerminalRenderer({
           ...base,
+          platform: 'win32',
           environment: { TERM: 'xterm-256color', [key]: 'set' },
         }),
       ).toBe('static');

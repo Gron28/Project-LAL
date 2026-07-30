@@ -238,7 +238,11 @@ export async function runToolLoop(opts: {
   const { baseUrl, model, exec, onEvent } = opts;
   const tools = opts.tools ?? TOOL_DEFS;
   const maxRounds = opts.maxRounds ?? 15;
-  const maxTokens = opts.maxTokens ?? 8192;
+  // Keep the standalone loop fallback aligned with the Web/CLI global
+  // generation default.  Callers may lower it and the context-room clamp
+  // below may lower it further; this only removes the accidental 8K cutoff
+  // that used to truncate large write_file/edit_file JSON arguments.
+  const maxTokens = opts.maxTokens ?? 40_960;
   const messages = opts.messages.slice();
   // Silence detector: if the whole run produces neither visible text nor one
   // successful tool call, ending "done" would be a lie the user experiences as

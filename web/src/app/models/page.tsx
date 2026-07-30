@@ -25,6 +25,15 @@ type ModelRuntimeSettings = {
   updatedAt: string | null;
 };
 type Model = { name: string; source: "local" | "ollama"; path: string; gb: number };
+type GlobalOptions = {
+  num_ctx: number;
+  num_predict: number;
+  num_gpu: number | null;
+  temperature: number;
+  top_p: number;
+  top_k: number;
+  repeat_penalty: number;
+};
 type ScanRoot = { kind: "gguf" | "ollama"; path: string; exists: boolean; readable: boolean; detail?: string };
 type Inventory = {
   state: "loading" | "ready" | "empty" | "failed";
@@ -36,7 +45,7 @@ type Inventory = {
   backend?: { serving: string | null; llamaServer: string; ollamaStore: string };
   server?: { origin: string; buildId: string };
 };
-type InventoryEnvelope = { inventory?: Inventory; contextProfiles?: Record<string, ContextProfile | null>; modelSettings?: Record<string, ModelRuntimeSettings>; settingsRevision?: string; error?: string };
+type InventoryEnvelope = { inventory?: Inventory; contextProfiles?: Record<string, ContextProfile | null>; modelSettings?: Record<string, ModelRuntimeSettings>; options?: GlobalOptions; settingsRevision?: string; error?: string };
 type SearchResult = { id: string; revision: string; licenseName?: string };
 type CandidateFile = { path: string; sizeBytes: number; sha256: string };
 type DownloadJob = { id: string; state: string; progress: { phase: string; completed: number; total?: number }; error?: { message: string }; checkpoint?: { modelName?: string } };
@@ -60,6 +69,7 @@ export default function ModelsPage() {
   const [inventory, setInventory] = useState<Inventory>({ state: "loading", models: [], current: "", roots: [], diagnostics: [] });
   const [profiles, setProfiles] = useState<Record<string, ContextProfile | null>>({});
   const [modelSettings, setModelSettings] = useState<Record<string, ModelRuntimeSettings>>({});
+  const [globalOptions, setGlobalOptions] = useState<GlobalOptions | null>(null);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState("");
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
@@ -82,6 +92,7 @@ export default function ModelsPage() {
       setInventory(body.inventory);
       setProfiles(body.contextProfiles || {});
       setModelSettings(body.modelSettings || {});
+      setGlobalOptions(body.options || null);
       setStatus(rescan ? `Scan complete: ${body.inventory.models.length} model${body.inventory.models.length === 1 ? "" : "s"} found.` : "");
     } catch (error) {
       setInventory((value) => ({ ...value, state: "failed", models: [], diagnostics: [error instanceof Error ? error.message : String(error)] }));
@@ -144,6 +155,34 @@ export default function ModelsPage() {
     finally { setBusy(""); }
   }
 
+  async function resetModelSettings(model: Model) {
+    setBusy(`settings:${model.name}`); setStatus("");
+    try {
+      const body = await jsonResponse<{ modelSettings: ModelRuntimeSettings }>(await fetch("/api/agent/models", {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ modelSettings: { model: model.name, reset: true } }),
+      }), "Reset model settings");
+      setModelSettings((current) => ({ ...current, [model.name]: body.modelSettings }));
+      setStatus(`${model.name}: now inherits the global generation defaults.`);
+      await load();
+    } catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(""); }
+  }
+
+  async function saveGlobalOptions() {
+    if (!globalOptions) return;
+    setBusy("global-settings"); setStatus("");
+    try {
+      await jsonResponse(await fetch("/api/agent/models", {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ options: globalOptions }),
+      }), "Save global defaults");
+      setStatus("Global generation defaults saved. Models without overrides, Web agents, and paired CLI sessions use them.");
+      await load();
+    } catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(""); }
+  }
+
   async function search() {
     setBusy("search"); setStatus("Searching Hugging Face metadata…"); setResults([]); setFiles([]);
     try {
@@ -189,6 +228,20 @@ export default function ModelsPage() {
       {inventory.state === "failed" && <Panel><div className="flex gap-3"><AlertTriangle className="text-[var(--accent-danger)] shrink-0" size={20} /><div><div className="text-sm font-medium">Model inventory failed</div>{inventory.diagnostics.map((item) => <p key={item} className="mt-1 text-xs text-[var(--muted)] break-all">{item}</p>)}<button className={`${button} mt-3`} onClick={() => void load(true)}>Try again</button></div></div></Panel>}
       {inventory.state === "empty" && <Panel><div className="text-center py-6"><FolderSearch className="mx-auto text-[var(--accent-ai)]" size={32} /><h2 className="mt-3 text-base font-medium">No usable models found yet</h2><p className="mt-2 text-xs text-[var(--muted)]">Search below to download a verified GGUF, or place a <code>*-q4.gguf</code> / <code>*-f16.gguf</code> file in one of the scanned folders.</p></div></Panel>}
 
+      {globalOptions && <Panel padding="none">
+        <div className={heading}><Cpu size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> GLOBAL GENERATION DEFAULTS</div>
+        <div className="p-4 grid gap-3 text-[10px] text-[var(--muted)] md:grid-cols-2 xl:grid-cols-5">
+          <label>Max output
+            <input className={`${input} mt-1`} type="number" min={512} max={262144} step={1024} value={globalOptions.num_predict} onChange={(event) => setGlobalOptions((value) => value ? { ...value, num_predict: Number(event.target.value) } : value)} />
+            <span className="mt-1 block">40,960 by default. A model’s real limit and remaining context still clamp it safely.</span>
+          </label>
+          <label>Temperature<input className={`${input} mt-1`} type="number" min={0} max={2} step={0.05} value={globalOptions.temperature} onChange={(event) => setGlobalOptions((value) => value ? { ...value, temperature: Number(event.target.value) } : value)} /></label>
+          <label>Top P<input className={`${input} mt-1`} type="number" min={0} max={1} step={0.05} value={globalOptions.top_p} onChange={(event) => setGlobalOptions((value) => value ? { ...value, top_p: Number(event.target.value) } : value)} /></label>
+          <label>Top K<input className={`${input} mt-1`} type="number" min={0} max={10000} step={1} value={globalOptions.top_k} onChange={(event) => setGlobalOptions((value) => value ? { ...value, top_k: Number(event.target.value) } : value)} /></label>
+          <div className="flex flex-col justify-between gap-2"><label>Repeat penalty<input className={`${input} mt-1`} type="number" min={0} max={2} step={0.05} value={globalOptions.repeat_penalty} onChange={(event) => setGlobalOptions((value) => value ? { ...value, repeat_penalty: Number(event.target.value) } : value)} /></label><button className={button} disabled={!!busy} onClick={() => void saveGlobalOptions()}>{busy === "global-settings" ? "Saving…" : "Save global defaults"}</button></div>
+        </div>
+      </Panel>}
+
       {inventory.state !== "failed" && <Panel padding="none">
         <div className={heading}><Cpu size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> INSTALLED MODELS <span className="ml-auto normal-case tracking-normal text-[var(--muted)]">{inventory.models.length} found</span></div>
         {inventory.state === "loading" ? <div className="p-6 text-xs text-[var(--muted)]">Scanning model roots…</div> : inventory.models.map((model) => {
@@ -220,8 +273,8 @@ export default function ModelsPage() {
                 <span className="mt-1 block">Default for Chat, Agent, and CLI requests.</span>
               </div>
               <div className="flex flex-col justify-between gap-2">
-                <div className="grid grid-cols-2 gap-2 text-[10px] text-[var(--muted)]"><label>Top P<input className={`${input} mt-1`} type="number" min={0} max={1} step={0.05} value={settings.topP} onChange={(event) => editModelSettings(model.name, { topP: Number(event.target.value) })} /></label><label>Max output<input className={`${input} mt-1`} type="number" min={-1} step={1024} value={settings.maxOutputTokens} onChange={(event) => editModelSettings(model.name, { maxOutputTokens: Number(event.target.value) })} /></label></div>
-                <button className={button} disabled={!!busy} onClick={() => void saveModelSettings(model)}>{busy === `settings:${model.name}` ? "Saving…" : "Save and sync"}</button>
+                <div className="grid grid-cols-2 gap-2 text-[10px] text-[var(--muted)]"><label>Top P<input className={`${input} mt-1`} type="number" min={0} max={1} step={0.05} value={settings.topP} onChange={(event) => editModelSettings(model.name, { topP: Number(event.target.value) })} /></label><label>Max output<input className={`${input} mt-1`} type="number" min={512} max={262144} step={1024} value={settings.maxOutputTokens} onChange={(event) => editModelSettings(model.name, { maxOutputTokens: Number(event.target.value) })} /></label></div>
+                <div className="flex gap-1.5"><button className={button} disabled={!!busy} onClick={() => void resetModelSettings(model)}>Use global</button><button className={button} disabled={!!busy} onClick={() => void saveModelSettings(model)}>{busy === `settings:${model.name}` ? "Saving…" : "Save override"}</button></div>
               </div>
             </div>}
           </div>;

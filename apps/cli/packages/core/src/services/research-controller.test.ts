@@ -10,6 +10,7 @@ import {
   isExplicitWebResearchRequest,
   isResearchSynthesis,
   recordResearchCall,
+  recordResearchResponseText,
   recordResearchResults,
   researchContinuation,
   researchCoverage,
@@ -52,7 +53,7 @@ describe('research controller', () => {
     expect(continuation).toContain('do not make another tool call');
   });
 
-  it('detects external research without hijacking local repository research', () => {
+  it('opts into strict research without hijacking ordinary requests', () => {
     expect(
       isExplicitWebResearchRequest(
         'Deep research the latest local LLM context techniques',
@@ -65,9 +66,30 @@ describe('research controller', () => {
     ).toBe(false);
     expect(
       isExplicitWebResearchRequest(
-        'Research current upstream documentation for this repo',
+        'Deep research current upstream documentation for this repo',
       ),
     ).toBe(true);
+    expect(
+      isExplicitWebResearchRequest(
+        'Research this topic with reliable sources and citations',
+      ),
+    ).toBe(true);
+    expect(
+      isExplicitWebResearchRequest(
+        'research how you could help as an intelligent local antivirus',
+      ),
+    ).toBe(false);
+  });
+
+  it('keeps synthesis text across continuation turns', () => {
+    const trace = createResearchTrace('p', true);
+    recordResearchResponseText(
+      trace,
+      `${'Evidence-linked synthesis with qualifications. '.repeat(6)} https://sqlite.org/isolation.html`,
+    );
+    recordResearchResponseText(trace, 'A short trailing continuation.');
+    expect(isResearchSynthesis(trace.responseText)).toBe(true);
+    expect(trace.responseText).toContain('short trailing continuation');
   });
 
   it('requires diverse searches and opened sources', () => {
@@ -493,9 +515,9 @@ describe('zero-observable-evidence message protects the deliverable', () => {
   it('does not tell a finished model to start over', () => {
     const trace = createResearchTrace('p', true);
     const message = researchContinuation(trace);
-    expect(message).toContain('never called');
-    expect(message).toContain('KEEP everything you have already produced');
-    expect(message).toContain('Do not restart');
+    expect(message).toContain('internal phase transition');
+    expect(message).toContain('do not repeat it');
+    expect(message).toContain('not a request to restart');
     // The old generic phrasing is what caused the restart.
     expect(message).not.toContain('of 3 distinct sub-questions');
   });

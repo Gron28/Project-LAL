@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { completionReserveTokens } from "./toolloop.ts";
 
@@ -14,4 +15,10 @@ test("bounded follow-up uses a smaller reserve", () => {
 
 test("reserve never exceeds the configured output allowance", () => {
   assert.equal(completionReserveTokens({ canWrite: true, wroteFiles: false, forceMutationTool: true, requestedMaxTokens: 6_000 }), 6_000);
+});
+
+test("the tool loop source no longer carries the legacy 8K generation default", async () => {
+  const source = await readFile(new URL("./toolloop.ts", import.meta.url), "utf8");
+  assert.match(source, /opts\.maxTokens \?\? 40_960/);
+  assert.doesNotMatch(source, /opts\.maxTokens \?\? 8192/);
 });
