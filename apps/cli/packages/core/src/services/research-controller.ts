@@ -3,6 +3,8 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import { evaluateResearchCollection } from '@lal/protocol/agent-runtime';
+
 
 export type ResearchTrace = {
   promptId: string;
@@ -252,55 +254,20 @@ export function sourceOrigin(url: string): string {
   }
 }
 
-/**
- * Successful fetches at the end of the run that introduced no origin the run had
- * not already seen. `fetchedSources` is a Set, so its iteration order is the
- * order sources were successfully opened.
- */
-function trailingRedundantFetches(fetched: readonly string[]): number {
-  const seen = new Set<string>();
-  let lastNewOriginIndex = -1;
-  fetched.forEach((url, index) => {
-    const origin = sourceOrigin(url);
-    if (!seen.has(origin)) {
-      seen.add(origin);
-      lastNewOriginIndex = index;
-    }
-  });
-  return fetched.length - 1 - lastNewOriginIndex;
-}
-
 export function researchCoverage(trace: ResearchTrace) {
   const fetched = [...trace.fetchedSources];
-  const queryCount = trace.queries.size;
-  const sourceCount = fetched.length;
-  const origins = new Set(fetched.map(sourceOrigin));
-  const redundantTail = trailingRedundantFetches(fetched);
-
-  const breadthMet = queryCount >= RESEARCH_MIN_QUERIES;
-  const independenceMet = origins.size >= RESEARCH_MIN_INDEPENDENT_DOMAINS;
-  // Diminishing returns: origins have stopped appearing, so more fetching is
-  // spending turns without reducing uncertainty. Requires at least one source —
-  // a plateau at zero evidence is not a plateau, it is a broken provider, and
-  // that is `researchProviderLooksBroken`'s job.
-  const plateaued =
-    breadthMet && origins.size >= 1 && redundantTail >= RESEARCH_PLATEAU_FETCHES;
+  const shared = evaluateResearchCollection({
+    queries: [...trace.queries],
+    sources: fetched,
+    minQueries: RESEARCH_MIN_QUERIES,
+    minOrigins: RESEARCH_MIN_INDEPENDENT_DOMAINS,
+    plateauFetches: RESEARCH_PLATEAU_FETCHES,
+  });
 
   return {
-    passed: (breadthMet && independenceMet) || plateaued,
-    reason: plateaued && !independenceMet ? ('plateau' as const) : ('sufficient' as const),
-    queryCount,
-    sourceCount,
-    originCount: origins.size,
-    origins: [...origins],
-    redundantTail,
-    breadthMet,
-    independenceMet,
-    plateaued,
+    ...shared,
     attemptedQueryCount: trace.attemptedQueries.size,
     attemptedSourceCount: trace.attemptedSources.size,
-    missingQueries: Math.max(0, RESEARCH_MIN_QUERIES - queryCount),
-    missingOrigins: Math.max(0, RESEARCH_MIN_INDEPENDENT_DOMAINS - origins.size),
   };
 }
 

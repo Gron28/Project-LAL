@@ -20,20 +20,14 @@
 // boundary and excluding tools is its job.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // The one registry (PLAN 2.2). Previously the gateway route's inline copy.
 const GATEWAY_ROUTE = 'packages/protocol/src/index.ts';
 // Every file that declares canonical tool names the CLI can actually register.
-const NAME_SOURCES = [
-  'apps/cli/packages/core/src/tools/tool-names.ts',
-  'apps/cli/packages/core/src/tools/computer-use/schemas.ts',
-];
-// Where the computer-use driver decides the name it actually advertises.
-const COMPUTER_USE_REGISTRATION =
-  'apps/cli/packages/core/src/tools/computer-use/index.ts';
+const NAME_SOURCES = ['apps/cli/packages/core/src/tools/tool-names.ts'];
 
 function read(relativePath) {
   const absolute = path.join(root, relativePath);
@@ -41,7 +35,7 @@ function read(relativePath) {
   return fs.readFileSync(absolute, 'utf8');
 }
 
-function parseAllowlist(source) {
+export function parseAllowlist(source) {
   const start = source.indexOf('LAL_TERMINAL_TOOLS: readonly string[] = [');
   if (start === -1) {
     throw new Error(`${GATEWAY_ROUTE}: LAL_TERMINAL_TOOLS not found`);
@@ -59,7 +53,7 @@ function parseAllowlist(source) {
   return [...code.matchAll(/["']([a-z0-9_]+)["']/g)].map((m) => m[1]);
 }
 
-function collectKnownNames() {
+export function collectKnownNames() {
   const known = new Set();
   for (const relativePath of NAME_SOURCES) {
     for (const match of read(relativePath).matchAll(/["']([a-z0-9_]+)["']/g)) {
@@ -69,63 +63,13 @@ function collectKnownNames() {
   return known;
 }
 
-try {
-  const allowlist = parseAllowlist(read(GATEWAY_ROUTE));
-  if (allowlist.length === 0) {
-    throw new Error(`${GATEWAY_ROUTE}: parsed an empty allowlist`);
-  }
-  const known = collectKnownNames();
+export function allowlistProblems(allowlist, known) {
+  const problems = [];
   const unresolvable = allowlist.filter((name) => !known.has(name));
-
   const duplicates = allowlist.filter(
     (name, index) => allowlist.indexOf(name) !== index,
   );
 
-  // The check above only proves a name exists SOMEWHERE. That is a proxy, and it
-  // passed on 2026-07-24 while the product was broken: the allowlist named the
-  // bare verbs (page, launch_app) but the driver advertises them PREFIXED
-  // (computer_use__page), so every browser tool tool_search loaded was dropped
-  // at the gateway filter while system.md told the model to use them. Verify the
-  // ADVERTISED form, which is the thing that matters.
-  const registration = read(COMPUTER_USE_REGISTRATION);
-  const prefixMatch = registration.match(/`([a-z_]+__)\$\{upstreamName\}`/);
-  const computerUseVerbs = [...read(NAME_SOURCES[1]).matchAll(/["']([a-z0-9_]+)["']/g)]
-    .map((m) => m[1]);
-  const allowlistedVerbs = allowlist.filter((name) =>
-    computerUseVerbs.includes(name),
-  );
-
-  const problems = [];
-
-  if (allowlistedVerbs.length > 0) {
-    if (!prefixMatch) {
-      problems.push(
-        `${COMPUTER_USE_REGISTRATION}: could not determine the advertised name ` +
-          `prefix, but ${GATEWAY_ROUTE} allowlists computer-use verbs ` +
-          `(${allowlistedVerbs.join(', ')}). If the driver stopped prefixing, ` +
-          `the gateway's stripping is now wrong in the other direction.`,
-      );
-    } else {
-      const advertisedPrefix = prefixMatch[1];
-      const gateway = read(GATEWAY_ROUTE);
-      const declared = gateway.match(
-        /COMPUTER_USE_PREFIX\s*=\s*["']([a-z0-9_]+)["']/,
-      );
-      if (!declared) {
-        problems.push(
-          `${GATEWAY_ROUTE} allowlists computer-use verbs but declares no ` +
-            `COMPUTER_USE_PREFIX, so names arriving as ` +
-            `"${advertisedPrefix}<verb>" will be dropped.`,
-        );
-      } else if (declared[1] !== advertisedPrefix) {
-        problems.push(
-          `prefix mismatch: the driver advertises "${advertisedPrefix}<verb>" ` +
-            `(${COMPUTER_USE_REGISTRATION}) but ${GATEWAY_ROUTE} strips ` +
-            `"${declared[1]}". Every computer-use tool would be dropped.`,
-        );
-      }
-    }
-  }
   if (unresolvable.length > 0) {
     problems.push(
       `${GATEWAY_ROUTE} allows ${unresolvable.length} name(s) that are not ` +
@@ -137,15 +81,30 @@ try {
   if (duplicates.length > 0) {
     problems.push(`duplicate allowlist entries: ${duplicates.join(', ')}`);
   }
+  return problems;
+}
+
+export function checkCurrentAllowlist() {
+  const allowlist = parseAllowlist(read(GATEWAY_ROUTE));
+  if (allowlist.length === 0) {
+    throw new Error(`${GATEWAY_ROUTE}: parsed an empty allowlist`);
+  }
+  const known = collectKnownNames();
+  const problems = allowlistProblems(allowlist, known);
   if (problems.length > 0) throw new Error(problems.join('\n  '));
 
-  console.log(
-    `tool allowlist: ${allowlist.length} entries, all resolvable against ` +
-      `${NAME_SOURCES.length} name sources; ${allowlistedVerbs.length} ` +
-      `computer-use verb(s) match the advertised ` +
-      `"${prefixMatch ? prefixMatch[1] : '?'}" prefix`,
-  );
-} catch (error) {
-  console.error(`tool allowlist drift: ${error.message}`);
-  process.exit(1);
+  return { allowlist, sources: NAME_SOURCES.length };
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    const result = checkCurrentAllowlist();
+    console.log(
+      `tool allowlist: ${result.allowlist.length} entries, all resolvable ` +
+        `against ${result.sources} name source(s)`,
+    );
+  } catch (error) {
+    console.error(`tool allowlist drift: ${error.message}`);
+    process.exit(1);
+  }
 }

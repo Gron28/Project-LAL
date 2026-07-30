@@ -1,4 +1,5 @@
-import { HIVE_CONTRACT_VERSION, type BudgetName, type ResourceBudget, type RoleProfile, type WorkflowSpec } from "./contracts";
+import { HIVE_CONTRACT_VERSION, type BudgetName, type ResourceBudget, type RoleProfile, type TaskEnvelope, type WorkflowSpec } from "./contracts.ts";
+import { chooseWorkflowRoute } from "./orchestration-policy.ts";
 
 // Tiers are effort levels, not time limits — a local rig is slow on purpose and
 // no mission dies because minutes elapsed. cycles = verify→repair passes the
@@ -41,8 +42,15 @@ export function researchWorkflow(budget: ResourceBudget = BUDGETS.normal): Workf
     { id: "evidence", label: "Evidence ledger", role: "reader", action: "evidence_ledger", dependsOn: ["read"], retry, verificationGate: { requireEvidence: true } },
     { id: "gaps", label: "Contradiction and gap check", role: "verifier", action: "model", dependsOn: ["evidence"], retry },
     { id: "followup", label: "Targeted follow-up", role: "researcher", action: "research_followup", dependsOn: ["gaps"], optional: true, retry },
-    { id: "synthesis", label: "Synthesis", role: "synthesizer", action: "model", dependsOn: ["evidence", "gaps", "followup"], retry },
+    // This is the explicit owner for ordinary upstream `needs_followup`
+    // proposals. It sees the fetched ledger, gap check, and optional targeted
+    // search; only a successful gap-resolution result may clear those stages.
+    { id: "gap_resolution", label: "Follow-up gap resolution", role: "verifier", action: "model", dependsOn: ["evidence", "gaps", "followup"], resolves: ["intake", "decompose", "queries", "gaps", "followup"], retry },
+    { id: "synthesis", label: "Synthesis", role: "synthesizer", action: "model", dependsOn: ["evidence", "gap_resolution"], retry },
     { id: "verify", label: "Citation verification", role: "verifier", action: "citation_verify", dependsOn: ["synthesis"], retry, verificationGate: { requireEvidence: true, minimumScore: .9 } },
+    { id: "citation_repair", label: "Bounded citation repair", role: "synthesizer", action: "model", dependsOn: ["evidence", "synthesis", "verify"], resolves: ["verify"], optional: true, retry },
+    { id: "reverify", label: "Repaired citation verification", role: "verifier", action: "citation_verify", dependsOn: ["citation_repair"], retry, verificationGate: { requireEvidence: true, minimumScore: .9 } },
+    { id: "report", label: "Evidence-linked report", role: "verifier", action: "research_report", dependsOn: ["reverify"], resolves: ["reverify"], retry, verificationGate: { requireEvidence: true, minimumScore: 1 } },
   ] };
 }
 
@@ -78,6 +86,28 @@ export function codingWorkflow(budget: ResourceBudget = BUDGETS.normal): Workflo
   ] };
 }
 
-export function workflowTemplate(kind: "research" | "coding", budgetName: BudgetName = "normal"): WorkflowSpec {
-  return kind === "research" ? researchWorkflow(BUDGETS[budgetName]) : codingWorkflow(BUDGETS[budgetName]);
+export function directArtifactWorkflow(budget: ResourceBudget = BUDGETS.normal): WorkflowSpec {
+  return {
+    version: HIVE_CONTRACT_VERSION,
+    id: "coding-direct-artifact-v1",
+    kind: "coding",
+    name: "Direct artifact implementation and bounded validation",
+    budget,
+    allowedFollowupActions: ["repair", "rerun_checks"],
+    nodes: [
+      { id: "implement", label: "Direct implementation", role: "coder_repairer", action: "worker_tools", dependsOn: [], retry },
+      { id: "acceptance", label: "Artifact acceptance", role: "verifier", action: "artifact_acceptance", dependsOn: ["implement"], retry, verificationGate: { minimumScore: 1 } },
+      { id: "repair", label: "Bounded acceptance repair", role: "coder_repairer", action: "repair", dependsOn: ["acceptance"], optional: true, retry: { ...retry, maxAttempts: Math.max(1, budget.cycles) } },
+      { id: "final_audit", label: "Final artifact acceptance", role: "verifier", action: "artifact_acceptance", dependsOn: ["acceptance", "repair"], retry, verificationGate: { minimumScore: 1 } },
+      { id: "report", label: "Evidence report", role: "verifier", action: "final_report", dependsOn: ["final_audit"], retry, verificationGate: { minimumScore: 1 } },
+    ],
+  };
+}
+
+export function workflowTemplate(kind: "research" | "coding", budgetName: BudgetName = "normal", envelope?: TaskEnvelope): WorkflowSpec {
+  if (!envelope) return kind === "research" ? researchWorkflow(BUDGETS[budgetName]) : codingWorkflow(BUDGETS[budgetName]);
+  const route = chooseWorkflowRoute(kind, envelope, budgetName);
+  if (route.route === "iterative_research") return researchWorkflow(BUDGETS[budgetName]);
+  if (route.route === "direct_agent") return directArtifactWorkflow(BUDGETS[budgetName]);
+  return codingWorkflow(BUDGETS[budgetName]);
 }

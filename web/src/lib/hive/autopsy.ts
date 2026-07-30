@@ -32,7 +32,7 @@ export function diagnoseHiveWorkflow(id: string) {
   if (!routing.length) add("routing_missing", "No structured routing decisions were recorded.");
   const dispatched = new Set(routing.map((event) => (event.payload as { targetNodeId?: string })?.targetNodeId).filter(Boolean));
   for (const node of snapshot.nodes.filter((n) => n.attempt > 0)) if (!dispatched.has(node.nodeId)) add("routing_error", "Node ran without a recorded dispatch decision.", "failure", node.nodeId);
-  if (snapshot.workflow.status === "succeeded" && snapshot.nodes.some((n) => n.result?.verification && !n.result.verification.passed && !["checks", "audit"].includes(n.nodeId))) add("false_completion", "Workflow succeeded despite a required failed verification gate.");
+  if (["succeeded", "complete"].includes(snapshot.workflow.status) && snapshot.nodes.some((n) => n.result?.verification && !n.result.verification.passed && !["checks", "audit"].includes(n.nodeId))) add("false_completion", "Workflow completed despite a required failed verification gate.");
   if (snapshot.events.some((e) => e.kind === "memory_retrieval_failed")) add("memory_retrieval_failure", "A node could not retrieve required external memory.", "warning");
   const hashes = new Set(snapshot.evidence.map((e) => e.sourceHash));
   const blockedSources = snapshot.evidence.filter((e) => /just a moment|enable javascript|cookies to continue/i.test(e.excerpt)).length;

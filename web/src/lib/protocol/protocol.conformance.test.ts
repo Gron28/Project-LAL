@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 // Node 24 deliberately refuses native TypeScript stripping inside node_modules.
 // Exercise the canonical workspace source here; check_protocol_drift separately
 // proves that the Web and CLI runtime consumers use the package boundary.
-import { KNOWN_EVENT_KINDS } from "../../../../packages/protocol/src/index.ts";
+import { isKnownEventKind, KNOWN_EVENT_KINDS } from "../../../../packages/protocol/src/index.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, "fixtures");
@@ -58,6 +58,19 @@ function assertAllKindsKnown(file: string) {
 
 test("code-kind run ledger: every event kind is known to the protocol module", () => {
   assertAllKindsKnown(path.join(FIXTURES_DIR, "run-code-sample.ndjson"));
+});
+
+test("Hive durable event literals use the same shared event vocabulary", () => {
+  const roots = [
+    path.resolve(__dirname, "../hive/engine.ts"),
+    path.resolve(__dirname, "../../app/api/hive/workflows/[id]/operator/route.ts"),
+  ];
+  const kinds = roots.flatMap((file) =>
+    [...fs.readFileSync(file, "utf8").matchAll(/appendHiveEvent\([\s\S]{0,240}?kind:\s*"([^"]+)"/g)].map((match) => match[1]));
+  for (const kind of kinds) assert.equal(isKnownEventKind(kind), true, `Hive event kind "${kind}" is absent from @lal/protocol`);
+  for (const kind of ["workflow_paused", "workflow_cancelled", "workflow_failed", "worker_tool_request", "worker_tool_result"]) {
+    assert.equal(isKnownEventKind(kind), true, `dynamic Hive event kind "${kind}" is absent from @lal/protocol`);
+  }
 });
 
 test("hive-kind run ledger: every event kind is known to the protocol module", () => {

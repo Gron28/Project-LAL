@@ -2,9 +2,9 @@
 // endpoint (llama-server --jinja, or Ollama's OpenAI shim). Confirmed working with
 // native `tool_calls` streaming + finish_reason:"tool_calls" against Qwen3 (Phase 0
 // spike) — no prompted-JSON fallback needed.
-import type { Executor } from "./tools";
-import { TOOL_DEFS, normalizeToolArgs, toolCallExample, validateToolArguments, type ToolDef } from "./tools";
-import { managedPrompt } from "./lal-prompts";
+import type { Executor } from "./tools.ts";
+import { TOOL_DEFS, normalizeToolArgs, toolCallExample, validateToolArguments, type ToolDef } from "./tools.ts";
+import { managedPrompt } from "./lal-prompts.ts";
 import type { ToolLoopEvent } from "@lal/protocol";
 
 export type { ToolLoopEvent } from "@lal/protocol";
@@ -32,6 +32,17 @@ function compactOldToolResults(messages: ToolLoopMsg[], keepTail = 10): number {
     }
   }
   return trimmed;
+}
+
+export function completionReserveTokens(input: {
+  canWrite: boolean;
+  wroteFiles: boolean;
+  forceMutationTool: boolean;
+  requestedMaxTokens: number;
+}): number {
+  const wholeFileMutationPlausible = input.canWrite && (!input.wroteFiles || input.forceMutationTool);
+  const taskReserve = wholeFileMutationPlausible ? 40_960 : 8_192;
+  return Math.max(1_024, Math.min(input.requestedMaxTokens, taskReserve));
 }
 
 // Ministral's chat template deliberately excludes assistant tool-call turns and
@@ -314,14 +325,16 @@ export async function runToolLoop(opts: {
     // so an unavailable visualization never prevents the agent from running.
     if (opts.ctx) {
       let estimatedTokens = estimateRequestTokens(body);
-      // Reserve only the minimum viable completion here. The actual request is
-      // clamped below to the room left after the current prompt; reserving a
-      // fixed 30% of the context rejected otherwise-valid tool turns early.
-      // The floor is 40960 (not the old 512) so a write_file/edit call generating
-      // a whole file never gets cut off mid-generation while there is genuinely
-      // room left in ctx — modes now serve at ctx:65536 to make room for this.
-      const MIN_COMPLETION_TOKENS = 40_960;
-      const reserveTokens = MIN_COMPLETION_TOKENS + 1024;
+      // Whole-file mutation rounds retain a large generation allowance; bounded
+      // inspection/verification rounds use a smaller reserve so a long-lived
+      // agent can still act after accumulating ~29k input tokens.
+      const completionReserve = completionReserveTokens({
+        canWrite,
+        wroteFiles,
+        forceMutationTool,
+        requestedMaxTokens: maxTokens,
+      });
+      const reserveTokens = completionReserve + 1024;
       if (estimatedTokens + reserveTokens >= opts.ctx) {
         // Try shrinking before failing: old tool outputs are the bulk of a long
         // transcript and the least valuable part of it.
@@ -338,7 +351,7 @@ export async function runToolLoop(opts: {
       // Fit the actual request to the remaining context after tool schemas and
       // transcript content. A fixed reservation can otherwise pass preflight
       // while the backend rejects the request as "too many tokens".
-      body.max_tokens = Math.min(maxTokens, Math.max(MIN_COMPLETION_TOKENS, opts.ctx - estimatedTokens - 1024));
+      body.max_tokens = Math.min(maxTokens, Math.max(completionReserve, opts.ctx - estimatedTokens - 1024));
     }
     // llama-server occasionally returns a transient 5xx immediately after a
     // long/truncated tool-call turn. Retrying the exact idempotent inference

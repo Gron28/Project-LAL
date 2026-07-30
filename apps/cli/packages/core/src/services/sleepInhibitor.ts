@@ -359,15 +359,33 @@ try {
 }
 `.trim();
 
-export const sleepInhibitor = new SleepInhibitor();
+interface SleepInhibitorProcessState {
+  inhibitor: SleepInhibitor;
+}
 
-// Kill the inhibitor subprocess if the parent process exits; otherwise an
-// orphaned `caffeinate`/`systemd-inhibit`/PowerShell process would keep
-// blocking system sleep indefinitely. Mirrors the exit handling in
-// shellExecutionService.
-process.on('exit', () => {
-  sleepInhibitor.dispose();
-});
+// Vitest isolation, hot reloaders, and embedders can evaluate this module more
+// than once in the same Node process. Keep both the singleton and its exit
+// listener process-global so every evaluation does not add another listener
+// (and so an older listener never retains an obsolete inhibitor instance).
+const sleepInhibitorGlobals = globalThis as typeof globalThis & {
+  __lalSleepInhibitorProcessState?: SleepInhibitorProcessState;
+};
+if (!sleepInhibitorGlobals.__lalSleepInhibitorProcessState) {
+  const state: SleepInhibitorProcessState = {
+    inhibitor: new SleepInhibitor(),
+  };
+  sleepInhibitorGlobals.__lalSleepInhibitorProcessState = state;
+
+  // Kill the inhibitor subprocess if the parent process exits; otherwise an
+  // orphaned `caffeinate`/`systemd-inhibit`/PowerShell process would keep
+  // blocking system sleep indefinitely.
+  process.on('exit', () => {
+    state.inhibitor.dispose();
+  });
+}
+
+export const sleepInhibitor =
+  sleepInhibitorGlobals.__lalSleepInhibitorProcessState.inhibitor;
 
 export function acquireSleepInhibitor(
   config: Pick<Config, 'getPreventSystemSleepEnabled'>,

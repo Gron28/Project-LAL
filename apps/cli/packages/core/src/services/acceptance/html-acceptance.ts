@@ -9,6 +9,7 @@ import type {
   AcceptanceFinding,
   AcceptanceReport,
 } from './types.js';
+import { validateStaticHtmlDocument } from '@lal/protocol/agent-runtime';
 
 /**
  * Acceptance criteria for a single-file web artifact — the HTML-001 workflow.
@@ -36,24 +37,6 @@ import type {
  * `scripts/html001.mjs` remains the browser-based gate. This is the check the
  * product performs on itself, on every machine, with no extra install.
  */
-
-const REMOTE_URL = /\b(?:src|href)\s*=\s*["'](https?:)?\/\/[^"']+["']/gi;
-const PLACEHOLDER =
-  /\b(?:TODO|FIXME|TBD|IMPLEMENT ME|your code here|placeholder for|coming soon|not implemented)\b/i;
-
-/** Strip comments and string literals so scans do not match inside them. */
-function stripJsNoise(js: string): string {
-  return js
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
-    .replace(/`(?:\\.|[^`\\])*`/g, '``')
-    .replace(/'(?:\\.|[^'\\\n])*'/g, "''")
-    .replace(/"(?:\\.|[^"\\\n])*"/g, '""');
-}
-
-function lineOf(haystack: string, index: number): number {
-  return haystack.slice(0, index).split('\n').length;
-}
 
 export interface ScriptBlock {
   code: string;
@@ -140,129 +123,29 @@ export function findSyntaxError(code: string): string | null {
 }
 
 function checkHtml(artifact: string, html: string): AcceptanceReport {
-  const findings: AcceptanceFinding[] = [];
-  const scripts = extractInlineScripts(html);
-
-  if (!/<html[\s>]/i.test(html) || !/<body[\s>]/i.test(html)) {
-    findings.push({
+  const shared = validateStaticHtmlDocument(html);
+  const codeMap: Record<string, string> = {
+    'script-balance': 'unterminated-script',
+    'javascript-syntax': 'js-syntax-error',
+    'element-references': 'missing-element',
+    'self-contained': 'remote-dependency',
+    'no-placeholder': 'placeholder-stub',
+    'nonempty-handlers': 'empty-handler',
+    'interactive-script': 'no-script',
+  };
+  const findings: AcceptanceFinding[] = shared.checks
+    .filter((check) => !check.passed)
+    .map((check) => ({
       severity: 'fatal',
-      code: 'html-structure',
-      message: 'no <html> or <body> element — this is not a loadable document',
-    });
-  }
-
-  // An UNTERMINATED script is invisible to the extractor above, which requires a
-  // closing tag — so a `</script>` deleted by an edit produced no findings at all
-  // while the page was completely broken. Found by the PLAN 3.3 regression test
-  // on 2026-07-25.
-  const openTags = (html.match(/<script\b[^>]*>/gi) ?? []).length;
-  const closeTags = (html.match(/<\/script\s*>/gi) ?? []).length;
-  if (openTags > closeTags) {
-    findings.push({
-      severity: 'fatal',
-      code: 'unterminated-script',
-      message: `${openTags} <script> tag(s) but only ${closeTags} closing tag(s) — the rest of the document is swallowed as script text`,
-    });
-  }
-
-  // A module body is legal JS that `new Function` rejects (top-level import /
-  // export), so those are parsed only for balance, not compiled.
-  for (const block of scripts) {
-    const isModule = /^\s*(?:import|export)\b/m.test(block.code);
-    if (isModule) continue;
-    const error = findSyntaxError(block.code);
-    if (error) {
-      findings.push({
-        severity: 'fatal',
-        code: 'js-syntax-error',
-        message: `inline script does not parse: ${error}`,
-        line: lineOf(html, block.offset),
-      });
-    }
-  }
-
-  const ids = declaredIds(html);
-  const referenced = referencedIds(scripts);
-  const missing = new Map<string, number>();
-  for (const { id, offset } of referenced) {
-    if (!ids.has(id) && !missing.has(id)) missing.set(id, offset);
-  }
-  for (const [id, offset] of missing) {
-    findings.push({
-      severity: 'fatal',
-      code: 'missing-element',
-      message:
-        `the script looks up id "${id}", which no element declares — this ` +
-        `returns null at runtime and the feature it drives silently does nothing`,
-      line: lineOf(html, offset),
-    });
-  }
-
-  // Remote dependencies: an artifact that needs the network is not the
-  // self-contained page that was asked for, and fails whenever the box is
-  // offline — which is this product's normal operating condition.
-  let remote: RegExpExecArray | null;
-  const seenRemote = new Set<string>();
-  REMOTE_URL.lastIndex = 0;
-  while ((remote = REMOTE_URL.exec(html)) !== null) {
-    const url = remote[0];
-    if (seenRemote.has(url)) continue;
-    seenRemote.add(url);
-    findings.push({
-      severity: 'warning',
-      code: 'remote-dependency',
-      message: `depends on a remote asset (${url.slice(0, 80)}) — it will not work offline`,
-      line: lineOf(html, remote.index),
-    });
-  }
-
-  const placeholder = PLACEHOLDER.exec(html);
-  if (placeholder) {
-    findings.push({
-      severity: 'fatal',
-      code: 'placeholder-stub',
-      message: `contains an unfinished marker ("${placeholder[0]}") — the implementation is a stub, not a subset that happens to work`,
-      line: lineOf(html, placeholder.index),
-    });
-  }
-
-  // An empty handler body is a control that exists and does nothing, which
-  // reads as working right up until someone clicks it.
-  for (const block of scripts) {
-    const clean = stripJsNoise(block.code);
-    // `[^'"]*` not `+`: stripJsNoise has already collapsed the event-name string
-    // literal to an empty pair, which is the whole point of scanning the
-    // stripped text — a commented-out listener must not be reported.
-    const re = /addEventListener\(\s*['"][^'"]*['"]\s*,\s*(?:function\s*\([^)]*\)|\([^)]*\)\s*=>)\s*\{\s*\}/g;
-    let empty: RegExpExecArray | null;
-    while ((empty = re.exec(clean)) !== null) {
-      findings.push({
-        severity: 'fatal',
-        code: 'empty-handler',
-        message: 'an event listener has an empty body — the control does nothing when used',
-        line: lineOf(html, block.offset + empty.index),
-      });
-    }
-  }
-
-  if (scripts.length === 0 && /\b(?:interactive|button|onclick)\b/i.test(html)) {
-    findings.push({
-      severity: 'warning',
-      code: 'no-script',
-      message: 'the page has no inline script, so nothing can be interactive',
-    });
-  }
+      code: codeMap[check.code] || check.code,
+      message: check.detail,
+    }));
 
   return {
     criteria: 'web-artifact',
     artifact,
     findings,
-    unchecked: [
-      'runtime console errors (needs a browser — run `npm run bench:html001` for that)',
-      'whether each control produces the correct result when used',
-      'whether a canvas or chart actually painted anything',
-      'visual layout',
-    ],
+    unchecked: shared.uncheckedProperties,
   };
 }
 

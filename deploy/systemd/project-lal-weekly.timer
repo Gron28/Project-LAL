@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Project-LAL weekly smoke check when idle
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+RandomizedDelaySec=2h
+
+[Install]
+WantedBy=timers.target

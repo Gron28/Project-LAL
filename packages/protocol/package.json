@@ -1,10 +1,14 @@
 {
   "name": "@lal/protocol",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./agent-runtime": {
+      "types": "./src/agent-runtime.d.ts",
+      "default": "./src/agent-runtime.js"
+    }
   },
   "types": "./src/index.ts"
 }

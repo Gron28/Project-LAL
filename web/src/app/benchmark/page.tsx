@@ -118,7 +118,6 @@ export default function Benchmark() {
   // `runs` is the slim archive of every suite. Per-question evidence arrives only
   // for the suite being looked at, keyed here so switching back is instant.
   const [evidence, setEvidence] = useState<Record<string, Res[]>>({});
-  const [loadingSuite, setLoadingSuite] = useState(false);
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("view") === "lens") queueMicrotask(() => setView("lens"));
@@ -130,23 +129,13 @@ export default function Benchmark() {
   // fetched yet. Remember the intent and open it once the suite's payload lands,
   // instead of opening a record with an empty evidence list.
   const [pendingDetail, setPendingDetail] = useState<{ suite: string; model: string } | null>(null);
-  useEffect(() => {
-    if (!pendingDetail) return;
-    const rows = evidence[pendingDetail.suite];
-    if (!rows) return;
-    const hit = rows.find((item) => item.model === pendingDetail.model);
-    if (hit) setDetail(hit);
-    setPendingDetail(null);
-  }, [pendingDetail, evidence]);
 
   useEffect(() => {
     if (evidence[suite]) return;
-    setLoadingSuite(true);
     fetch("/api/bench?suite=" + encodeURIComponent(suite))
       .then((r) => r.json())
       .then((j) => { if (Array.isArray(j.results)) setEvidence((prev) => ({ ...prev, [suite]: j.results })); })
-      .catch(() => {})
-      .finally(() => setLoadingSuite(false));
+      .catch(() => {});
   }, [suite, evidence]);
   const loadSuites = () => fetch("/api/suites").then((r) => r.json()).then((j) => {
     const suites = (j.suites || []) as { id: string; label: string; count: number }[];
@@ -181,6 +170,7 @@ export default function Benchmark() {
     setRuns(drop);
     setEvidence((prev) => (prev[result.suite] ? { ...prev, [result.suite]: drop(prev[result.suite]) } : prev));
     if (detail?.model === result.model && detail?.suite === result.suite) setDetail(null);
+    if (pendingDetail?.model === result.model && pendingDetail?.suite === result.suite) setPendingDetail(null);
   };
   const togglePin = async (result: Res) => {
     const pinned = !result.pinned;
@@ -196,13 +186,17 @@ export default function Benchmark() {
   // leaderboard and scores render before the per-question payload lands.
   const allSuiteRuns = evidence[suite] ?? runs.filter((result) => result.suite === suite);
   const suiteRuns = allSuiteRuns.filter((result) => !hiddenModels.has(result.model));
+  const selectedDetail = detail ?? (pendingDetail
+    ? evidence[pendingDetail.suite]?.find((item) => item.model === pendingDetail.model) ?? null
+    : null);
+  const loadingSuite = !evidence[suite];
   const cats = CAT_ORDER.filter((cat) => suiteRuns.some((result) => result.cats[cat]));
   const selectedSuite = suiteList.find((item) => item.id === suite);
   const ranked = [...suiteRuns].sort((a, b) => pct(b.score, b.total) - pct(a.score, a.total));
   const leader = ranked[0];
   const before = suiteRuns.length >= 2 ? suiteRuns[suiteRuns.length - 2] : null;
   const after = suiteRuns.length >= 2 ? suiteRuns[suiteRuns.length - 1] : null;
-  const failures = detail?.results?.filter((item) => !item.ok).length ?? 0;
+  const failures = selectedDetail?.results?.filter((item) => !item.ok).length ?? 0;
   const suitesCovered = new Set(runs.map((result) => result.suite)).size;
   const totalQuestions = runs.reduce((sum, result) => sum + result.total, 0);
   const suiteAttempts = allSuiteRuns.reduce((sum, result) => sum + result.total, 0);
@@ -240,7 +234,7 @@ export default function Benchmark() {
               <ViewSwitch view={view} onChange={switchView} />
               <div>
                 <label className="block text-[9px] tracking-[0.16em] uppercase text-[var(--muted)] mb-1.5">Evaluation suite</label>
-                <select className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-3 py-2.5 text-sm outline-none focus:border-[var(--border-loud)]" value={suite} onChange={(e) => { setSuite(e.target.value); setDetail(null); }}>
+                <select className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-3 py-2.5 text-sm outline-none focus:border-[var(--border-loud)]" value={suite} onChange={(e) => { setSuite(e.target.value); setDetail(null); setPendingDetail(null); }}>
                   {(suiteList.length ? suiteList : SUITES.map((item) => ({ ...item, count: 0 }))).map((item) => <option key={item.id} value={item.id}>{item.label || item.id}{item.count ? ` · ${item.count} questions` : ""}</option>)}
                 </select>
               </div>
@@ -288,7 +282,7 @@ export default function Benchmark() {
                     <SectionTitle eyebrow="Leaderboard" title="Ranked by overall score" note="Click to open every response" />
                     <div className="space-y-2 mt-4 max-h-[560px] overflow-auto pr-1">
                       {ranked.map((result, i) => (
-                        <button key={result.model} onClick={() => setDetail(result)} className="w-full text-left p-3 rounded-[var(--r-md)] border border-[var(--border-soft)] bg-[var(--surface-2)] hover:border-[var(--border-loud)]">
+                        <button key={result.model} onClick={() => { setDetail(result); setPendingDetail(null); }} className="w-full text-left p-3 rounded-[var(--r-md)] border border-[var(--border-soft)] bg-[var(--surface-2)] hover:border-[var(--border-loud)]">
                           <div className="flex items-start gap-3"><span className="text-[10px] text-[var(--muted)] pt-0.5">{String(i + 1).padStart(2, "0")}</span><div className="min-w-0 flex-1"><div className="flex items-center gap-1.5"><span className="text-xs font-semibold truncate">{shortName(result.model)}</span>{result.pinned && <Pin size={11} className="text-[var(--accent-highlight)]" />}{result.stale && <span className="text-[8px] uppercase tracking-wide text-[var(--accent-warn)]">stale baseline</span>}</div><div className="text-[9px] text-[var(--muted)] mt-1">{result.score}/{result.total} correct · {result.tokSec ?? "—"} tok/s</div></div><span className="text-xl font-semibold" style={{ color: i === 0 ? "var(--accent-success)" : "var(--text)" }}>{pct(result.score, result.total)}%</span></div>
                           <div className="h-1 bg-[var(--surface-3)] rounded-full mt-3 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${pct(result.score, result.total)}%`, background: PALETTE[suiteRuns.indexOf(result) % PALETTE.length] }} /></div>
                         </button>
@@ -355,14 +349,14 @@ export default function Benchmark() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-[10px]">
                       <thead><tr className="text-[var(--muted)] uppercase tracking-[0.12em]"><th className="text-left px-4 py-3">Model</th>{cats.map((cat) => <th key={cat} className="px-3 py-3">{cat}</th>)}<th className="px-3 py-3">Overall</th><th className="px-3 py-3">tok/s</th><th className="px-3 py-3">latency</th><th className="px-3 py-3">TTFT</th><th className="px-3 py-3">size</th><th className="px-3 py-3">saved</th><th className="px-3 py-3">actions</th></tr></thead>
-                      <tbody>{suiteRuns.map((result, ri) => <tr key={result.model} className="border-t border-[var(--border-soft)] hover:bg-[var(--surface-2)] cursor-pointer" onClick={() => setDetail(result)}><td className="px-4 py-3 min-w-44"><div className="flex items-center gap-2 font-medium"><span className="w-2 h-2 rounded-full" style={{ background: colorOf(ri) }} />{shortName(result.model)}{result.pinned && <Pin size={10} className="text-[var(--accent-highlight)]" />}</div>{result.stale && <div className="text-[8px] text-[var(--accent-warn)] mt-1">suite changed since pinning</div>}</td>{cats.map((cat) => { const value = result.cats[cat]; const score = pct(value?.ok ?? 0, value?.total ?? 0); return <td key={cat} className="px-3 py-3 text-center"><div style={{ color: score >= 67 ? "var(--accent-success)" : score >= 34 ? "var(--accent-warn)" : "var(--accent-danger)" }}>{value ? `${score}%` : "—"}</div><div className="text-[8px] text-[var(--muted)]">{value ? `${value.ok}/${value.total}` : ""}</div></td>; })}<td className="px-3 py-3 text-center font-semibold">{pct(result.score, result.total)}%<div className="text-[8px] text-[var(--muted)]">{result.score}/{result.total}</div></td><td className="px-3 py-3 text-center">{result.tokSec ?? "—"}</td><td className="px-3 py-3 text-center">{result.latencyMs ? `${result.latencyMs}ms` : "—"}</td><td className="px-3 py-3 text-center">{result.ttftMs ? `${result.ttftMs}ms` : "—"}</td><td className="px-3 py-3 text-center">{result.sizeGb != null ? `${result.sizeGb.toFixed(1)}GB` : "—"}</td><td className="px-3 py-3 text-center whitespace-nowrap">{result.ts ? new Date(result.ts).toLocaleDateString() : "—"}</td><td className="px-3 py-3" onClick={(e) => e.stopPropagation()}><div className="flex justify-center gap-1"><button onClick={() => togglePin(result)} title={result.pinned ? "Unpin baseline" : "Pin as baseline"} className="p-1.5 rounded hover:bg-[var(--surface-3)] text-[var(--muted)] hover:text-[var(--accent-highlight)]">{result.pinned ? <PinOff size={13} /> : <Pin size={13} />}</button><button onClick={() => deleteResult(result)} title="Delete result" className="p-1.5 rounded hover:bg-[var(--surface-3)] text-[var(--muted)] hover:text-[var(--accent-danger)]"><Trash2 size={13} /></button></div></td></tr>)}</tbody>
+                      <tbody>{suiteRuns.map((result, ri) => <tr key={result.model} className="border-t border-[var(--border-soft)] hover:bg-[var(--surface-2)] cursor-pointer" onClick={() => { setDetail(result); setPendingDetail(null); }}><td className="px-4 py-3 min-w-44"><div className="flex items-center gap-2 font-medium"><span className="w-2 h-2 rounded-full" style={{ background: colorOf(ri) }} />{shortName(result.model)}{result.pinned && <Pin size={10} className="text-[var(--accent-highlight)]" />}</div>{result.stale && <div className="text-[8px] text-[var(--accent-warn)] mt-1">suite changed since pinning</div>}</td>{cats.map((cat) => { const value = result.cats[cat]; const score = pct(value?.ok ?? 0, value?.total ?? 0); return <td key={cat} className="px-3 py-3 text-center"><div style={{ color: score >= 67 ? "var(--accent-success)" : score >= 34 ? "var(--accent-warn)" : "var(--accent-danger)" }}>{value ? `${score}%` : "—"}</div><div className="text-[8px] text-[var(--muted)]">{value ? `${value.ok}/${value.total}` : ""}</div></td>; })}<td className="px-3 py-3 text-center font-semibold">{pct(result.score, result.total)}%<div className="text-[8px] text-[var(--muted)]">{result.score}/{result.total}</div></td><td className="px-3 py-3 text-center">{result.tokSec ?? "—"}</td><td className="px-3 py-3 text-center">{result.latencyMs ? `${result.latencyMs}ms` : "—"}</td><td className="px-3 py-3 text-center">{result.ttftMs ? `${result.ttftMs}ms` : "—"}</td><td className="px-3 py-3 text-center">{result.sizeGb != null ? `${result.sizeGb.toFixed(1)}GB` : "—"}</td><td className="px-3 py-3 text-center whitespace-nowrap">{result.ts ? new Date(result.ts).toLocaleDateString() : "—"}</td><td className="px-3 py-3" onClick={(e) => e.stopPropagation()}><div className="flex justify-center gap-1"><button onClick={() => togglePin(result)} title={result.pinned ? "Unpin baseline" : "Pin as baseline"} className="p-1.5 rounded hover:bg-[var(--surface-3)] text-[var(--muted)] hover:text-[var(--accent-highlight)]">{result.pinned ? <PinOff size={13} /> : <Pin size={13} />}</button><button onClick={() => deleteResult(result)} title="Delete result" className="p-1.5 rounded hover:bg-[var(--surface-3)] text-[var(--muted)] hover:text-[var(--accent-danger)]"><Trash2 size={13} /></button></div></td></tr>)}</tbody>
                     </table>
                   </div>
                 </Panel>
 
                 <Panel padding="none">
-                  <div className={head}><span className="text-[var(--accent-ai)]">◆</span> Question-level evidence <span className="ml-auto normal-case tracking-normal text-[9px] text-[var(--muted)]">{detail ? `${detail.results?.length ?? 0} responses · ${failures} failures` : loadingSuite ? "loading this suite's evidence…" : "select a model row"}</span></div>
-                  {detail ? <div className="max-h-[58vh] overflow-auto text-xs">{(detail.results || []).map((item, i) => <div key={i} className="px-4 py-3 border-b border-[var(--border-soft)] last:border-0 grid grid-cols-[20px_48px_1fr] gap-2"><span style={{ color: item.ok ? "var(--accent-success)" : "var(--accent-danger)" }}>{item.ok ? "✓" : "✗"}</span><span className="text-[8px] uppercase tracking-widest text-[var(--muted)] pt-0.5">{item.cat}</span><span className="min-w-0"><span className="text-[var(--text-2)]">{item.q}</span><br /><span className="text-[var(--muted)]">→ {item.got || "(empty)"}</span>{item.detail && <><br /><span className="text-[10px] text-[var(--muted)] italic">{item.detail}</span></>}{item.shot && <a href={`/api/webshot?id=${item.shot}`} target="_blank" rel="noreferrer" className="block mt-2"><img src={`/api/webshot?id=${item.shot}`} alt="rendered benchmark output" className="max-h-44 rounded border border-[var(--border-soft)]" /></a>}</span></div>)}</div> : <div className="h-28 grid place-items-center text-[11px] text-[var(--muted)]">Select any leaderboard card or matrix row to inspect every prompt, response, grade, and rendered artifact.</div>}
+                  <div className={head}><span className="text-[var(--accent-ai)]">◆</span> Question-level evidence <span className="ml-auto normal-case tracking-normal text-[9px] text-[var(--muted)]">{selectedDetail ? `${selectedDetail.results?.length ?? 0} responses · ${failures} failures` : loadingSuite ? "loading this suite's evidence…" : "select a model row"}</span></div>
+                  {selectedDetail ? <div className="max-h-[58vh] overflow-auto text-xs">{(selectedDetail.results || []).map((item, i) => <div key={i} className="px-4 py-3 border-b border-[var(--border-soft)] last:border-0 grid grid-cols-[20px_48px_1fr] gap-2"><span style={{ color: item.ok ? "var(--accent-success)" : "var(--accent-danger)" }}>{item.ok ? "✓" : "✗"}</span><span className="text-[8px] uppercase tracking-widest text-[var(--muted)] pt-0.5">{item.cat}</span><span className="min-w-0"><span className="text-[var(--text-2)]">{item.q}</span><br /><span className="text-[var(--muted)]">→ {item.got || "(empty)"}</span>{item.detail && <><br /><span className="text-[10px] text-[var(--muted)] italic">{item.detail}</span></>}{item.shot && <a href={`/api/webshot?id=${item.shot}`} target="_blank" rel="noreferrer" className="block mt-2"><img src={`/api/webshot?id=${item.shot}`} alt="rendered benchmark output" className="max-h-44 rounded border border-[var(--border-soft)]" /></a>}</span></div>)}</div> : <div className="h-28 grid place-items-center text-[11px] text-[var(--muted)]">Select any leaderboard card or matrix row to inspect every prompt, response, grade, and rendered artifact.</div>}
                 </Panel>
               </>
             )}

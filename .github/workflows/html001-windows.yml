@@ -1,0 +1,57 @@
+name: HTML-001 Windows qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      gateway:
+        description: Project-LAL gateway URL reachable from the Windows runner
+        required: true
+        type: string
+      model:
+        description: Registered Project-LAL model ID
+        required: true
+        default: qwen35-9b
+        type: string
+
+jobs:
+  qualify:
+    # The benchmark must exercise the installed Windows LAL client, filesystem,
+    # shell, and browser. A Linux container on a hosted runner is not equivalent.
+    runs-on: [self-hosted, Windows, X64, lal-html001]
+    timeout-minutes: 240
+    env:
+      LAL_API_KEY: ${{ secrets.LAL_API_KEY }}
+      LAL_GATEWAY_URL: ${{ inputs.gateway }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install browser harness
+        run: npm ci --prefix web
+      - name: Verify installed LAL client
+        shell: pwsh
+        run: |
+          $command = Get-Command lal -ErrorAction Stop
+          lal --version
+          Write-Host "Using $($command.Source)"
+      - name: Run ten consecutive unattended fixtures
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          node scripts/html001.mjs --runs 10 --model "${{ inputs.model }}" --gateway "${{ inputs.gateway }}" --lal lal --out artifacts/html001-windows.json
+      - name: Enforce Windows qualification metadata
+        shell: pwsh
+        run: |
+          $report = Get-Content artifacts/html001-windows.json -Raw | ConvertFrom-Json
+          if ($report.summary.host.platform -ne "win32") { throw "qualification did not run on Windows" }
+          if (-not $report.summary.complete) { throw "qualification report is partial" }
+          if (-not $report.summary.meetsBar) { throw "fewer than 9 of 10 runs passed" }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: html001-windows-${{ github.run_id }}
+          path: artifacts/html001-windows.json
+          if-no-files-found: error

@@ -609,6 +609,30 @@ const getCleanupStrategy = () =>
  *
  */
 
+interface ShellExecutionProcessState {
+  cleanup: () => void;
+}
+
+const shellExecutionGlobals = globalThis as typeof globalThis & {
+  __lalShellExecutionProcessState?: ShellExecutionProcessState;
+};
+
+function registerShellExecutionExitCleanup(cleanup: () => void): void {
+  const existing = shellExecutionGlobals.__lalShellExecutionProcessState;
+  if (existing) {
+    // Module re-evaluation means the old class and its static process
+    // registries are about to become unreachable. Drain them now, then let
+    // the one process-global exit listener point at the current class.
+    existing.cleanup();
+    existing.cleanup = cleanup;
+    return;
+  }
+
+  const state: ShellExecutionProcessState = { cleanup };
+  shellExecutionGlobals.__lalShellExecutionProcessState = state;
+  process.on('exit', () => state.cleanup());
+}
+
 export class ShellExecutionService {
   private static activePtys = new Map<number, ActivePty>();
   private static activeChildProcesses = new Set<number>();
@@ -634,7 +658,7 @@ export class ShellExecutionService {
   }
 
   static {
-    process.on('exit', () => {
+    registerShellExecutionExitCleanup(() => {
       ShellExecutionService.cleanup();
     });
   }

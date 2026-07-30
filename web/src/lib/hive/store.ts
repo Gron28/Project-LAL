@@ -89,6 +89,22 @@ hiveDb.exec(`
   CREATE TABLE IF NOT EXISTS role_overrides (
     role_id TEXT PRIMARY KEY, prompt TEXT, preferred_model TEXT, updated_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS evaluation_runs (
+    id TEXT PRIMARY KEY, suite_id TEXT NOT NULL, candidate_id TEXT NOT NULL, baseline_id TEXT NOT NULL,
+    environment_hash TEXT NOT NULL, metrics_json TEXT NOT NULL, trajectories_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS improvement_proposals (
+    id TEXT PRIMARY KEY, kind TEXT NOT NULL, summary TEXT NOT NULL, supporting_failures_json TEXT NOT NULL,
+    expected_metrics_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'quarantined',
+    evaluation_run_id TEXT, decision_reason TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+    FOREIGN KEY (evaluation_run_id) REFERENCES evaluation_runs(id)
+  );
+  CREATE TABLE IF NOT EXISTS evidence_decisions (
+    workflow_id TEXT NOT NULL, evidence_id TEXT NOT NULL, decision TEXT NOT NULL, reason TEXT,
+    created_at INTEGER NOT NULL, PRIMARY KEY(workflow_id,evidence_id),
+    FOREIGN KEY (workflow_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+  );
   CREATE INDEX IF NOT EXISTS idx_workflow_runs_updated ON workflow_runs(updated_at DESC);
   CREATE INDEX IF NOT EXISTS idx_workflow_nodes_status ON workflow_nodes(workflow_id, status);
   CREATE INDEX IF NOT EXISTS idx_hive_events_workflow ON hive_events(workflow_id, seq);
@@ -97,6 +113,20 @@ hiveDb.exec(`
 // Additive migration for databases created before specialist adapters existed.
 if (!hiveDb.prepare("PRAGMA table_info(workflow_nodes)").all().some((column) => column.name === "adapter_ms")) {
   hiveDb.exec("ALTER TABLE workflow_nodes ADD COLUMN adapter_ms INTEGER NOT NULL DEFAULT 0");
+}
+const eventColumns = new Set(hiveDb.prepare("PRAGMA table_info(hive_events)").all().map((column) => String(column.name)));
+const eventMigrations = [
+  ["schema_version", "INTEGER NOT NULL DEFAULT 1"],
+  ["event_id", "TEXT"],
+  ["invocation_id", "TEXT"],
+  ["trace_id", "TEXT"],
+  ["span_id", "TEXT"],
+  ["parent_span_id", "TEXT"],
+  ["lifecycle", "TEXT"],
+  ["payload_redacted", "INTEGER NOT NULL DEFAULT 0"],
+] as const;
+for (const [column, definition] of eventMigrations) {
+  if (!eventColumns.has(column)) hiveDb.exec(`ALTER TABLE hive_events ADD COLUMN ${column} ${definition}`);
 }
 
 const json = (v: unknown) => JSON.stringify(v);
@@ -173,6 +203,24 @@ export function updateWorkflow(id: string, patch: Partial<Pick<WorkflowRecord, "
   );
 }
 
+export function updateTaskEnvelope(id: string, envelope: TaskEnvelope): boolean {
+  const result = hiveDb.prepare("UPDATE workflow_runs SET envelope_json=?,updated_at=? WHERE id=?")
+    .run(json(envelope), now(), id);
+  return Number(result.changes) === 1;
+}
+
+export function updateWorkflowBudget(id: string, budget: ResourceBudget): boolean {
+  const result = hiveDb.prepare("UPDATE workflow_runs SET budget_json=?,updated_at=? WHERE id=?")
+    .run(json(budget), now(), id);
+  return Number(result.changes) === 1;
+}
+
+export function updateWorkflowSpec(id: string, spec: WorkflowSpec): boolean {
+  const result = hiveDb.prepare("UPDATE workflow_runs SET spec_json=?,updated_at=? WHERE id=?")
+    .run(json(spec), now(), id);
+  return Number(result.changes) === 1;
+}
+
 export function updateNode(workflowId: string, nodeId: string, patch: Partial<WorkflowNodeRecord>): void {
   const row = hiveDb.prepare("SELECT * FROM workflow_nodes WHERE workflow_id=? AND node_id=?").get(workflowId, nodeId);
   if (!row) return;
@@ -187,47 +235,101 @@ export function updateNode(workflowId: string, nodeId: string, patch: Partial<Wo
   hiveDb.prepare("UPDATE workflow_runs SET updated_at=? WHERE id=?").run(now(), workflowId);
 }
 
-export type HiveEvent = { seq: number; ts: number; kind: string; nodeId?: string; role?: string; modelVersion?: string; payload: unknown };
-export function appendHiveEvent(workflowId: string, event: Omit<HiveEvent, "seq" | "ts">): HiveEvent {
+export type HiveEvent = {
+  schemaVersion: number;
+  schemaKnown: boolean;
+  eventId: string;
+  seq: number;
+  ts: number;
+  kind: string;
+  invocationId?: string;
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  lifecycle?: string;
+  nodeId?: string;
+  role?: string;
+  modelVersion?: string;
+  payloadRedacted: boolean;
+  payload: unknown;
+};
+type NewHiveEvent = Omit<HiveEvent, "schemaVersion" | "schemaKnown" | "eventId" | "seq" | "ts" | "traceId" | "spanId" | "payloadRedacted"> & {
+  schemaVersion?: number;
+  eventId?: string;
+  traceId?: string;
+  spanId?: string;
+  payloadRedacted?: boolean;
+};
+
+function eventFromRow(row: Record<string, unknown>): HiveEvent {
+  return {
+    schemaVersion: Number(row.schema_version || 1),
+    schemaKnown: Number(row.schema_version || 1) === 1,
+    eventId: row.event_id ? String(row.event_id) : `${row.workflow_id}:${row.seq}`,
+    seq: Number(row.seq),
+    ts: Number(row.ts),
+    kind: String(row.kind),
+    invocationId: row.invocation_id ? String(row.invocation_id) : undefined,
+    traceId: row.trace_id ? String(row.trace_id) : String(row.workflow_id),
+    spanId: row.span_id ? String(row.span_id) : `${row.workflow_id}:${row.seq}`,
+    parentSpanId: row.parent_span_id ? String(row.parent_span_id) : undefined,
+    lifecycle: row.lifecycle ? String(row.lifecycle) : undefined,
+    nodeId: row.node_id ? String(row.node_id) : undefined,
+    role: row.role ? String(row.role) : undefined,
+    modelVersion: row.model_version ? String(row.model_version) : undefined,
+    payloadRedacted: Boolean(row.payload_redacted),
+    payload: parse(row.payload_json, null),
+  };
+}
+
+export function appendHiveEvent(workflowId: string, event: NewHiveEvent): HiveEvent {
   hiveDb.exec("BEGIN IMMEDIATE");
   try {
     const row = hiveDb.prepare("SELECT COALESCE(MAX(seq),0)+1 AS seq FROM hive_events WHERE workflow_id=?").get(workflowId);
-    const out = { ...event, seq: Number(row?.seq ?? 1), ts: now() };
-    hiveDb.prepare("INSERT INTO hive_events (workflow_id,seq,ts,kind,node_id,role,model_version,payload_json) VALUES (?,?,?,?,?,?,?,?)")
-      .run(workflowId, out.seq, out.ts, out.kind, out.nodeId ?? null, out.role ?? null, out.modelVersion ?? null, json(out.payload));
+    const seq = Number(row?.seq ?? 1);
+    const invocationId = event.invocationId || getWorkflow(workflowId)?.executionRunId;
+    const out: HiveEvent = {
+      ...event,
+      schemaVersion: event.schemaVersion || 1,
+      schemaKnown: (event.schemaVersion || 1) === 1,
+      eventId: event.eventId || `evt-${crypto.randomUUID()}`,
+      seq,
+      ts: now(),
+      invocationId,
+      traceId: event.traceId || workflowId,
+      spanId: event.spanId || `span-${crypto.randomUUID()}`,
+      payloadRedacted: event.payloadRedacted || false,
+    };
+    hiveDb.prepare(`INSERT INTO hive_events
+      (workflow_id,seq,ts,kind,node_id,role,model_version,payload_json,schema_version,event_id,invocation_id,trace_id,span_id,parent_span_id,lifecycle,payload_redacted)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(
+        workflowId, out.seq, out.ts, out.kind, out.nodeId ?? null, out.role ?? null,
+        out.modelVersion ?? null, json(out.payload), out.schemaVersion, out.eventId,
+        out.invocationId ?? null, out.traceId, out.spanId, out.parentSpanId ?? null,
+        out.lifecycle ?? null, out.payloadRedacted ? 1 : 0,
+      );
     hiveDb.exec("COMMIT");
     return out;
   } catch (e) { hiveDb.exec("ROLLBACK"); throw e; }
 }
 
 export function getHiveEvents(workflowId: string, after = 0, limit = 500): HiveEvent[] {
-  return hiveDb.prepare("SELECT * FROM hive_events WHERE workflow_id=? AND seq>? ORDER BY seq LIMIT ?").all(workflowId, after, Math.min(limit, 2_000)).map((r) => ({
-    seq: Number(r.seq), ts: Number(r.ts), kind: String(r.kind), nodeId: r.node_id ? String(r.node_id) : undefined,
-    role: r.role ? String(r.role) : undefined, modelVersion: r.model_version ? String(r.model_version) : undefined, payload: parse(r.payload_json, null),
-  }));
+  return hiveDb.prepare("SELECT * FROM hive_events WHERE workflow_id=? AND seq>? ORDER BY seq LIMIT ?").all(workflowId, after, Math.min(limit, 2_000)).map(eventFromRow);
 }
 
 export function getLatestHiveEvents(workflowId: string, limit = 500): HiveEvent[] {
-  return hiveDb.prepare("SELECT * FROM hive_events WHERE workflow_id=? ORDER BY seq DESC LIMIT ?").all(workflowId, Math.min(limit, 2_000)).reverse().map((r) => ({
-    seq: Number(r.seq), ts: Number(r.ts), kind: String(r.kind), nodeId: r.node_id ? String(r.node_id) : undefined,
-    role: r.role ? String(r.role) : undefined, modelVersion: r.model_version ? String(r.model_version) : undefined, payload: parse(r.payload_json, null),
-  }));
+  return hiveDb.prepare("SELECT * FROM hive_events WHERE workflow_id=? ORDER BY seq DESC LIMIT ?").all(workflowId, Math.min(limit, 2_000)).reverse().map(eventFromRow);
 }
 
 export function getLatestHiveToolResult(workflowId: string, toolName: string): HiveEvent | null {
   const row = hiveDb.prepare("SELECT * FROM hive_events WHERE workflow_id=? AND kind='worker_tool_result' AND json_extract(payload_json, '$.name')=? ORDER BY seq DESC LIMIT 1").get(workflowId, toolName);
   if (!row) return null;
-  return {
-    seq: Number(row.seq), ts: Number(row.ts), kind: String(row.kind), nodeId: row.node_id ? String(row.node_id) : undefined,
-    role: row.role ? String(row.role) : undefined, modelVersion: row.model_version ? String(row.model_version) : undefined, payload: parse(row.payload_json, null),
-  };
+  return eventFromRow(row);
 }
 
 export function getLatestHiveToolResults(workflowId: string, toolName: string, limit = 20): HiveEvent[] {
-  return hiveDb.prepare("SELECT * FROM hive_events WHERE workflow_id=? AND kind='worker_tool_result' AND json_extract(payload_json, '$.name')=? ORDER BY seq DESC LIMIT ?").all(workflowId, toolName, Math.min(limit, 100)).reverse().map((row) => ({
-    seq: Number(row.seq), ts: Number(row.ts), kind: String(row.kind), nodeId: row.node_id ? String(row.node_id) : undefined,
-    role: row.role ? String(row.role) : undefined, modelVersion: row.model_version ? String(row.model_version) : undefined, payload: parse(row.payload_json, null),
-  }));
+  return hiveDb.prepare("SELECT * FROM hive_events WHERE workflow_id=? AND kind='worker_tool_result' AND json_extract(payload_json, '$.name')=? ORDER BY seq DESC LIMIT ?").all(workflowId, toolName, Math.min(limit, 100)).reverse().map(eventFromRow);
 }
 
 export function putArtifact(content: string | Uint8Array, mediaType: string, meta: { workflowId?: string; nodeId?: string; label?: string } = {}): ArtifactRef {
@@ -273,7 +375,7 @@ export function listModelProfiles(): ModelProfile[] { return hiveDb.prepare("SEL
 export function workflowSnapshot(id: string, eventLimit = 300, eventAfter = 0) {
   const workflow = getWorkflow(id);
   if (!workflow) return null;
-  return { workflow, nodes: getWorkflowNodes(id), evidence: getEvidence(id), events: getHiveEvents(id, eventAfter, eventLimit) };
+  return { workflow, nodes: getWorkflowNodes(id), evidence: getEvidence(id), evidenceDecisions: getEvidenceDecisions(id), events: getHiveEvents(id, eventAfter, eventLimit) };
 }
 
 // User-editable overrides on top of presets.ts's hardcoded ROLE_PROFILES — which
@@ -336,6 +438,105 @@ export function finishSideEffect(workflowId: string, nodeId: string, fingerprint
 export function resetInterruptedNodes(workflowId: string): number {
   const r = hiveDb.prepare("UPDATE workflow_nodes SET status='pending',error='execution interrupted; resuming from the last completed node',started_at=NULL WHERE workflow_id=? AND status IN ('running','ready','cancelled','awaiting_approval')").run(workflowId);
   return Number(r.changes);
+}
+
+export function rewindWorkflowNodes(workflowId: string, nodeIds: string[]): number {
+  if (!nodeIds.length) return 0;
+  const placeholders = nodeIds.map(() => "?").join(",");
+  const result = hiveDb.prepare(`UPDATE workflow_nodes
+    SET status='pending',attempt=0,model_profile_id=NULL,model_version=NULL,started_at=NULL,finished_at=NULL,
+        duration_ms=NULL,prompt_tokens=0,completion_tokens=0,context_tokens=0,swap_ms=0,adapter_ms=0,
+        tool_calls=0,result_json=NULL,error='rewound by operator; prior events and side effects remain in the audit ledger'
+    WHERE workflow_id=? AND node_id IN (${placeholders})`).run(workflowId, ...nodeIds);
+  return Number(result.changes);
+}
+
+export function decideEvidence(workflowId: string, evidenceId: string, decision: "pinned" | "rejected", reason = ""): void {
+  const evidence = hiveDb.prepare("SELECT id FROM evidence WHERE id=? AND workflow_id=?").get(evidenceId, workflowId);
+  if (!evidence) throw new Error("evidence not found in this workflow");
+  hiveDb.prepare(`INSERT INTO evidence_decisions(workflow_id,evidence_id,decision,reason,created_at)
+    VALUES (?,?,?,?,?) ON CONFLICT(workflow_id,evidence_id) DO UPDATE SET
+    decision=excluded.decision,reason=excluded.reason,created_at=excluded.created_at`)
+    .run(workflowId, evidenceId, decision, reason.slice(0, 2_000), now());
+}
+
+export function getEvidenceDecisions(workflowId: string) {
+  return hiveDb.prepare("SELECT evidence_id,decision,reason,created_at FROM evidence_decisions WHERE workflow_id=? ORDER BY created_at").all(workflowId)
+    .map((row) => ({ evidenceId: String(row.evidence_id), decision: String(row.decision), reason: row.reason ? String(row.reason) : "", createdAt: Number(row.created_at) }));
+}
+
+export type EvaluationRunRecord = {
+  id: string;
+  suiteId: string;
+  candidateId: string;
+  baselineId: string;
+  environmentHash: string;
+  metrics: unknown;
+  trajectories: unknown[];
+  createdAt: number;
+};
+
+export function saveEvaluationRun(run: EvaluationRunRecord): void {
+  hiveDb.prepare(`INSERT INTO evaluation_runs
+    (id,suite_id,candidate_id,baseline_id,environment_hash,metrics_json,trajectories_json,created_at)
+    VALUES (?,?,?,?,?,?,?,?)`)
+    .run(run.id, run.suiteId, run.candidateId, run.baselineId, run.environmentHash, json(run.metrics), json(run.trajectories), run.createdAt);
+}
+
+export type ImprovementProposal = {
+  id: string;
+  kind: "prompt" | "tool" | "routing" | "workflow" | "acceptance" | "model";
+  summary: string;
+  supportingFailures: string[];
+  expectedMetrics: Record<string, number>;
+  status: "quarantined" | "promoted" | "rejected";
+  evaluationRunId?: string;
+  decisionReason?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+const proposalFromRow = (row: Record<string, unknown>): ImprovementProposal => ({
+  id: String(row.id),
+  kind: row.kind as ImprovementProposal["kind"],
+  summary: String(row.summary),
+  supportingFailures: parse(row.supporting_failures_json, []),
+  expectedMetrics: parse(row.expected_metrics_json, {}),
+  status: row.status as ImprovementProposal["status"],
+  evaluationRunId: row.evaluation_run_id ? String(row.evaluation_run_id) : undefined,
+  decisionReason: row.decision_reason ? String(row.decision_reason) : undefined,
+  createdAt: Number(row.created_at),
+  updatedAt: Number(row.updated_at),
+});
+
+export function createImprovementProposal(input: Omit<ImprovementProposal, "status" | "createdAt" | "updatedAt">): ImprovementProposal {
+  if (!input.supportingFailures.length) throw new Error("at least one supporting failure is required");
+  if (!Object.keys(input.expectedMetrics).length) throw new Error("expected metric movement is required");
+  const timestamp = now();
+  hiveDb.prepare(`INSERT INTO improvement_proposals
+    (id,kind,summary,supporting_failures_json,expected_metrics_json,status,evaluation_run_id,decision_reason,created_at,updated_at)
+    VALUES (?,?,?,?,?,'quarantined',NULL,NULL,?,?)`)
+    .run(input.id, input.kind, input.summary, json(input.supportingFailures), json(input.expectedMetrics), timestamp, timestamp);
+  return getImprovementProposal(input.id)!;
+}
+
+export function getImprovementProposal(id: string): ImprovementProposal | null {
+  const row = hiveDb.prepare("SELECT * FROM improvement_proposals WHERE id=?").get(id);
+  return row ? proposalFromRow(row) : null;
+}
+
+export function listImprovementProposals(limit = 100): ImprovementProposal[] {
+  return hiveDb.prepare("SELECT * FROM improvement_proposals ORDER BY updated_at DESC LIMIT ?").all(Math.min(Math.max(1, limit), 500)).map(proposalFromRow);
+}
+
+export function decideImprovementProposal(id: string, decision: "promoted" | "rejected", evaluationRunId: string, reason: string): ImprovementProposal {
+  if (!reason.trim()) throw new Error("decision reason is required");
+  const evaluation = hiveDb.prepare("SELECT id FROM evaluation_runs WHERE id=?").get(evaluationRunId);
+  if (!evaluation) throw new Error("a persisted held-out evaluation run is required");
+  const result = hiveDb.prepare("UPDATE improvement_proposals SET status=?,evaluation_run_id=?,decision_reason=?,updated_at=? WHERE id=? AND status='quarantined'")
+    .run(decision, evaluationRunId, reason.slice(0, 4_000), now(), id);
+  if (!Number(result.changes)) throw new Error("proposal not found or already decided");
+  return getImprovementProposal(id)!;
 }
 
 // A user-requested resume of a FAILED workflow must give its failed node a

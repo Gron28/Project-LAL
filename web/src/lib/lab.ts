@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { rotateLogFile } from "./log-rotation";
 import crypto from "node:crypto";
 import { spawn, ChildProcess, execSync } from "node:child_process";
 import { gradeItem, stripThink, type BenchItem } from "./graders";
@@ -347,7 +348,11 @@ export function allModels(): ModelInfo[] {
 
 // ---- llama-server singleton (persists across requests in one Node process) ----
 type Srv = { proc: ChildProcess | null; model: string | null; ollamaModel: string | null; ollamaCtx?: number; ollamaOffload?: string | null; lastUsedAt?: number; loras: ServingLora[]; ctx: number; offload?: string | null; inflight?: number };
-const g = globalThis as unknown as { __lab_srv?: Srv; __lab_idle_reaper?: ReturnType<typeof setInterval> };
+const g = globalThis as unknown as {
+  __lab_srv?: Srv;
+  __lab_idle_reaper?: ReturnType<typeof setInterval>;
+  __lab_log_reaper?: ReturnType<typeof setInterval>;
+};
 if (!g.__lab_srv) g.__lab_srv = { proc: null, model: null, ollamaModel: null, loras: [], ctx: 0 };
 const srv = g.__lab_srv;
 if (!Array.isArray(srv.loras)) srv.loras = [];
@@ -519,6 +524,15 @@ export function servingRuntimeStatus() {
     lastUsedAt: srv.lastUsedAt ?? null,
     logPath: path.join(ROOT, "out", "llama-server.log"),
   };
+}
+
+const LLAMA_LOG_PATH = path.join(ROOT, "out", "llama-server.log");
+const LLAMA_LOG_MAX_BYTES = 5 * 1024 * 1024;
+if (!g.__lab_log_reaper) {
+  g.__lab_log_reaper = setInterval(() => {
+    try { rotateLogFile(LLAMA_LOG_PATH, LLAMA_LOG_MAX_BYTES, 3); } catch { /* surfaced by the bounded active log on the next launch */ }
+  }, 60_000);
+  g.__lab_log_reaper.unref?.();
 }
 
 // Idle reaper: unload llama-server after serveIdleMinutes of genuine quiet — no
@@ -883,7 +897,8 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
     // (truncate-per-launch erased the first wedge's trace within minutes).
     let logFd: number | undefined;
     try {
-      logFd = fs.openSync(path.join(ROOT, "out", "llama-server.log"), "a");
+      rotateLogFile(LLAMA_LOG_PATH, LLAMA_LOG_MAX_BYTES, 3);
+      logFd = fs.openSync(LLAMA_LOG_PATH, "a");
       fs.writeSync(logFd, `\n===== launch ${new Date().toISOString()} model=${model} ngl=${ngl} =====\n`);
     } catch {}
     // -b/-ub 512: this Vulkan build dies with vk::ErrorDeviceLost when a cold
@@ -2180,4 +2195,36 @@ export async function startTrain(o: { name: string; base: string; steps: number;
     fail(err || "GPU training failed — check VRAM (training never falls back to CPU)");
   });
   return { started: true, name };
+}
+
+let labShutdownPromise: Promise<void> | null = null;
+async function terminateChild(child: ChildProcess | null | undefined, waitMs: number): Promise<void> {
+  if (!child || child.exitCode !== null) return;
+  try { child.kill("SIGTERM"); } catch { return; }
+  const exited = await Promise.race([
+    new Promise<boolean>((resolve) => child.once("exit", () => resolve(true))),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), waitMs)),
+  ]);
+  if (!exited && child.exitCode === null) {
+    try { child.kill("SIGKILL"); } catch {}
+  }
+}
+
+export function shutdownLab(waitMs = 12_000): Promise<void> {
+  if (labShutdownPromise) return labShutdownPromise;
+  labShutdownPromise = (async () => {
+    if (g.__lab_idle_reaper) clearInterval(g.__lab_idle_reaper);
+    if (g.__lab_log_reaper) clearInterval(g.__lab_log_reaper);
+    await drainGenerations(Math.min(waitMs, 8_000));
+    await Promise.all([
+      terminateChild(srv.proc, waitMs),
+      terminateChild(train.proc, waitMs),
+      terminateChild(lensState.proc, waitMs),
+    ]);
+    if (srv.ollamaModel) await stopOllama(srv.ollamaModel).catch(() => {});
+    srv.proc = null; srv.model = null; srv.ollamaModel = null; srv.loras = []; srv.ctx = 0; srv.offload = null;
+    train.proc = null; train.running = null; train.ws?.end(); train.ws = null;
+    lensState.proc = null; lensState.running = false;
+  })();
+  return labShutdownPromise;
 }

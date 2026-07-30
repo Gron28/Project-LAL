@@ -17,9 +17,33 @@ export type HiveFailureCode =
   | "infrastructure_failure"
   | "budget_exhaustion";
 export type NodeStatus = "pending" | "ready" | "running" | "awaiting_approval" | "paused" | "succeeded" | "failed" | "skipped" | "cancelled";
-export type WorkflowStatus = "queued" | "running" | "paused" | "awaiting_approval" | "succeeded" | "failed" | "cancelled";
+export type TaskOutcome = "complete" | "incomplete" | "blocked" | "cancelled" | "failed";
+// `succeeded` is retained as a read-compatible legacy value for existing runs.
+// New terminal writes use TaskOutcome so scheduler completion cannot masquerade
+// as verified task completion.
+export type WorkflowStatus = "queued" | "running" | "paused" | "awaiting_approval" | "succeeded" | TaskOutcome;
 export type StageStatus = "succeeded" | "failed" | "needs_followup" | "blocked";
 export type RoutingAction = "dispatch" | "retry" | "verify" | "replan" | "finish" | "request_user";
+
+export type CriterionState = "unknown" | "pass" | "fail" | "blocked";
+export type AcceptanceCriterion = {
+  id: string;
+  text: string;
+  state: CriterionState;
+  evidenceIds: string[];
+  detail?: string;
+};
+
+export type TaskVerdict = {
+  version: typeof HIVE_CONTRACT_VERSION;
+  outcome: TaskOutcome;
+  reason: string;
+  criteria: AcceptanceCriterion[];
+  acceptanceEvidence: string[];
+  uncheckedProperties: string[];
+  unresolvedNodeIds: string[];
+  decidedAt: number;
+};
 
 export type ArtifactRef = {
   hash: string;
@@ -159,6 +183,7 @@ export type WorkflowNode = {
   approval?: boolean;
   timeoutMs?: number;
   retry: RetryPolicy;
+  resolves?: string[];
   verificationGate?: { minimumScore?: number; requireEvidence?: boolean; requireTests?: boolean };
 };
 
@@ -179,6 +204,11 @@ export type TaskEnvelope = {
   artifactRefs: ArtifactRef[];
   requiredOutput: string;
   definitionOfDone: string[];
+  latestUserRequest?: string;
+  deliverables?: { id: string; description: string; path?: string; required: boolean }[];
+  acceptanceCriteria?: AcceptanceCriterion[];
+  unverifiableProperties?: string[];
+  permissions?: string[];
   workspace?: string;
 };
 
@@ -189,6 +219,10 @@ export type SpecialistHandoff = {
   version: typeof HIVE_CONTRACT_VERSION;
   target: { nodeId: string; role: string; label: string };
   task: Pick<TaskEnvelope, "objective" | "constraints" | "requiredOutput" | "definitionOfDone" | "workspace">;
+  contractDigest: string;
+  included: string[];
+  omitted: string[];
+  linkedArtifactHashes: string[];
   ownedPackage: string;
   dependencies: {
     nodeId: string;

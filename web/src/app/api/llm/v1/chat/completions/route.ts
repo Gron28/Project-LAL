@@ -63,14 +63,9 @@ function compactTools(value: unknown, dropped?: string[]): unknown {
     if (!fn || typeof fn !== "object") return tool;
     const functionDef = fn as Record<string, unknown>;
     const rawName = typeof functionDef.name === "string" ? functionDef.name : "tool";
-    // The computer-use driver advertises its tools PREFIXED (computer_use__page,
-    // computer_use__launch_app, ...) while this allowlist named the bare verbs.
-    // So every browser/page tool tool_search loaded was dropped right here, and
-    // the model — told by system.md to "use tool_search to load the browser/page
-    // tools" — was left with a capability it could never actually call.
-    // Confirmed from a Windows session 2026-07-25. This is PLAN 2.1's fourth
-    // hypothesis: "tools loaded lazily through tool_search are dropped by the
-    // same filter when their schemas arrive, leaving the model to improvise."
+    // Canonicalization is owned by the shared protocol. It is currently an
+    // identity transform; removed tool families must not regain access through
+    // an obsolete name prefix.
     const name = canonicalToolName(rawName);
     // This is the product boundary, not merely a client preference: old
     // managed settings cannot quietly reintroduce agent teams, generic

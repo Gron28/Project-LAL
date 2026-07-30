@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import vm from "node:vm";
-import { structuralSummary } from "./ast-cache";
+import { structuralSummary } from "./ast-cache.ts";
 
 // Auto-verification after every write_file/edit_file: catches syntax errors the
 // SAME turn they're introduced, fed back as part of the tool result — no reliance

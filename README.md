@@ -101,13 +101,18 @@ second system being built today.
 
 ## Documentation
 
-Two documents, and only two:
+Four maintained documents:
 
 - [**The plan**](docs/PLAN.md) — the only plan. Stages, exit gates, and what is
   deliberately frozen. If work is not in here, it is not committed work.
 - [**Architecture**](docs/ARCHITECTURE.md) — what exists today: the request
   spine, every directory's purpose, host assumptions, porting notes, and the
   operational runbook.
+- [**Operations**](docs/OPERATIONS.md) — backup/restore, health checks, timers,
+  and bounded runtime-log policy.
+- [**Runtime ownership**](docs/RUNTIME-OWNERSHIP.md) — the canonical owner and
+  consumers for routing, events, acceptance, research, resume, reports, and
+  evaluation.
 
 `CHANGELOG.md` is the append-only engineering log.
 
