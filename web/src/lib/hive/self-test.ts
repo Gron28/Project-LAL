@@ -49,6 +49,7 @@ export function runHiveContractSelfTest() {
     research: { heldOutTasks: 30, verifiedCompletionRate: .8, bestSingleModelRate: .69 },
     coding: { heldOutTasks: 30, verifiedCompletionRate: .8, bestSingleModelRate: .69 },
     coreRegressionPoints: 2, withinBudgetRate: .9, restartExactlyOnce: true, completeProvenance: true,
+    falseCompletionRate: 0,
   });
   const ministralToolTranscript: ToolLoopMsg[] = [
     { role: "system", content: "test" },

@@ -5,6 +5,7 @@
 // protocol-version bump. Unknown kinds must always degrade visibly at clients.
 
 export const PROTOCOL_VERSION = 1;
+export * from "./agent-runtime.js";
 
 export type ContextVerificationStatus =
   | "unknown"
@@ -148,11 +149,18 @@ export const KNOWN_EVENT_KINDS = new Set<string>([
   "stall_nudge", "research_depth_nudge", "usage", "truncated", "context_limit", "context_compacted", "context_profile",
   "phase", "roles", "role_progress", "debate_turn", "convergence", "artifact", "inner", "error",
   "workflow_routing", "stage_trace", "workflow_started", "workflow_node", "workflow_finished",
+  "workflow_created", "workflow_policy_selected", "workflow_resumed", "workflow_recovered",
+  "workflow_forked", "workflow_rewound", "workflow_pause_requested", "workflow_stop_requested",
+  "workflow_paused", "workflow_cancelled", "workflow_failed", "workflow_continued",
+  "node_started", "node_finished", "node_failed", "node_skipped", "routing_decision",
+  "agent_handoff", "context_loss_detected", "source_classified", "side_effect_replayed",
+  "side_effect_uncertain", "manual_override", "operator_message", "evidence_decision",
+  "execution_policy_updated", "output_decision", "plan_updated", "task_contract_updated",
   "model_loading", "model_ready", "token_confidence", "model", "project", "done", "query", "transcript",
 ]);
 
 export function isKnownEventKind(k: string): boolean {
-  return KNOWN_EVENT_KINDS.has(k);
+  return KNOWN_EVENT_KINDS.has(k) || (k.startsWith("worker_") && KNOWN_EVENT_KINDS.has(k.slice("worker_".length)));
 }
 
 // --------------------------------------------------------------------------
@@ -167,10 +175,6 @@ export function isKnownEventKind(k: string): boolean {
 //
 //   - `screenshot` sat in the allowlist and matched no tool at all, so the entry
 //     admitted nothing while reading as though screen capture were available.
-//   - the computer-use driver advertises `computer_use__page`, and the allowlist
-//     named the bare verb `page`, so every browser tool `tool_search` loaded was
-//     deleted at the filter — while the system prompt instructed the model to
-//     load and use them (PLAN 2.1, hypothesis 4).
 //
 // This module is that single declaration. It lives in the shared protocol
 // package because it is exactly a host↔client contract: the host decides which
@@ -204,28 +208,17 @@ export const LAL_TERMINAL_TOOLS: readonly string[] = [
   "task_stop",
   "web_search",
   "web_fetch",
-  // Browser acceptance tools stay lazy behind tool_search; admitting them here
-  // lets their eventual schemas and results live in the same turn.
-  "launch_app",
-  "list_windows",
-  "get_window_state",
-  "page",
 ];
 
 const TERMINAL_TOOL_SET = new Set(LAL_TERMINAL_TOOLS);
 
 /**
- * The computer-use driver advertises its tools prefixed. The allowlist is
- * written in terms of the bare verb, so the prefix is stripped before matching —
- * in ONE place, shared by both sides, which is the point of this module.
+ * Canonicalization hook retained as part of the protocol API. Tool names are
+ * currently canonical as advertised; deleted computer-use prefixes must not
+ * turn an unavailable capability into an allowlisted core tool.
  */
-export const COMPUTER_USE_PREFIX = "computer_use__";
-
-/** The name to match against the allowlist for an as-advertised tool name. */
 export function canonicalToolName(advertisedName: string): string {
-  return advertisedName.startsWith(COMPUTER_USE_PREFIX)
-    ? advertisedName.slice(COMPUTER_USE_PREFIX.length)
-    : advertisedName;
+  return advertisedName;
 }
 
 /** Would the gateway admit a tool advertised under this name? */

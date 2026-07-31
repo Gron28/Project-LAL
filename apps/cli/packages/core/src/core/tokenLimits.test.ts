@@ -371,7 +371,8 @@ describe('tokenLimit with output type', () => {
   });
 
   describe('default output limits', () => {
-    it('should return the default output limit for unknown models', () => {
+    it('uses the shared 40K default for unknown models', () => {
+      expect(DEFAULT_OUTPUT_TOKEN_LIMIT).toBe(40_960);
       expect(tokenLimit('unknown-model', 'output')).toBe(
         DEFAULT_OUTPUT_TOKEN_LIMIT,
       );

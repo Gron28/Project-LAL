@@ -2,9 +2,9 @@
 // endpoint (llama-server --jinja, or Ollama's OpenAI shim). Confirmed working with
 // native `tool_calls` streaming + finish_reason:"tool_calls" against Qwen3 (Phase 0
 // spike) — no prompted-JSON fallback needed.
-import type { Executor } from "./tools";
-import { TOOL_DEFS, normalizeToolArgs, toolCallExample, validateToolArguments, type ToolDef } from "./tools";
-import { managedPrompt } from "./lal-prompts";
+import type { Executor } from "./tools.ts";
+import { TOOL_DEFS, normalizeToolArgs, toolCallExample, validateToolArguments, type ToolDef } from "./tools.ts";
+import { managedPrompt } from "./lal-prompts.ts";
 import type { ToolLoopEvent } from "@lal/protocol";
 
 export type { ToolLoopEvent } from "@lal/protocol";
@@ -32,6 +32,17 @@ function compactOldToolResults(messages: ToolLoopMsg[], keepTail = 10): number {
     }
   }
   return trimmed;
+}
+
+export function completionReserveTokens(input: {
+  canWrite: boolean;
+  wroteFiles: boolean;
+  forceMutationTool: boolean;
+  requestedMaxTokens: number;
+}): number {
+  const wholeFileMutationPlausible = input.canWrite && (!input.wroteFiles || input.forceMutationTool);
+  const taskReserve = wholeFileMutationPlausible ? 40_960 : 8_192;
+  return Math.max(1_024, Math.min(input.requestedMaxTokens, taskReserve));
 }
 
 // Ministral's chat template deliberately excludes assistant tool-call turns and
@@ -227,14 +238,11 @@ export async function runToolLoop(opts: {
   const { baseUrl, model, exec, onEvent } = opts;
   const tools = opts.tools ?? TOOL_DEFS;
   const maxRounds = opts.maxRounds ?? 15;
-  // A write_file/edit_file round must be able to emit a whole file, so any round
-  // whose toolset includes a mutation tool is guaranteed at least this many
-  // completion tokens (bounded only by the room left in ctx), regardless of the
-  // caller's per-round reasoning cap or a finite "Max output" setting. This is the
-  // "a file write gets at least ~40k tokens" guarantee: a small maxTokens still
-  // caps reasoning/research rounds, but never strangles a file write mid-write.
-  const MIN_COMPLETION_TOKENS = 40_960;
-  const maxTokens = opts.maxTokens ?? MIN_COMPLETION_TOKENS;
+  // Keep the standalone loop fallback aligned with the Web/CLI global
+  // generation default.  Callers may lower it and the context-room clamp
+  // below may lower it further; this only removes the accidental 8K cutoff
+  // that used to truncate large write_file/edit_file JSON arguments.
+  const maxTokens = opts.maxTokens ?? 40_960;
   const messages = opts.messages.slice();
   // Silence detector: if the whole run produces neither visible text nor one
   // successful tool call, ending "done" would be a lie the user experiences as
@@ -302,12 +310,7 @@ export async function runToolLoop(opts: {
     const roundTools = forceMutationTool
       ? tools.filter((tool) => tool.function.name === "write_file" || tool.function.name === "edit_file")
       : tools;
-    // A round that can call write_file/edit_file gets the full completion floor so
-    // a generated file is never cut off; every other round keeps the smaller
-    // anti-runaway cap so a reasoning chain can't eat the whole context.
-    const wantsWriteRoom = roundTools.some((tool) => tool.function.name === "write_file" || tool.function.name === "edit_file");
-    const roundMaxTokens = wantsWriteRoom ? Math.max(maxTokens, MIN_COMPLETION_TOKENS) : maxTokens;
-    const body: Record<string, unknown> = { model, messages, tools: roundTools, stream: true, stream_options: { include_usage: true }, temperature: opts.temperature ?? 0, max_tokens: roundMaxTokens };
+    const body: Record<string, unknown> = { model, messages, tools: roundTools, stream: true, stream_options: { include_usage: true }, temperature: opts.temperature ?? 0, max_tokens: maxTokens };
     // A mutation-stage contract is not satisfied by prose.  Coder v2 proved it
     // can emit native calls when required, but otherwise sometimes describes the
     // intended edit and stops.  Require a tool turn until the first successful
@@ -326,13 +329,16 @@ export async function runToolLoop(opts: {
     // so an unavailable visualization never prevents the agent from running.
     if (opts.ctx) {
       let estimatedTokens = estimateRequestTokens(body);
-      // Reserve only the minimum viable completion here. The actual request is
-      // clamped below to the room left after the current prompt; reserving a
-      // fixed 30% of the context rejected otherwise-valid tool turns early.
-      // The floor is MIN_COMPLETION_TOKENS (not the old 512) so a write_file/edit
-      // call generating a whole file never gets cut off mid-generation while there
-      // is genuinely room left in ctx — modes serve at ctx:65536 to make room.
-      const reserveTokens = MIN_COMPLETION_TOKENS + 1024;
+      // Whole-file mutation rounds retain a large generation allowance; bounded
+      // inspection/verification rounds use a smaller reserve so a long-lived
+      // agent can still act after accumulating ~29k input tokens.
+      const completionReserve = completionReserveTokens({
+        canWrite,
+        wroteFiles,
+        forceMutationTool,
+        requestedMaxTokens: maxTokens,
+      });
+      const reserveTokens = completionReserve + 1024;
       if (estimatedTokens + reserveTokens >= opts.ctx) {
         // Try shrinking before failing: old tool outputs are the bulk of a long
         // transcript and the least valuable part of it.
@@ -349,7 +355,7 @@ export async function runToolLoop(opts: {
       // Fit the actual request to the remaining context after tool schemas and
       // transcript content. A fixed reservation can otherwise pass preflight
       // while the backend rejects the request as "too many tokens".
-      body.max_tokens = Math.min(roundMaxTokens, Math.max(MIN_COMPLETION_TOKENS, opts.ctx - estimatedTokens - 1024));
+      body.max_tokens = Math.min(maxTokens, Math.max(completionReserve, opts.ctx - estimatedTokens - 1024));
     }
     // llama-server occasionally returns a transient 5xx immediately after a
     // long/truncated tool-call turn. Retrying the exact idempotent inference

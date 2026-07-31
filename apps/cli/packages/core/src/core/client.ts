@@ -76,6 +76,7 @@ import {
   isResearchSynthesis,
   setResearchTurnActive,
   recordResearchCall,
+  recordResearchResponseText,
   recordResearchResults,
   routeResearchToolArgs,
   routeResearchToolCall,
@@ -2854,6 +2855,9 @@ export class GeminiClient {
         this.researchTrace?.promptId === prompt_id
           ? this.researchTrace
           : undefined;
+      if (researchTrace?.enabled) {
+        recordResearchResponseText(researchTrace, visibleResponseText);
+      }
       if (
         researchTrace?.enabled &&
         !turn.pendingToolCalls.length &&
@@ -2888,10 +2892,13 @@ export class GeminiClient {
           const continuation = researchContinuation(researchTrace);
           if (researchTrace.nudges < RESEARCH_MAX_NUDGES && boundedTurns > 1) {
             researchTrace.nudges++;
-            yield {
-              type: GeminiEventType.HookSystemMessage,
-              value: continuation,
-            };
+            // This is an internal phase transition, not user-facing output.
+            // Showing it split the model's plan/research into alarming
+            // "evidence gate rejected" messages. Preserve it in the forensic
+            // recording while keeping the conversation uninterrupted.
+            this.config
+              .getChatRecordingService()
+              ?.recordRuntimeDecision(continuation);
             yield { type: GeminiEventType.Retry, isContinuation: true };
             const researchTurn = yield* this.sendMessageStream(
               [{ text: continuation }],
@@ -2908,12 +2915,15 @@ export class GeminiClient {
             value: `Research incomplete after ${researchTrace.nudges} continuation attempts: ${coverage.queryCount} successful distinct searches and ${coverage.sourceCount} successfully opened sources (${coverage.attemptedQueryCount} searches and ${coverage.attemptedSourceCount} fetches attempted). Any synthesis shown above is unverified; inspect the failed calls or retry when web access is available.`,
           };
         } else if (
-          !isResearchSynthesis(visibleResponseText) ||
+          !isResearchSynthesis(researchTrace.responseText) ||
           // A URL proves nothing about where it came from; a model can produce
           // one from memory, and a fabricated citation is worse than none because
           // it reads as verified. The synthesis has to name origins this run
           // actually opened.
-          !synthesisCitesFetchedSources(visibleResponseText, researchTrace).ok
+          !synthesisCitesFetchedSources(
+            researchTrace.responseText,
+            researchTrace,
+          ).ok
         ) {
           const continuation = researchSynthesisContinuation(researchTrace);
           if (
@@ -2921,10 +2931,9 @@ export class GeminiClient {
             boundedTurns > 1
           ) {
             researchTrace.synthesisNudges++;
-            yield {
-              type: GeminiEventType.HookSystemMessage,
-              value: continuation,
-            };
+            this.config
+              .getChatRecordingService()
+              ?.recordRuntimeDecision(continuation);
             yield { type: GeminiEventType.Retry, isContinuation: true };
             const synthesisTurn = yield* this.sendMessageStream(
               [{ text: continuation }],
@@ -2942,10 +2951,11 @@ export class GeminiClient {
           };
         } else if (!researchTrace.announcedPass) {
           researchTrace.announcedPass = true;
-          yield {
-            type: GeminiEventType.HookSystemMessage,
-            value: `Research coverage and synthesis gates passed: ${coverage.queryCount} successful distinct searches, ${coverage.sourceCount} successfully opened sources, and a substantive evidence-linked final answer.`,
-          };
+          this.config
+            .getChatRecordingService()
+            ?.recordRuntimeDecision(
+              `Research coverage and synthesis gates passed: ${coverage.queryCount} successful distinct searches, ${coverage.sourceCount} successfully opened sources, and a substantive evidence-linked final answer.`,
+            );
         }
       }
 

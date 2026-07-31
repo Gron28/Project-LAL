@@ -8,6 +8,7 @@ export type ReleaseMetrics = {
   withinBudgetRate: number;
   restartExactlyOnce: boolean;
   completeProvenance: boolean;
+  falseCompletionRate: number;
 };
 
 export type Gate = { code: string; passed: boolean; actual: number | boolean; required: string };
@@ -28,6 +29,7 @@ export function evaluateHiveRelease(metrics: ReleaseMetrics) {
     { code: "coding_improvement", passed: codingImprovement >= .10, actual: codingImprovement, required: ">= 10 percentage points" },
     { code: "core_regression", passed: metrics.coreRegressionPoints <= 2, actual: metrics.coreRegressionPoints, required: "<= 2 points" },
     { code: "budget_compliance", passed: metrics.withinBudgetRate >= .90, actual: metrics.withinBudgetRate, required: ">= 90%" },
+    { code: "false_completion", passed: metrics.falseCompletionRate < .01, actual: metrics.falseCompletionRate, required: "< 1%" },
     { code: "restart_exactly_once", passed: metrics.restartExactlyOnce, actual: metrics.restartExactlyOnce, required: "true" },
     { code: "complete_provenance", passed: metrics.completeProvenance, actual: metrics.completeProvenance, required: "true" },
   ];

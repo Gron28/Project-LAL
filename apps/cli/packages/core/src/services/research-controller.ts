@@ -3,6 +3,8 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import { evaluateResearchCollection } from '@lal/protocol/agent-runtime';
+
 
 export type ResearchTrace = {
   promptId: string;
@@ -15,6 +17,8 @@ export type ResearchTrace = {
   nudges: number;
   synthesisNudges: number;
   announcedPass: boolean;
+  /** Visible model text accumulated across recursive continuation turns. */
+  responseText: string;
   /** The user asked for research to stop. Nothing may nudge after this. */
   stopRequested: boolean;
 };
@@ -54,20 +58,20 @@ const RESEARCH_FETCH_PROMPT =
   "Extract the page's claims relevant to the current research question. Preserve concrete details, qualifications, and source context for citation.";
 
 export function isExplicitWebResearchRequest(text: string): boolean {
-  const asksResearch =
-    /\b(deep[- ]research|research|investigate|look up|search (?:the )?web|find (?:reliable|current|recent|primary) sources?)\b/i.test(
+  // The deterministic evidence gate is an opt-in compatibility mode. The
+  // normal agent loop already knows how to search and inspect sources; arming
+  // this older controller for any sentence containing "research" caused it to
+  // interrupt planning prose, intermediate research, and completed synthesis.
+  //
+  // `/research` selects the deep-research code mode directly. Natural language
+  // only opts in when it unmistakably asks for the strict/deep workflow.
+  return (
+    /\bdeep[- ]research\b/i.test(text) ||
+    /\b(?:research|investigate)\b.{0,48}\b(?:with|using)\b.{0,24}\b(?:citations?|sources?|evidence)\b/i.test(
       text,
-    );
-  if (!asksResearch) return false;
-  const localOnly =
-    /\b(codebase|repository|repo|local files?|this project|workspace)\b/i.test(
-      text,
-    );
-  const explicitlyExternal =
-    /\b(web|online|internet|sources?|latest|current|recent|today|news|papers?|documentation)\b/i.test(
-      text,
-    );
-  return !localOnly || explicitlyExternal;
+    ) ||
+    /\b(?:evidence[- ]backed|source[- ]backed)\s+research\b/i.test(text)
+  );
 }
 
 export function createResearchTrace(
@@ -85,8 +89,17 @@ export function createResearchTrace(
     nudges: 0,
     synthesisNudges: 0,
     announcedPass: false,
+    responseText: '',
     stopRequested: false,
   };
+}
+
+export function recordResearchResponseText(
+  trace: ResearchTrace,
+  text: string,
+): void {
+  if (!trace.enabled || !text) return;
+  trace.responseText += text;
 }
 
 export function isResearchSynthesis(text: string): boolean {
@@ -252,55 +265,20 @@ export function sourceOrigin(url: string): string {
   }
 }
 
-/**
- * Successful fetches at the end of the run that introduced no origin the run had
- * not already seen. `fetchedSources` is a Set, so its iteration order is the
- * order sources were successfully opened.
- */
-function trailingRedundantFetches(fetched: readonly string[]): number {
-  const seen = new Set<string>();
-  let lastNewOriginIndex = -1;
-  fetched.forEach((url, index) => {
-    const origin = sourceOrigin(url);
-    if (!seen.has(origin)) {
-      seen.add(origin);
-      lastNewOriginIndex = index;
-    }
-  });
-  return fetched.length - 1 - lastNewOriginIndex;
-}
-
 export function researchCoverage(trace: ResearchTrace) {
   const fetched = [...trace.fetchedSources];
-  const queryCount = trace.queries.size;
-  const sourceCount = fetched.length;
-  const origins = new Set(fetched.map(sourceOrigin));
-  const redundantTail = trailingRedundantFetches(fetched);
-
-  const breadthMet = queryCount >= RESEARCH_MIN_QUERIES;
-  const independenceMet = origins.size >= RESEARCH_MIN_INDEPENDENT_DOMAINS;
-  // Diminishing returns: origins have stopped appearing, so more fetching is
-  // spending turns without reducing uncertainty. Requires at least one source —
-  // a plateau at zero evidence is not a plateau, it is a broken provider, and
-  // that is `researchProviderLooksBroken`'s job.
-  const plateaued =
-    breadthMet && origins.size >= 1 && redundantTail >= RESEARCH_PLATEAU_FETCHES;
+  const shared = evaluateResearchCollection({
+    queries: [...trace.queries],
+    sources: fetched,
+    minQueries: RESEARCH_MIN_QUERIES,
+    minOrigins: RESEARCH_MIN_INDEPENDENT_DOMAINS,
+    plateauFetches: RESEARCH_PLATEAU_FETCHES,
+  });
 
   return {
-    passed: (breadthMet && independenceMet) || plateaued,
-    reason: plateaued && !independenceMet ? ('plateau' as const) : ('sufficient' as const),
-    queryCount,
-    sourceCount,
-    originCount: origins.size,
-    origins: [...origins],
-    redundantTail,
-    breadthMet,
-    independenceMet,
-    plateaued,
+    ...shared,
     attemptedQueryCount: trace.attemptedQueries.size,
     attemptedSourceCount: trace.attemptedSources.size,
-    missingQueries: Math.max(0, RESEARCH_MIN_QUERIES - queryCount),
-    missingOrigins: Math.max(0, RESEARCH_MIN_INDEPENDENT_DOMAINS - origins.size),
   };
 }
 
@@ -502,28 +480,19 @@ export function shellResearchRefusal(what: string): string {
 export function researchContinuation(trace: ResearchTrace): string {
   const coverage = researchCoverage(trace);
 
-  // Nothing was ever ATTEMPTED through the observable tools. That is a different
-  // situation from "searched too little", and the generic message made it worse:
-  // it said "0 of 3 sub-questions have been searched", which a model that had
-  // just finished the entire task read as "throw the work away and start over"
-  // — observed 2026-07-25, where it abandoned a delivered HTML page and began
-  // re-researching. Name the actual problem and protect the deliverable.
+  // A decomposition-only turn is a normal phase boundary, not a rejected final
+  // answer. Continue from it without accusing the model of missing evidence or
+  // telling it to repeat work.
   if (coverage.attemptedQueryCount === 0 && coverage.attemptedSourceCount === 0) {
     return (
-      `The evidence gate cannot see any research. web_search and web_fetch were ` +
-      `never called in this turn, so whatever sources you used are unverifiable ` +
-      `from the runtime's side — most likely the web was reached through the ` +
-      `shell (curl, python requests) instead of the research tools.
+      `Continue the same deep-research task now. The decomposition or explanation ` +
+      `is already visible, so do not repeat it. Call web_search as a tool for the ` +
+      `first distinct sub-question, then use web_fetch to inspect the strongest ` +
+      `source before drawing conclusions.
 
 ` +
-      `KEEP everything you have already produced. Do not restart the task, do not ` +
-      `rewrite files that are already correct, and do not re-plan.
-
-` +
-      `Do only this: call web_search as a TOOL for the questions your answer ` +
-      `already relies on, open the best sources with web_fetch, then correct or ` +
-      `confirm the claims you made and cite the URLs. If a claim turns out to be ` +
-      `unsupported, fix that specific claim.`
+      `Preserve all prior work and continue; this is an internal phase transition, ` +
+      `not a request to restart or announce another plan.`
     );
   }
 

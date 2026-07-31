@@ -2478,8 +2478,29 @@ export async function runAcpAgent(
   let agentInstance: QwenAgent | undefined;
   let connection: AgentSideConnection;
   try {
-    const stdout = Writable.toWeb(process.stdout) as WritableStream;
-    const stdin = Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>;
+    // Node's toWeb adapters attach several lifecycle listeners to their source
+    // stream. Recreating them for every in-process ACP run (notably tests and
+    // embedded restarts) leaked those listeners even after connection.closed.
+    // One process stdio pair has one adapter pair; ACP connections borrow it.
+    const stdioGlobal = globalThis as typeof globalThis & {
+      __qwenAcpStdioWebStreams?: {
+        input: NodeJS.ReadableStream;
+        output: NodeJS.WritableStream;
+        stdin: ReadableStream<Uint8Array>;
+        stdout: WritableStream;
+      };
+    };
+    let adapters = stdioGlobal.__qwenAcpStdioWebStreams;
+    if (!adapters || adapters.input !== process.stdin || adapters.output !== process.stdout) {
+      adapters = {
+        input: process.stdin,
+        output: process.stdout,
+        stdout: Writable.toWeb(process.stdout) as WritableStream,
+        stdin: Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>,
+      };
+      stdioGlobal.__qwenAcpStdioWebStreams = adapters;
+    }
+    const { stdout, stdin } = adapters;
 
     // Stdout is used to send messages to the client, so console.log/console.info
     // messages to stderr so that they don't interfere with ACP.

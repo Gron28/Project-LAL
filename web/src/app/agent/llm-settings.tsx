@@ -149,7 +149,7 @@ export default function LlmSettings({
           {opts ? (
             <>
               <Slider label="Context size" hint="Per-model context requested by Web and CLI. Larger contexts reload the model with the long-context profile." min={2048} max={262144} step={1024} value={opts.contextTokens} onChange={(v) => save({ contextTokens: v })} />
-              <Num label="Max output" hint="-1 = generate until done. Raise to avoid truncated long code." value={opts.maxOutputTokens} onChange={(v) => save({ maxOutputTokens: v })} />
+              <Num label="Max output" hint="Per-model override. Use the Models page to return this model to the shared global default (40,960 recommended)." value={opts.maxOutputTokens} onChange={(v) => save({ maxOutputTokens: v })} />
               <Num label="GPU layers" hint="-1 = auto. Lower this to offload layers to CPU when a model cannot fit." value={opts.gpuLayers ?? -1} onChange={(v) => save({ gpuLayers: v < 0 ? null : v })} />
 
               <div className="border-t border-[var(--border-soft)] pt-3 text-[10px] uppercase tracking-widest text-[var(--muted)]">Sampling</div>

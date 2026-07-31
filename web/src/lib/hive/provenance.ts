@@ -125,7 +125,7 @@ export function harvestWorkflowExamples(workflowId: string): { ids: string[]; ve
   const snapshot = workflowSnapshot(workflowId, 10_000);
   if (!snapshot) throw new Error("workflow not found");
   const finalAudit = snapshot.nodes.find((node) => node.nodeId === "final_audit")?.result?.verification;
-  const verified = snapshot.workflow.status === "succeeded" && finalAudit?.passed === true;
+  const verified = snapshot.workflow.status === "complete" && finalAudit?.passed === true;
   const ids: string[] = [];
   if (!verified) {
     for (const node of snapshot.nodes.filter((candidate) => candidate.status === "failed" || candidate.result?.failureCodes?.length)) {

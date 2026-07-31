@@ -91,14 +91,14 @@ describe('web artifact acceptance (PLAN 6)', () => {
     expect(report.findings.map((f) => f.code)).toContain('placeholder-stub');
   });
 
-  it('flags a remote dependency as a warning, not a defect', async () => {
+  it('rejects a remote dependency consistently with the shared validator', async () => {
     const report = await check(
       `<html><head><script src="https://cdn.example.com/x.js"></script></head>
        <body><div id="a"></div><script>document.getElementById('a');</script></body></html>`,
     );
     const remote = report.findings.find((f) => f.code === 'remote-dependency');
-    expect(remote?.severity).toBe('warning');
-    expect(hasFatal([report])).toBe(false);
+    expect(remote?.severity).toBe('fatal');
+    expect(hasFatal([report])).toBe(true);
   });
 
   it('does not report a missing element for an id inside a comment or string', async () => {

@@ -11,6 +11,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "web" / "public" / "lal" / "install.sh"
 WRAPPER = ROOT / "web" / "public" / "lal" / "lal.sh"
+LOCAL_WRAPPER = ROOT / "bin" / "lal"
 
 
 class FakeDistribution(BaseHTTPRequestHandler):
@@ -69,6 +70,13 @@ class FakeDistribution(BaseHTTPRequestHandler):
 
 
 class LalDistributionTest(unittest.TestCase):
+    def test_local_source_launcher_rebuilds_a_stale_runtime_bundle(self):
+        wrapper = LOCAL_WRAPPER.read_text(encoding="utf-8")
+
+        self.assertIn('CLI_BUNDLE="$CLI_ROOT/dist/cli.js"', wrapper)
+        self.assertIn('-newer "$CLI_BUNDLE"', wrapper)
+        self.assertIn("npm run build && npm run bundle", wrapper)
+
     def test_linux_distribution_never_fetches_an_inherited_runtime(self):
         installer = INSTALLER.read_text(encoding="utf-8")
         wrapper = WRAPPER.read_text(encoding="utf-8")

@@ -11,9 +11,9 @@ import {
   type SlashCommandActionReturn,
 } from './types.js';
 
-/** Discoverable one-command entry to the evidence-gated research controller.
- * Natural-language research requests are detected too; this command also
- * leaves the session in deep-research mode for follow-up questions. */
+/** Discoverable, explicit entry to the evidence-gated research controller.
+ * Ordinary natural-language research uses the normal agentic tool loop; this
+ * command opts into strict deep-research mode for the question and follow-ups. */
 export const researchCommand: SlashCommand = {
   name: 'research',
   description:

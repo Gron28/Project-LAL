@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { rotateLogFile } from "./log-rotation";
 import crypto from "node:crypto";
 import { spawn, ChildProcess, execSync } from "node:child_process";
 import { gradeItem, stripThink, type BenchItem } from "./graders";
@@ -117,7 +118,7 @@ export type Options = {
   temperature: number; top_p: number; top_k: number; repeat_penalty: number;
 };
 export const DEFAULT_OPTIONS: Options = {
-  num_ctx: 8192, num_predict: -1, num_gpu: null,
+  num_ctx: 8192, num_predict: 40_960, num_gpu: null,
   temperature: 0.6, top_p: 0.9, top_k: 40, repeat_penalty: 1.1,
 };
 // The Windows default is sized to the machine's total RAM instead of a flat 8K.
@@ -198,16 +199,31 @@ export function modelRuntimeSettings(model: string): ModelRuntimeSettings {
   const saved = settings.modelSettings[model] ?? {};
   const nativeMaximum = nativeContextLimit(model);
   const info = publicModels().find((item) => item.name === model);
+  const backend = preferredRuntimeBackend(info);
+  const verifiedContext = info
+    ? contextProfiles.get(contextIdentity(model, backend))?.verifiedTokens
+    : null;
+  // A successful probe is stronger evidence than the old blanket 32K local
+  // default. Reuse it for models without a saved override so a model verified
+  // at 64K can actually receive a 40K generation request. Native capacity
+  // still caps the request, and unprobed models retain the conservative 32K.
   const safeUnsavedDefault = info?.source === "openvino"
     ? nativeMaximum ?? 40_960
     : info?.source === "local"
-      ? Math.min(32_768, nativeMaximum ?? 32_768)
+      ? Math.min(verifiedContext ?? 32_768, nativeMaximum ?? verifiedContext ?? 32_768)
       : process.platform === "win32" ? WINDOWS_OLLAMA_CONTEXT : OLLAMA_CLI_CONTEXT;
   const fallbackContext = Math.max(safeUnsavedDefault, settings.options.num_ctx || DEFAULT_OPTIONS.num_ctx);
   const contextMaximum = nativeMaximum ?? 1_048_576;
+  const savedMaxOutputTokens =
+    typeof saved.maxOutputTokens === "number" && saved.maxOutputTokens > 0
+      ? saved.maxOutputTokens
+      : undefined;
   return {
     contextTokens: Math.round(finiteNumber(saved.contextTokens, fallbackContext, 2_048, contextMaximum)),
-    maxOutputTokens: Math.round(finiteNumber(saved.maxOutputTokens, settings.options.num_predict, -1, 262_144)),
+    // Legacy -1 meant "let the mode decide", which made the effective value
+    // invisible and varied between Web and CLI. Treat absent/non-positive
+    // per-model values as inheritance from the explicit global default.
+    maxOutputTokens: Math.round(finiteNumber(savedMaxOutputTokens, settings.options.num_predict, 512, 262_144)),
     gpuLayers: saved.gpuLayers === null ? null : Math.round(finiteNumber(saved.gpuLayers, settings.options.num_gpu ?? 99, 0, 999)),
     temperature: finiteNumber(saved.temperature, settings.options.temperature, 0, 2),
     topP: finiteNumber(saved.topP, settings.options.top_p, 0, 1),
@@ -237,6 +253,20 @@ export function writeModelRuntimeSettings(model: string, patch: Partial<ModelRun
   };
   writeSettings({ modelSettings: { [model]: next } });
   return next;
+}
+
+/** Remove a model's saved overrides so it inherits the shared global options
+ * again. Context/runtime probing remains separate and can still establish a
+ * safe active context for the model when it is loaded. */
+export function resetModelRuntimeSettings(model: string): ModelRuntimeSettings {
+  if (!publicModels().some((item) => item.name === model)) throw new Error(`unknown model: ${model}`);
+  let settings: SettingsFile = {};
+  try { settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")); } catch {}
+  if (settings.modelSettings && Object.prototype.hasOwnProperty.call(settings.modelSettings, model)) {
+    delete settings.modelSettings[model];
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  }
+  return modelRuntimeSettings(model);
 }
 
 export function allModelRuntimeSettings(): Record<string, ModelRuntimeSettings> {
@@ -410,7 +440,11 @@ export function allModels(): ModelInfo[] {
 
 // ---- llama-server singleton (persists across requests in one Node process) ----
 type Srv = { proc: ChildProcess | null; model: string | null; localBackend?: "llama.cpp" | "openvino" | null; ollamaModel: string | null; ollamaCtx?: number; ollamaOffload?: string | null; lastUsedAt?: number; loras: ServingLora[]; ctx: number; offload?: string | null; inflight?: number };
-const g = globalThis as unknown as { __lab_srv?: Srv; __lab_idle_reaper?: ReturnType<typeof setInterval> };
+const g = globalThis as unknown as {
+  __lab_srv?: Srv;
+  __lab_idle_reaper?: ReturnType<typeof setInterval>;
+  __lab_log_reaper?: ReturnType<typeof setInterval>;
+};
 if (!g.__lab_srv) g.__lab_srv = { proc: null, model: null, localBackend: null, ollamaModel: null, loras: [], ctx: 0 };
 const srv = g.__lab_srv;
 if (!Array.isArray(srv.loras)) srv.loras = [];
@@ -584,6 +618,15 @@ export function servingRuntimeStatus() {
   };
 }
 
+const LLAMA_LOG_PATH = path.join(ROOT, "out", "llama-server.log");
+const LLAMA_LOG_MAX_BYTES = 5 * 1024 * 1024;
+if (!g.__lab_log_reaper) {
+  g.__lab_log_reaper = setInterval(() => {
+    try { rotateLogFile(LLAMA_LOG_PATH, LLAMA_LOG_MAX_BYTES, 3); } catch { /* surfaced by the bounded active log on the next launch */ }
+  }, 60_000);
+  g.__lab_log_reaper.unref?.();
+}
+
 // Idle reaper: unload llama-server after serveIdleMinutes of genuine quiet — no
 // run live, nothing training, nothing recently served. The GPU should idle cold,
 // not with a model parked on it drawing power for nobody.
@@ -711,11 +754,16 @@ export function contextProfileForModel(model: string): ContextProfile {
   const runtime = servingRuntimeStatus();
   const active = runtime.alive && runtime.model === model && runtime.backend === backend ? runtime.context : null;
   const maximum = nativeContextLimit(model);
-  const requested = Math.min(modelRuntimeSettings(model).contextTokens, maximum ?? Number.POSITIVE_INFINITY);
+  // Ollama artifacts do not expose GGUF metadata through nativeContextLimit,
+  // but a cached probe may still carry a discovered model maximum. Respect it
+  // when resolving the request instead of advertising/requesting 100K from a
+  // model already known to top out at 40K.
+  const effectiveMaximum = maximum ?? cached?.modelMaxTokens ?? null;
+  const requested = Math.min(modelRuntimeSettings(model).contextTokens, effectiveMaximum ?? Number.POSITIVE_INFINITY);
   if (cached) {
     const verified = cached.verifiedTokens;
     return {
-    ...cached, modelMaxTokens: maximum ?? cached.modelMaxTokens, requestedTokens: requested,
+    ...cached, modelMaxTokens: effectiveMaximum, requestedTokens: requested,
     // Verification is durable, residency is not. Never present the last
     // successful allocation/offload as active after the backend was unloaded.
     activeTokens: active,
@@ -729,7 +777,7 @@ export function contextProfileForModel(model: string): ContextProfile {
       : {}),
   };
   }
-  return makeContextProfile({ model, backend, modelMaxTokens: maximum, requestedTokens: requested, activeTokens: active, fingerprint, source: active ? "runtime" : "fallback", gpuOffload: active ? runtime.gpuOffload : null });
+  return makeContextProfile({ model, backend, modelMaxTokens: effectiveMaximum, requestedTokens: requested, activeTokens: active, fingerprint, source: active ? "runtime" : "fallback", gpuOffload: active ? runtime.gpuOffload : null });
 }
 
 export function resolvedContextTarget(model: string, minimum = 0): number {
@@ -1080,7 +1128,8 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
     // (truncate-per-launch erased the first wedge's trace within minutes).
     let logFd: number | undefined;
     try {
-      logFd = fs.openSync(path.join(ROOT, "out", "llama-server.log"), "a");
+      rotateLogFile(LLAMA_LOG_PATH, LLAMA_LOG_MAX_BYTES, 3);
+      logFd = fs.openSync(LLAMA_LOG_PATH, "a");
       fs.writeSync(logFd, `\n===== launch ${new Date().toISOString()} model=${model} ngl=${ngl} =====\n`);
     } catch {}
     // -b/-ub 512: this Vulkan build dies with vk::ErrorDeviceLost when a cold
@@ -2382,4 +2431,36 @@ export async function startTrain(o: { name: string; base: string; steps: number;
     fail(err || "GPU training failed — check VRAM (training never falls back to CPU)");
   });
   return { started: true, name };
+}
+
+let labShutdownPromise: Promise<void> | null = null;
+async function terminateChild(child: ChildProcess | null | undefined, waitMs: number): Promise<void> {
+  if (!child || child.exitCode !== null) return;
+  try { child.kill("SIGTERM"); } catch { return; }
+  const exited = await Promise.race([
+    new Promise<boolean>((resolve) => child.once("exit", () => resolve(true))),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), waitMs)),
+  ]);
+  if (!exited && child.exitCode === null) {
+    try { child.kill("SIGKILL"); } catch {}
+  }
+}
+
+export function shutdownLab(waitMs = 12_000): Promise<void> {
+  if (labShutdownPromise) return labShutdownPromise;
+  labShutdownPromise = (async () => {
+    if (g.__lab_idle_reaper) clearInterval(g.__lab_idle_reaper);
+    if (g.__lab_log_reaper) clearInterval(g.__lab_log_reaper);
+    await drainGenerations(Math.min(waitMs, 8_000));
+    await Promise.all([
+      terminateChild(srv.proc, waitMs),
+      terminateChild(train.proc, waitMs),
+      terminateChild(lensState.proc, waitMs),
+    ]);
+    if (srv.ollamaModel) await stopOllama(srv.ollamaModel).catch(() => {});
+    srv.proc = null; srv.model = null; srv.ollamaModel = null; srv.loras = []; srv.ctx = 0; srv.offload = null;
+    train.proc = null; train.running = null; train.ws?.end(); train.ws = null;
+    lensState.proc = null; lensState.running = false;
+  })();
+  return labShutdownPromise;
 }

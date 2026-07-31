@@ -8,15 +8,20 @@ import { requestApproval, resolveApproval, startRun, stopRun, type EmitFn } from
 import { dependencyOutputHasCriticalRisk, runToolLoop, type ToolLoopEvent, type ToolLoopMsg } from "../toolloop";
 import { workspaceSandboxCommand } from "../tools";
 import { webFetch } from "../agent-tools";
+import { validateHtmlArtifact } from "./artifact-acceptance";
 import {
   HIVE_CONTRACT_VERSION, emptyStageResult, validateRoutingDecision, validateTaskEnvelope, validateWorkflowSpec,
-  type ArtifactRef, type BudgetName, type EvidenceRecord, type HiveFailureCode, type ModelProfile, type RoleProfile, type RoutingDecision, type SpecialistHandoff, type StageResult, type TaskEnvelope, type WorkflowNode, type WorkflowSpec,
+  type ArtifactRef, type BudgetName, type EvidenceRecord, type HiveFailureCode, type ModelProfile, type RoleProfile, type RoutingDecision, type SpecialistHandoff, type StageResult, type TaskEnvelope, type TaskVerdict, type WorkflowNode, type WorkflowSpec,
 } from "./contracts";
 import { ROLE_PROFILES, workflowTemplate } from "./presets";
 import { ensureEligibleModel, prepareModelProfile, recordRoleOutcome } from "./model-registry";
+import { classifySource, evaluateResearchRequirement, evidenceEntailsClaim, isContradictionText, unresolvedResearchGaps } from "./research-quality";
+import { decideTaskVerdict, normalizeTaskEnvelope } from "./task-runtime";
+import { taskContractDigest, validateHandoff } from "./handoff";
+import { chooseWorkflowRoute } from "./orchestration-policy";
 import {
-  appendHiveEvent, beginSideEffect, createApproval, createWorkflow, deleteWorkflow, finishSideEffect, getEvidence, getLatestHiveToolResult, getLatestHiveToolResults, getRoleOverrides, getWorkflow, getWorkflowNodes, listWorkflows, putArtifact, putEvidence,
-  resetFailedNodes, resetInterruptedNodes, resolveStoredApproval, updateNode, updateWorkflow, workflowSnapshot, type WorkflowNodeRecord,
+  appendHiveEvent, beginSideEffect, createApproval, createWorkflow, deleteWorkflow, finishSideEffect, getEvidence, getLatestHiveEvents, getLatestHiveToolResult, getLatestHiveToolResults, getRoleOverrides, getWorkflow, getWorkflowNodes, listWorkflows, putArtifact, putEvidence,
+  resetFailedNodes, resetInterruptedNodes, resolveStoredApproval, rewindWorkflowNodes, updateNode, updateTaskEnvelope, updateWorkflow, updateWorkflowBudget, updateWorkflowSpec, workflowSnapshot, type WorkflowNodeRecord,
 } from "./store";
 
 // User-editable overrides (web/src/app/api/hive/roles) layered on top of the
@@ -232,6 +237,10 @@ function dependencyHandoff(envelope: TaskEnvelope, node: WorkflowNode, records: 
     version: HIVE_CONTRACT_VERSION,
     target: { nodeId: node.id, role: node.role, label: node.label },
     task: { objective: envelope.objective, constraints: envelope.constraints, requiredOutput: envelope.requiredOutput, definitionOfDone: envelope.definitionOfDone, workspace: envelope.workspace },
+    contractDigest: taskContractDigest(envelope),
+    included: ["task contract", "bounded dependency summaries", "verification failures", "artifact and evidence references", "operator guidance"],
+    omitted: ["full model transcripts", "token-level streams", "unrelated historical node prose"],
+    linkedArtifactHashes: [...new Set(deps.flatMap((dependency) => dependency.artifacts.map((artifact) => artifact.hash)))],
     ownedPackage: node.label,
     dependencies: deps,
     evidence: evidence.slice(-10).map(({ id, url, title, claim, stance }) => ({ id, url, title, claim, stance })),
@@ -292,6 +301,7 @@ async function directModelStage(profile: ModelProfile, roleId: string, promptCon
   const baseUrl = prepared.baseUrl;
   const swapMs = before && before !== profile.model ? Date.now() - swapStarted : 0;
   const adapterMs = profile.specialist ? prepared.loadMs : 0;
+  const disableStructuredThinking = profile.specialist || /qwen/i.test(profile.model);
   const body: Record<string, unknown> = {
     model: profile.model, temperature: 0, max_tokens: maxTokens,
     messages: [
@@ -305,11 +315,10 @@ Return one JSON object matching the supplied StageResult schema. Do not add mark
     response_format: { type: "json_schema", json_schema: { name: "stage_result", strict: true, schema: STAGE_RESULT_SCHEMA } },
   };
   if (prepared.lora) body.lora = prepared.lora;
-  // Specialist adapters are SFT'd on no-think-format targets (empty think block).
-  // Running them with thinking enabled is a train/serve format mismatch — the
-  // think-displacement failure the victory track already paid for. Prompted
-  // (non-specialist) roles keep the model's default thinking behaviour.
-  if (profile.specialist) body.chat_template_kwargs = { enable_thinking: false };
+  // Specialist adapters are SFT'd on no-think-format targets. Qwen's prompted
+  // structured stages also need no-think mode: otherwise it can spend the whole
+  // bounded response on reasoning and leave no StageResult JSON to validate.
+  if (disableStructuredThinking) body.chat_template_kwargs = { enable_thinking: false };
   let payload = await streamedStageCompletion(baseUrl, body, signal, trace);
   let message = (payload.choices as { message?: { content?: string; reasoning_content?: string; thinking?: string } }[] | undefined)?.[0]?.message;
   let content = String(message?.content ?? "");
@@ -329,7 +338,7 @@ Return one JSON object matching the supplied StageResult schema. Do not add mark
   let parsed = salvage(content);
   // One bounded repair attempt for backends that ignore response_format.
   if (!parsed) {
-    payload = await streamedStageCompletion(baseUrl, { model: profile.model, temperature: 0, max_tokens: maxTokens, ...(prepared.lora ? { lora: prepared.lora } : {}), ...(profile.specialist ? { chat_template_kwargs: { enable_thinking: false } } : {}), messages: [
+    payload = await streamedStageCompletion(baseUrl, { model: profile.model, temperature: 0, max_tokens: maxTokens, ...(prepared.lora ? { lora: prepared.lora } : {}), ...(disableStructuredThinking ? { chat_template_kwargs: { enable_thinking: false } } : {}), messages: [
         { role: "system", content: "Repair the candidate into exactly one valid StageResult JSON object. No prose or markdown." },
         { role: "user", content: JSON.stringify({ schema: STAGE_RESULT_SCHEMA, candidate: content.slice(0, 12_000) }) },
       ] }, signal, trace);
@@ -395,6 +404,11 @@ async function researchFetch(workflowId: string, node: WorkflowNode, deps: Workf
       id: `ev-${crypto.randomUUID()}`, url, retrievedAt: Date.now(), sourceHash: artifact.hash,
       excerpt: content.slice(0, 1_800), stance: "context", title: content.split("\n", 1)[0]?.slice(0, 200),
     };
+    appendHiveEvent(workflowId, {
+      kind: "source_classified",
+      nodeId: node.id,
+      payload: { evidenceId: ev.id, url, ...classifySource(url) },
+    });
     putEvidence(workflowId, node.id, ev); evidence.push(ev); artifacts.push(artifact);
   }
   return { result: { ...emptyStageResult(`Fetched ${evidence.length} full sources; ${urls.length - evidence.length} fetches failed.`), evidence, artifacts, findings: evidence.map((e) => ({ id: `source-${e.id}`, text: `${e.title || e.url}: ${e.excerpt.slice(0, 500)}`, evidenceIds: [e.id] })), uncertainties: evidence.length < 2 ? ["Source diversity is insufficient."] : [] }, toolCalls: urls.length };
@@ -410,12 +424,22 @@ function evidenceLedger(workflowId: string): NodeExecution {
 
 function citationVerify(workflowId: string, deps: WorkflowNodeRecord[]): NodeExecution {
   const evidence = new Map(getEvidence(workflowId).map((e) => [e.id, e]));
-  const synthesis = deps.find((d) => d.nodeId === "synthesis")?.result;
+  const repaired = deps.find((d) => d.nodeId === "citation_repair");
+  const synthesis = repaired?.status === "succeeded" && repaired.result?.status === "succeeded" && repaired.result.findings.length
+    ? repaired.result
+    : deps.find((d) => d.nodeId === "synthesis")?.result;
   const important = synthesis?.findings || [];
   const checks = important.map((finding) => {
     const ids = finding.evidenceIds || [];
-    const valid = ids.length > 0 && ids.every((id) => evidence.has(id));
-    return { code: `claim:${finding.id}`, passed: valid, detail: valid ? `Supported by ${ids.join(", ")}` : "Missing or unknown evidence record" };
+    const records = ids.map((id) => evidence.get(id)).filter((item): item is EvidenceRecord => !!item);
+    const valid = ids.length > 0
+      && records.length === ids.length
+      && records.some((record) => evidenceEntailsClaim(finding.text, record));
+    return {
+      code: `claim:${finding.id}`,
+      passed: valid,
+      detail: valid ? `Entailed by ${ids.join(", ")}` : "Missing, unknown, or textually unrelated evidence record",
+    };
   });
   const passedCount = checks.filter((c) => c.passed).length;
   const score = important.length ? passedCount / important.length : 0;
@@ -815,6 +839,103 @@ function finalReport(workflowId: string, deps: WorkflowNodeRecord[]): NodeExecut
   return { result: { ...emptyStageResult(summary), status: verified ? "succeeded" : "failed", findings, artifacts: [artifact], verification: { passed: verified, score: verified ? 1 : 0, checks: [{ code: "verified_completion", passed: verified, detail: summary }] }, failureCodes: verified ? [] : ["verification_failure"], errors: verified ? [] : [summary] } };
 }
 
+async function artifactAcceptance(workflowId: string, node: WorkflowNode, envelope: TaskEnvelope): Promise<NodeExecution> {
+  const report = await validateHtmlArtifact(envelope, envelope.workspace || process.cwd());
+  const artifact = putArtifact(JSON.stringify(report, null, 2), "application/json", { workflowId, nodeId: node.id, label: `${node.id}-artifact-acceptance.json` });
+  const fullyChecked = report.passed && report.unchecked.length === 0;
+  const checks = [
+    ...report.checks,
+    ...envelope.definitionOfDone.map((item, index) => ({
+      code: `requirement-${index + 1}`,
+      passed: fullyChecked,
+      detail: fullyChecked ? `Artifact acceptance passed for: ${item}` : `Artifact acceptance remains unproven for: ${item}`,
+    })),
+  ];
+  return {
+    result: {
+      ...emptyStageResult(fullyChecked ? "Artifact passed static and browser acceptance." : "Artifact acceptance found defects or unchecked required behavior."),
+      status: fullyChecked ? "succeeded" : "needs_followup",
+      artifacts: [artifact],
+      findings: checks.map((check) => ({ id: check.code, text: check.detail })),
+      uncertainties: report.unchecked,
+      verification: {
+        passed: fullyChecked,
+        score: checks.length ? checks.filter((check) => check.passed).length / checks.length : 0,
+        checks,
+      },
+      failureCodes: fullyChecked ? [] : ["verification_failure"],
+      errors: fullyChecked ? [] : ["Runtime artifact acceptance did not fully pass."],
+    },
+  };
+}
+
+function researchReport(workflowId: string, envelope: TaskEnvelope, deps: WorkflowNodeRecord[]): NodeExecution {
+  const synthesis = deps.find((node) => node.nodeId === "synthesis")?.result;
+  const verification = deps.find((node) => node.nodeId === "verify")?.result?.verification;
+  const evidence = getEvidence(workflowId);
+  const contradictions = evidence.filter((item) => item.stance === "contradicting");
+  const contradictionFindings = (synthesis?.findings || []).filter((finding) => isContradictionText(finding.text));
+  const origins = new Set(evidence.map((item) => {
+    try { return new URL(item.url).origin; } catch { return item.url; }
+  }));
+  const openGaps = unresolvedResearchGaps(synthesis?.uncertainties || [], synthesis?.findings || []);
+  const noOpenGaps = openGaps.length === 0;
+  const independentSources = origins.size >= 2;
+  const verified = verification?.passed === true && noOpenGaps && independentSources;
+  const lines = [
+    `# ${envelope.requiredOutput}`,
+    "",
+    synthesis?.summary || "No synthesis was produced.",
+    "",
+    "## Claims and evidence",
+    ...(synthesis?.findings || []).map((finding) => `- ${finding.text} — ${(finding.evidenceIds || []).join(", ") || "UNSUPPORTED"}`),
+    "",
+    "## Contradictions",
+    ...(contradictions.length || contradictionFindings.length
+      ? [
+          ...contradictions.map((item) => `- ${item.claim || item.excerpt.slice(0, 300)} — ${item.url}`),
+          ...contradictionFindings.map((finding) => `- ${finding.text} — ${(finding.evidenceIds || []).join(", ") || "UNSUPPORTED"}`),
+        ]
+      : ["- None recorded."]),
+    "",
+    "## Unresolved gaps",
+    ...(openGaps.length ? openGaps.map((item) => `- ${item}`) : ["- None recorded."]),
+  ];
+  const artifact = putArtifact(lines.join("\n"), "text/markdown", { workflowId, nodeId: "report", label: "research-report.md" });
+  return {
+    result: {
+      ...emptyStageResult(verified ? "Evidence-linked research report produced." : "Research report produced but verification remains incomplete."),
+      status: verified ? "succeeded" : "needs_followup",
+      findings: synthesis?.findings || [],
+      evidence,
+      artifacts: [artifact],
+      uncertainties: openGaps,
+      verification: {
+        passed: verified,
+        score: verified ? 1 : 0,
+        checks: [
+          ...(verification?.checks || []),
+          { code: "source-independence", passed: independentSources, detail: `${origins.size} independent source origin(s)` },
+          { code: "unresolved-gaps", passed: noOpenGaps, detail: noOpenGaps ? "No unresolved synthesis gaps." : `${openGaps.length} gap(s) remain.` },
+          { code: "report-artifact", passed: true, detail: `Report artifact ${artifact.hash}` },
+          ...envelope.definitionOfDone.map((item, index) => {
+            const result = evaluateResearchRequirement(item, {
+              entailmentPassed: verification?.passed === true,
+              independentSources,
+              reportArtifact: true,
+              gapsExplicit: true,
+              contradictionsExplicit: true,
+              overallVerified: verified,
+            });
+            return { code: `requirement-${index + 1}`, ...result };
+          }),
+        ],
+      },
+      errors: verified ? [] : ["Evidence entailment did not pass for every report claim."],
+    },
+  };
+}
+
 async function executeNode(workflowId: string, executionRunId: string, node: WorkflowNode, spec: WorkflowSpec, envelope: TaskEnvelope, emit: EmitFn, signal: AbortSignal, preferredModel: string | undefined, autoApprove: boolean, retryError?: string): Promise<NodeExecution> {
   const records = getWorkflowNodes(workflowId);
   const evidence = getEvidence(workflowId);
@@ -823,14 +944,72 @@ async function executeNode(workflowId: string, executionRunId: string, node: Wor
   if (node.action === "research_fetch") return researchFetch(workflowId, node, records, spec.budget.researchCalls);
   if (node.action === "evidence_ledger") return evidenceLedger(workflowId);
   if (node.action === "citation_verify") return citationVerify(workflowId, records);
+  if (node.action === "research_report") return researchReport(workflowId, envelope, records);
   if (node.action === "repo_map") return repoMap(workflowId, node, envelope.workspace || process.cwd(), envelope.objective);
   if (node.action === "deterministic_checks") return deterministicChecks(workflowId, node, envelope.workspace || process.cwd(), signal);
   if (node.action === "requirement_audit") return requirementAudit(envelope, records);
   if (node.action === "final_report") return finalReport(workflowId, records);
+  if (node.action === "artifact_acceptance") return artifactAcceptance(workflowId, node, envelope);
   if (node.action === "research_followup") {
     const gaps = records.find((r) => r.nodeId === "gaps")?.result;
     if (!gaps?.uncertainties.length && gaps?.status !== "needs_followup") return { result: emptyStageResult("No targeted follow-up was required.") };
-    return researchSearch(workflowId, node, { ...envelope, objective: gaps.uncertainties.join(" ") || envelope.objective }, records, Math.min(3, spec.budget.researchCalls));
+    const gapQueriesRecord: WorkflowNodeRecord = {
+      nodeId: `${node.id}-gaps`,
+      label: "Unresolved gap queries",
+      role: node.role,
+      action: "research_gap_queries",
+      status: "succeeded",
+      attempt: 1,
+      promptTokens: 0,
+      completionTokens: 0,
+      contextTokens: 0,
+      swapMs: 0,
+      adapterMs: 0,
+      toolCalls: 0,
+      result: {
+        ...emptyStageResult("Converted unresolved gaps into targeted follow-up queries."),
+        findings: (gaps?.uncertainties || []).map((text, index) => ({ id: `gap-${index + 1}`, text })),
+      },
+      idempotencyKey: `${workflowId}:${node.id}:gap-queries`,
+    };
+    const search = await researchSearch(
+      workflowId,
+      { ...node, dependsOn: [gapQueriesRecord.nodeId] },
+      { ...envelope, objective: gaps.uncertainties.join(" ") || envelope.objective },
+      [...records, gapQueriesRecord],
+      Math.min(3, spec.budget.researchCalls),
+    );
+    const searchRecord: WorkflowNodeRecord = {
+      nodeId: `${node.id}-search`,
+      label: "Follow-up search",
+      role: node.role,
+      action: "research_search",
+      status: "succeeded",
+      attempt: 1,
+      promptTokens: 0,
+      completionTokens: 0,
+      contextTokens: 0,
+      swapMs: 0,
+      adapterMs: 0,
+      toolCalls: search.toolCalls || 0,
+      result: search.result,
+      idempotencyKey: `${workflowId}:${node.id}:followup-search`,
+    };
+    const fetched = await researchFetch(
+      workflowId,
+      { ...node, dependsOn: [searchRecord.nodeId] },
+      [...records, searchRecord],
+      Math.min(3, spec.budget.researchCalls),
+    );
+    return {
+      result: {
+        ...fetched.result,
+        summary: `${search.result.summary} ${fetched.result.summary}`,
+        artifacts: [...search.result.artifacts, ...fetched.result.artifacts],
+        status: fetched.result.evidence.length ? "succeeded" : "needs_followup",
+      },
+      toolCalls: (search.toolCalls || 0) + (fetched.toolCalls || 0),
+    };
   }
   const role = effectiveRole(node.role);
   if (!role) throw new Error(`role profile not found: ${node.role}`);
@@ -844,20 +1023,41 @@ async function executeNode(workflowId: string, executionRunId: string, node: Wor
     const workerContext = (node.action === "repair" ? context + repairBriefing(records) : context) + retryBriefing;
     const result = await workerTools(workflowId, executionRunId, node, profile, envelope, workerContext, emit, signal, autoApprove, node.action === "verifier_tools" ? "verification" : "mutation");
     if (node.action === "repair") {
-      const checked = await deterministicChecks(workflowId, node, envelope.workspace || process.cwd(), signal);
+      const directArtifact = spec.nodes.some((candidate) => candidate.action === "artifact_acceptance");
+      const checked = directArtifact
+        ? await artifactAcceptance(workflowId, node, envelope)
+        : await deterministicChecks(workflowId, node, envelope.workspace || process.cwd(), signal);
       result.result.verification = checked.result.verification; result.result.findings.push(...checked.result.findings); result.result.artifacts.push(...checked.result.artifacts);
       result.result.status = checked.result.verification?.passed ? "succeeded" : "failed";
     }
     return result;
   }
-  return directModelStage(profile, node.role, context, signal, (kind, text, meta) => {
-    // Durable ledger keeps the plain text (compact, replayable); the live SSE
-    // event additionally carries per-token certainty for the brain-wave view.
-    appendHiveEvent(workflowId, { kind: `stage_${kind}`, nodeId: node.id, role: node.role, modelVersion: profile.versionHash, payload: text });
+  // Keep token streaming live, but commit text to the durable ledger in useful
+  // chunks. Historical runs stored one row per token, making lifecycle events
+  // almost impossible to query and inflating the database by orders of magnitude.
+  const durableChunks = new Map<string, string>();
+  const flush = (kind: string) => {
+    const text = durableChunks.get(kind) || "";
+    if (!text) return;
+    appendHiveEvent(workflowId, {
+      kind: `stage_${kind}`,
+      lifecycle: "stream_chunk",
+      nodeId: node.id,
+      role: node.role,
+      modelVersion: profile.versionHash,
+      payload: text,
+    });
+    durableChunks.set(kind, "");
+  };
+  const execution = await directModelStage(profile, node.role, context, signal, (kind, text, meta) => {
+    durableChunks.set(kind, (durableChunks.get(kind) || "") + text);
+    if ((durableChunks.get(kind)?.length || 0) >= 1_024) flush(kind);
     emit({ k: "stage_trace", workflowId, nodeId: node.id, role: node.role, modelVersion: profile.versionHash, v: { kind, text, ...(meta?.p !== undefined ? { p: meta.p } : {}), ...(meta?.alts ? { alts: meta.alts } : {}) } } as unknown as Parameters<EmitFn>[0]);
   // 3000, up from 1600: a planner emitting rich findings hit the cap mid-JSON and
   // failed the whole stage on truncation (hive-mrfxf4t866pf, 2026-07-11).
   }, 3_000);
+  for (const kind of durableChunks.keys()) flush(kind);
+  return execution;
 }
 
 // The coding template's five-stage research prelude cost ~450 wall-clock seconds
@@ -876,11 +1076,17 @@ function shouldSkipOptional(node: WorkflowNode, records: WorkflowNodeRecord[], s
   if (!node.optional) return false;
   if (spec.kind === "coding" && CODING_RESEARCH_NODES.has(node.id)) return !needsExternalEvidence(envelope);
   if (node.id === "followup") {
-    if (spec.budget.name === "normal") return true;
     const gaps = records.find((r) => r.nodeId === "gaps")?.result;
     return gaps?.status !== "needs_followup" && !gaps?.uncertainties.length;
   }
-  if (node.id === "repair") return !!records.find((r) => r.nodeId === "audit")?.result?.verification?.passed;
+  if (node.id === "citation_repair") {
+    const verification = records.find((record) => record.nodeId === "verify")?.result?.verification;
+    return verification?.passed === true;
+  }
+  if (node.id === "repair") {
+    const gate = records.find((r) => r.nodeId === "audit") || records.find((r) => r.nodeId === "acceptance");
+    return !!gate?.result?.verification?.passed;
+  }
   return false;
 }
 
@@ -952,6 +1158,11 @@ async function executeWorkflow(workflowId: string, executionRunId: string, emit:
     const started = Date.now();
     const retryError = record.error || undefined;
     const handoff = JSON.parse(guidedDependencyContext(workflowId, envelope, node, records, getEvidence(workflowId))) as SpecialistHandoff;
+    const contextLoss = validateHandoff(handoff, envelope);
+    if (contextLoss.length) {
+      appendHiveEvent(workflowId, { kind: "context_loss_detected", nodeId: node.id, role: node.role, payload: { problems: contextLoss } });
+      throw new Error(`handoff context loss: ${contextLoss.join("; ")}`);
+    }
     // The receiving specialist gets the bounded dependency digest in its prompt;
     // persist the same handoff as a first-class event so the UI can show exactly
     // what crossed the agent boundary, not just each isolated thought trace.
@@ -987,7 +1198,7 @@ async function executeWorkflow(workflowId: string, executionRunId: string, emit:
       if (swaps > budget.modelSwaps) throw new Error(`model-swap budget exceeded (${budget.modelSwaps})`);
       const gateFailed = node.verificationGate && !execution.result.verification?.passed;
       const hardFailure = execution.result.status === "failed" || execution.result.status === "blocked" || gateFailed;
-      const allowRepairPath = ["checks", "acceptance_review", "audit", "final_review", "final_audit"].includes(node.id);
+      const allowRepairPath = ["checks", "acceptance", "acceptance_review", "audit", "final_review", "final_audit", "verify", "report"].includes(node.id);
       if (hardFailure && !allowRepairPath) throw new Error(execution.result.errors.join("; ") || `verification gate failed for ${node.id}`);
       const finished = Date.now();
       updateNode(workflowId, node.id, {
@@ -1033,12 +1244,22 @@ async function executeWorkflow(workflowId: string, executionRunId: string, emit:
   }
   if (signal.aborted) throw new Error("cancelled");
   const finalNodes = getWorkflowNodes(workflowId);
-  const failed = finalNodes.filter((n) => n.status === "failed");
-  if (failed.length) throw new Error(`workflow failed at: ${failed.map((n) => n.nodeId).join(", ")}`);
-  updateWorkflow(workflowId, { status: "succeeded", finishedAt: Date.now(), error: "" });
-  emitRouting(workflowId, emit, spec, { version: HIVE_CONTRACT_VERSION, action: "finish", reason: "all required nodes and verification gates completed", uncertainty: 0 });
-  appendHiveEvent(workflowId, { kind: "workflow_finished", payload: { inferenceTokens, swaps, retriesUsed } });
-  emit({ k: "workflow_finished", workflowId, v: { status: "succeeded", inferenceTokens, swaps, retriesUsed } });
+  const verdict = decideTaskVerdict(envelope, spec.nodes, finalNodes);
+  const latestWorkflow = getWorkflow(workflowId);
+  updateWorkflow(workflowId, {
+    status: verdict.outcome,
+    finishedAt: Date.now(),
+    error: verdict.outcome === "complete" ? "" : verdict.reason,
+    working: { ...(latestWorkflow?.working || {}), verdict },
+  });
+  emitRouting(workflowId, emit, spec, {
+    version: HIVE_CONTRACT_VERSION,
+    action: verdict.outcome === "blocked" ? "request_user" : "finish",
+    reason: verdict.reason,
+    uncertainty: verdict.outcome === "complete" ? 0 : 1,
+  });
+  appendHiveEvent(workflowId, { kind: "workflow_finished", payload: { verdict, inferenceTokens, swaps, retriesUsed } });
+  emit({ k: "workflow_finished", workflowId, v: { status: verdict.outcome, verdict, inferenceTokens, swaps, retriesUsed } });
 }
 
 function enqueueWorkflow(workflowId: string, options: { preferredModel?: string; autoApprove: boolean }): string {
@@ -1054,8 +1275,15 @@ function enqueueWorkflow(workflowId: string, options: { preferredModel?: string;
     catch (e) {
       const paused = hg.__hive_pause_requested!.delete(workflowId);
       const cancelled = !paused && (signal.aborted || (e as Error).message === "cancelled");
-      updateWorkflow(workflowId, { status: paused ? "paused" : cancelled ? "cancelled" : "failed", finishedAt: Date.now(), error: paused ? "paused by user" : (e as Error).message });
-      appendHiveEvent(workflowId, { kind: paused ? "workflow_paused" : cancelled ? "workflow_cancelled" : "workflow_failed", payload: { error: (e as Error).message } });
+      const latest = getWorkflow(workflowId);
+      const verdict = cancelled && latest ? cancellationVerdict(latest.envelope, latest.working.verdict as TaskVerdict | undefined) : undefined;
+      updateWorkflow(workflowId, {
+        status: paused ? "paused" : cancelled ? "cancelled" : "failed",
+        finishedAt: Date.now(),
+        error: paused ? "paused by user" : (e as Error).message,
+        ...(verdict && latest ? { working: { ...latest.working, verdict } } : {}),
+      });
+      appendHiveEvent(workflowId, { kind: paused ? "workflow_paused" : cancelled ? "workflow_cancelled" : "workflow_failed", payload: { error: (e as Error).message, ...(verdict ? { verdict } : {}) } });
       throw e;
     } finally { live.delete(workflowId); release(); }
   });
@@ -1064,24 +1292,68 @@ function enqueueWorkflow(workflowId: string, options: { preferredModel?: string;
   return meta.id;
 }
 
+function cancellationVerdict(envelope: TaskEnvelope, existing?: TaskVerdict): TaskVerdict {
+  const normalized = normalizeTaskEnvelope(envelope);
+  const criteria = existing?.criteria || normalized.acceptanceCriteria || [];
+  return {
+    version: HIVE_CONTRACT_VERSION,
+    outcome: "cancelled",
+    reason: "The operator stopped the run.",
+    criteria,
+    acceptanceEvidence: criteria.flatMap((criterion) => criterion.evidenceIds),
+    uncheckedProperties: [
+      ...(normalized.unverifiableProperties || []),
+      ...criteria.filter((criterion) => criterion.state === "unknown").map((criterion) => criterion.text),
+    ],
+    unresolvedNodeIds: [],
+    decidedAt: Date.now(),
+  };
+}
+
 export function startHiveWorkflow(options: StartOptions): { workflowId: string; runId: string } {
   // Persist the exact directory every coding role will see. This also covers
   // replay/continuation and programmatic callers that bypass the HTTP route.
-  const envelope = options.kind === "coding"
+  const envelope = normalizeTaskEnvelope(options.kind === "coding"
     ? { ...options.envelope, workspace: path.resolve(options.envelope.workspace || process.cwd()) }
-    : options.envelope;
+    : options.envelope);
   const envelopeErrors = validateTaskEnvelope(envelope);
   if (envelopeErrors.length) throw new Error(envelopeErrors.join("; "));
-  const spec = options.spec ?? workflowTemplate(options.kind, options.budget ?? "normal");
+  const spec = options.spec ?? workflowTemplate(options.kind, options.budget ?? "normal", envelope);
   const specErrors = validateWorkflowSpec(spec);
   if (specErrors.length) throw new Error(specErrors.join("; "));
   if (spec.kind !== options.kind) throw new Error("workflow spec kind does not match requested kind");
   const id = `hive-${newId()}`;
   const createdAt = Date.now();
   createWorkflow({ id, kind: options.kind, templateId: spec.id, status: "queued", envelope, spec, budget: spec.budget, working: { ...(options.working || {}), controlMode: options.autoApprove ? "autopilot" : "supervised", preferredModel: options.preferredModel || "auto" }, parentWorkflowId: options.parentWorkflowId, createdAt, updatedAt: createdAt });
+  const policy = chooseWorkflowRoute(options.kind, envelope, options.budget ?? "normal", options.spec?.id);
+  appendHiveEvent(id, { kind: "workflow_policy_selected", lifecycle: "routing", payload: policy });
   appendHiveEvent(id, { kind: "workflow_created", payload: { spec: spec.id, budget: spec.budget.name, envelope } });
   const runId = enqueueWorkflow(id, { preferredModel: options.preferredModel, autoApprove: !!options.autoApprove });
   return { workflowId: id, runId };
+}
+
+export function editHiveTaskContract(id: string, input: TaskEnvelope): TaskEnvelope {
+  const workflow = getWorkflow(id);
+  if (!workflow) throw new Error("workflow not found");
+  if (!["queued", "paused", "incomplete", "blocked", "failed"].includes(workflow.status)) {
+    throw new Error("pause the workflow before editing its task contract");
+  }
+  const envelope = normalizeTaskEnvelope({
+    ...input,
+    version: HIVE_CONTRACT_VERSION,
+    workspace: workflow.kind === "coding"
+      ? path.resolve(input.workspace || workflow.envelope.workspace || process.cwd())
+      : undefined,
+  });
+  const errors = validateTaskEnvelope(envelope);
+  if (errors.length) throw new Error(errors.join("; "));
+  updateTaskEnvelope(id, envelope);
+  appendHiveEvent(id, {
+    kind: "task_contract_updated",
+    lifecycle: "operator_intervention",
+    payload: { envelope },
+  });
+  return envelope;
 }
 
 export function stopHiveWorkflow(id: string): boolean {
@@ -1089,8 +1361,9 @@ export function stopHiveWorkflow(id: string): boolean {
   const workflow = getWorkflow(id);
   if (!workflow) return false;
   hg.__hive_pause_requested!.delete(id);
-  updateWorkflow(id, { status: "cancelled", finishedAt: Date.now(), error: "stopped by user" });
-  appendHiveEvent(id, { kind: "workflow_stop_requested", payload: {} });
+  const verdict = cancellationVerdict(workflow.envelope, workflow.working.verdict as TaskVerdict | undefined);
+  updateWorkflow(id, { status: "cancelled", finishedAt: Date.now(), error: "stopped by user", working: { ...workflow.working, verdict } });
+  appendHiveEvent(id, { kind: "workflow_stop_requested", lifecycle: "operator_intervention", payload: { actor: "local-owner", verdict } });
   return active ? stopRun(active.executionRunId) : true;
 }
 
@@ -1110,14 +1383,14 @@ export function pauseHiveWorkflow(id: string): boolean {
   if (!active) { updateWorkflow(id, { status: "paused", error: "paused by user" }); return true; }
   hg.__hive_pause_requested!.add(id);
   updateWorkflow(id, { status: "paused", error: "paused by user" });
-  appendHiveEvent(id, { kind: "workflow_pause_requested", payload: {} });
+  appendHiveEvent(id, { kind: "workflow_pause_requested", lifecycle: "operator_intervention", payload: { actor: "local-owner" } });
   return stopRun(active.executionRunId);
 }
 
 export function resumeHiveWorkflow(id: string, preferredModel?: string, autoApprove = false): string {
   const workflow = getWorkflow(id);
   if (!workflow) throw new Error("workflow not found");
-  if (workflow.status === "succeeded") throw new Error("completed workflows cannot be resumed; replay them instead");
+  if (workflow.status === "succeeded" || workflow.status === "complete") throw new Error("completed workflows cannot be resumed; replay them instead");
   if (live.has(id)) return live.get(id)!.executionRunId;
   resetInterruptedNodes(id);
   resetFailedNodes(id);
@@ -1182,19 +1455,99 @@ export function overrideHiveNode(workflowId: string, nodeId: string, action: "sk
     ? { status: "skipped", finishedAt: Date.now(), result: emptyStageResult("Manually skipped while paused.") }
     : { status: "pending", attempt: 0, startedAt: undefined, finishedAt: undefined, error: record?.error || "manually queued for retry" });
   updateWorkflow(workflowId, { status: "paused", finishedAt: undefined, error: "manual override applied; resume when ready" });
-  appendHiveEvent(workflowId, { kind: "manual_override", nodeId, role: node.role, payload: { action } });
+  appendHiveEvent(workflowId, { kind: "manual_override", lifecycle: "operator_intervention", nodeId, role: node.role, payload: { actor: "local-owner", action } });
+}
+
+export function forkHiveWorkflow(workflowId: string): { workflowId: string; runId: string } {
+  const source = getWorkflow(workflowId);
+  if (!source) throw new Error("workflow not found");
+  const conversation = Array.isArray(source.working.conversation) ? source.working.conversation : [];
+  const started = startHiveWorkflow({
+    kind: source.kind,
+    budget: source.budget.name,
+    envelope: source.envelope,
+    spec: source.spec,
+    parentWorkflowId: source.id,
+    preferredModel: typeof source.working.preferredModel === "string" && source.working.preferredModel !== "auto" ? source.working.preferredModel : undefined,
+    autoApprove: source.working.controlMode === "autopilot",
+    working: { conversation, forkedFrom: source.id, baselineWorkflowId: source.working.baselineWorkflowId },
+  });
+  appendHiveEvent(started.workflowId, { kind: "workflow_forked", lifecycle: "operator_intervention", payload: { actor: "local-owner", sourceWorkflowId: source.id, sourceEventSeq: getLatestHiveEvents(source.id, 1).at(-1)?.seq || 0 } });
+  return started;
+}
+
+export function rewindHiveWorkflow(workflowId: string, targetNodeId: string): { rewoundNodeIds: string[]; externalSideEffectsUndone: false } {
+  const workflow = getWorkflow(workflowId);
+  if (!workflow) throw new Error("workflow not found");
+  if (live.has(workflowId) || workflow.status !== "paused") throw new Error("pause the workflow before rewinding");
+  if (!workflow.spec.nodes.some((node) => node.id === targetNodeId)) throw new Error("node not found");
+  const affected = new Set([targetNodeId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const node of workflow.spec.nodes) {
+      if (!affected.has(node.id) && node.dependsOn.some((dependency) => affected.has(dependency))) {
+        affected.add(node.id);
+        changed = true;
+      }
+    }
+  }
+  const rewoundNodeIds = workflow.spec.nodes.map((node) => node.id).filter((id) => affected.has(id));
+  rewindWorkflowNodes(workflowId, rewoundNodeIds);
+  updateWorkflow(workflowId, { status: "paused", finishedAt: undefined, error: `rewound to ${targetNodeId}; external side effects were not undone` });
+  appendHiveEvent(workflowId, {
+    kind: "workflow_rewound",
+    lifecycle: "operator_intervention",
+    nodeId: targetNodeId,
+    payload: { actor: "local-owner", rewoundNodeIds, priorEventsPreserved: true, externalSideEffectsUndone: false, sideEffectsWillUseIdempotencyLedger: true },
+  });
+  return { rewoundNodeIds, externalSideEffectsUndone: false };
+}
+
+export function editHiveExecutionPolicy(workflowId: string, input: { budget?: BudgetName; preferredModel?: string; controlMode?: "supervised" | "autopilot" }): void {
+  const workflow = getWorkflow(workflowId);
+  if (!workflow) throw new Error("workflow not found");
+  if (live.has(workflowId) || !["queued", "paused", "incomplete", "blocked", "failed"].includes(workflow.status)) throw new Error("pause the workflow before editing execution policy");
+  if (input.budget) updateWorkflowBudget(workflowId, workflowTemplate(workflow.kind, input.budget, workflow.envelope).budget);
+  updateWorkflow(workflowId, { working: {
+    ...workflow.working,
+    ...(input.preferredModel !== undefined ? { preferredModel: input.preferredModel || "auto" } : {}),
+    ...(input.controlMode ? { controlMode: input.controlMode } : {}),
+  } });
+  appendHiveEvent(workflowId, { kind: "execution_policy_updated", lifecycle: "operator_intervention", payload: { actor: "local-owner", ...input } });
+}
+
+export function editHivePlan(workflowId: string, dependencies: Record<string, string[]>): void {
+  const workflow = getWorkflow(workflowId);
+  if (!workflow) throw new Error("workflow not found");
+  if (live.has(workflowId) || workflow.status !== "paused") throw new Error("pause the workflow before editing its plan");
+  const records = new Map(getWorkflowNodes(workflowId).map((node) => [node.nodeId, node]));
+  const spec: WorkflowSpec = {
+    ...workflow.spec,
+    nodes: workflow.spec.nodes.map((node) => {
+      if (!(node.id in dependencies)) return node;
+      if (["succeeded", "skipped"].includes(records.get(node.id)?.status || "")) throw new Error(`completed node ${node.id} cannot be replanned`);
+      const dependsOn = dependencies[node.id];
+      if (!Array.isArray(dependsOn) || dependsOn.some((item) => typeof item !== "string")) throw new Error(`${node.id} dependencies must be an array of node IDs`);
+      return { ...node, dependsOn: [...new Set(dependsOn)] };
+    }),
+  };
+  const errors = validateWorkflowSpec(spec);
+  if (errors.length) throw new Error(errors.join("; "));
+  updateWorkflowSpec(workflowId, spec);
+  appendHiveEvent(workflowId, { kind: "plan_updated", lifecycle: "operator_intervention", payload: { actor: "local-owner", dependencies } });
 }
 
 export function steerHiveWorkflow(workflowId: string, message: string, pause = false): { ok: true; paused: boolean; appliedFrom: "next_node" | "resumed_node" } {
   const workflow = getWorkflow(workflowId);
   if (!workflow) throw new Error("workflow not found");
-  if (workflow.status === "succeeded") throw new Error("completed workflows cannot be steered; replay the run instead");
+  if (workflow.status === "succeeded" || workflow.status === "complete") throw new Error("completed workflows cannot be steered; replay the run instead");
   const text = message.trim().slice(0, 8_000);
   if (!text) throw new Error("guidance is required");
   const previous = Array.isArray(workflow.working.operatorMessages) ? workflow.working.operatorMessages as unknown[] : [];
   const entry = { id: `operator-${newId()}`, ts: Date.now(), message: text };
   updateWorkflow(workflowId, { working: { ...workflow.working, operatorMessages: [...previous, entry].slice(-50) } });
-  appendHiveEvent(workflowId, { kind: "operator_message", payload: entry });
+  appendHiveEvent(workflowId, { kind: "operator_message", lifecycle: "operator_intervention", payload: { actor: "local-owner", ...entry } });
   if (pause) pauseHiveWorkflow(workflowId);
   return { ok: true, paused: pause, appliedFrom: pause ? "resumed_node" : "next_node" };
 }

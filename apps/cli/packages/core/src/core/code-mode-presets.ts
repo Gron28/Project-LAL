@@ -46,6 +46,10 @@ export interface CodeModePreset {
   defaultModel?: string;
 }
 
+/** Shared per-response ceiling. The model limit and remaining context may
+ * reduce this, but modes must not silently lower it and truncate tool JSON. */
+export const DEFAULT_CODE_MODE_MAX_TOKENS = 40_960;
+
 // Shared instruction fragment: any planning output should be small,
 // self-contained, delegable chunks — not prose a single implementer reads
 // end-to-end. A plan good enough for one big implement call is NOT
@@ -82,7 +86,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   default: {
     label: 'default',
     maxRounds: 24,
-    maxTokens: 8192,
+    maxTokens: DEFAULT_CODE_MODE_MAX_TOKENS,
     think: true,
     temperature: 0,
     addendum: '',
@@ -90,7 +94,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   'quick-edit': {
     label: 'quick-edit',
     maxRounds: 8,
-    maxTokens: 8192,
+    maxTokens: DEFAULT_CODE_MODE_MAX_TOKENS,
     think: false,
     temperature: 0,
     addendum:
@@ -99,7 +103,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   planning: {
     label: 'planning',
     maxRounds: 16,
-    maxTokens: 8192,
+    maxTokens: DEFAULT_CODE_MODE_MAX_TOKENS,
     think: true,
     temperature: 0,
     addendum:
@@ -109,7 +113,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   'deep-research': {
     label: 'deep-research',
     maxRounds: 64,
-    maxTokens: 8192,
+    maxTokens: DEFAULT_CODE_MODE_MAX_TOKENS,
     think: true,
     temperature: 0.3,
     addendum:
@@ -118,7 +122,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   orchestrator: {
     label: 'orchestrator',
     maxRounds: 120,
-    maxTokens: 8192,
+    maxTokens: DEFAULT_CODE_MODE_MAX_TOKENS,
     think: true,
     temperature: 0.2,
     addendum: ORCHESTRATOR_PROMPT,

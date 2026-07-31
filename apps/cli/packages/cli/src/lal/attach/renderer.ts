@@ -89,6 +89,36 @@ type Handler = (
   ctx: RenderContext,
 ) => RenderedLine[];
 
+function workflowEvent(
+  kind: string,
+  label: string,
+  severity: RenderSeverity = 'dim',
+): Handler {
+  return (event) => {
+    const value = asRecord(event.v);
+    const nodeId = event['nodeId'] ?? value['nodeId'];
+    const role = event['role'] ?? value['role'];
+    const status = event['status'] ?? value['status'];
+    const reason =
+      event['reason'] ??
+      value['reason'] ??
+      event['error'] ??
+      value['error'] ??
+      value['message'];
+    const details = [
+      nodeId ? `node ${String(nodeId)}` : '',
+      role ? `role ${String(role)}` : '',
+      status ? String(status) : '',
+      reason ? truncate(String(reason), 160) : '',
+    ].filter(Boolean);
+    return line(
+      severity,
+      `hive: ${label}${details.length ? ` · ${details.join(' · ')}` : ''}`,
+      kind,
+    );
+  };
+}
+
 // One entry per kind in KNOWN_EVENT_KINDS (protocol.ts). Keep this table
 // exhaustive on purpose — a missing entry silently falls through to the
 // "unknown kind" debug line below, which is a compatibility feature for
@@ -387,6 +417,110 @@ const HANDLERS: Record<string, Handler> = {
       'workflow_finished',
     );
   },
+  workflow_created: workflowEvent(
+    'workflow_created',
+    'workflow created',
+    'info',
+  ),
+  workflow_policy_selected: workflowEvent(
+    'workflow_policy_selected',
+    'policy selected',
+  ),
+  workflow_resumed: workflowEvent(
+    'workflow_resumed',
+    'workflow resumed',
+    'info',
+  ),
+  workflow_recovered: workflowEvent(
+    'workflow_recovered',
+    'workflow recovered',
+    'warning',
+  ),
+  workflow_forked: workflowEvent(
+    'workflow_forked',
+    'workflow forked',
+    'info',
+  ),
+  workflow_rewound: workflowEvent(
+    'workflow_rewound',
+    'workflow rewound',
+    'warning',
+  ),
+  workflow_pause_requested: workflowEvent(
+    'workflow_pause_requested',
+    'pause requested',
+    'warning',
+  ),
+  workflow_stop_requested: workflowEvent(
+    'workflow_stop_requested',
+    'stop requested',
+    'warning',
+  ),
+  workflow_paused: workflowEvent(
+    'workflow_paused',
+    'workflow paused',
+    'warning',
+  ),
+  workflow_cancelled: workflowEvent(
+    'workflow_cancelled',
+    'workflow cancelled',
+    'warning',
+  ),
+  workflow_failed: workflowEvent(
+    'workflow_failed',
+    'workflow failed',
+    'error',
+  ),
+  workflow_continued: workflowEvent(
+    'workflow_continued',
+    'workflow continued',
+    'info',
+  ),
+  node_started: workflowEvent('node_started', 'node started', 'info'),
+  node_finished: workflowEvent('node_finished', 'node finished', 'success'),
+  node_failed: workflowEvent('node_failed', 'node failed', 'error'),
+  node_skipped: workflowEvent('node_skipped', 'node skipped', 'warning'),
+  routing_decision: workflowEvent(
+    'routing_decision',
+    'routing decision',
+  ),
+  agent_handoff: workflowEvent('agent_handoff', 'agent handoff'),
+  context_loss_detected: workflowEvent(
+    'context_loss_detected',
+    'context loss detected',
+    'warning',
+  ),
+  source_classified: workflowEvent('source_classified', 'source classified'),
+  side_effect_replayed: workflowEvent(
+    'side_effect_replayed',
+    'side effect replayed',
+    'warning',
+  ),
+  side_effect_uncertain: workflowEvent(
+    'side_effect_uncertain',
+    'side effect state uncertain',
+    'warning',
+  ),
+  manual_override: workflowEvent(
+    'manual_override',
+    'manual override',
+    'warning',
+  ),
+  operator_message: workflowEvent('operator_message', 'operator message'),
+  evidence_decision: workflowEvent(
+    'evidence_decision',
+    'evidence decision',
+  ),
+  execution_policy_updated: workflowEvent(
+    'execution_policy_updated',
+    'execution policy updated',
+  ),
+  output_decision: workflowEvent('output_decision', 'output decision'),
+  plan_updated: workflowEvent('plan_updated', 'plan updated', 'warning'),
+  task_contract_updated: workflowEvent(
+    'task_contract_updated',
+    'task contract updated',
+  ),
   model_loading: (e) => {
     const v = asRecord(e.v);
     return line(

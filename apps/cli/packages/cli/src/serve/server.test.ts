@@ -15137,7 +15137,15 @@ describe('runQwenServe', () => {
 
     // Open a long-lived SSE-like connection; without force-close the
     // listener's `server.close` would hang on this socket forever.
-    const sseFetch = fetch(`http://127.0.0.1:${port}/session/dangle/events`);
+    // Attach both settlement handlers immediately: force-closing the socket can
+    // reject fetch before close() resolves, which would otherwise surface as an
+    // unhandled rejection while this test is awaiting shutdown.
+    const sseFetch = fetch(
+      `http://127.0.0.1:${port}/session/dangle/events`,
+    ).then(
+      (response) => ({ response }),
+      (error: unknown) => ({ error }),
+    );
 
     // close() is expected to resolve in well under the 5s force-close
     // window — but well above 0ms because the timer arms after bridge
@@ -15153,11 +15161,9 @@ describe('runQwenServe', () => {
     // force-close timer would unblock us.
     expect(elapsed).toBeLessThan(5_500);
     // Drain the fetch promise so vitest doesn't complain about open handles.
-    try {
-      const res = await sseFetch;
-      await res.body?.cancel();
-    } catch {
-      /* socket may be torn down by force-close */
+    const fetchResult = await sseFetch;
+    if ('response' in fetchResult) {
+      await fetchResult.response.body?.cancel();
     }
   });
 

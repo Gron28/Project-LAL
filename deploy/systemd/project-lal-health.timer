@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Project-LAL daily health check
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=20m
+
+[Install]
+WantedBy=timers.target

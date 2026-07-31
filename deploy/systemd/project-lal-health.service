@@ -1,0 +1,9 @@
+[Unit]
+Description=Project-LAL read-only daily health check
+After=project-lal.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Desktop/local-ai-lab
+ExecStart=/usr/bin/env npm run health:daily
+Nice=10

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { activatePublicModel, allModels, publicModels, readSettings, writeSettings, servingModel, deleteModel, renameModel, contextProfileForModel, probePublicModelContext, modelScanRoots, localRuntimeAvailability, allModelRuntimeSettings, modelSettingsRevision, writeModelRuntimeSettings } from "@/lib/lab";
+import { activatePublicModel, allModels, publicModels, readSettings, writeSettings, servingModel, deleteModel, renameModel, contextProfileForModel, probePublicModelContext, modelScanRoots, localRuntimeAvailability, allModelRuntimeSettings, modelSettingsRevision, writeModelRuntimeSettings, resetModelRuntimeSettings } from "@/lib/lab";
 import { stopAllRuns } from "@/lib/runs";
 import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
 import { readOrRefreshLiveCapabilityRegistry, refreshLiveCapabilityRegistry } from "@/lib/capability-registry-live";
@@ -100,12 +100,19 @@ export async function PUT(req: NextRequest) {
   }
   let updatedModelSettings;
   if (b.modelSettings && typeof b.modelSettings === "object") {
-    const modelSettings = b.modelSettings as { model?: unknown; values?: unknown };
-    if (typeof modelSettings.model !== "string" || !modelSettings.values || typeof modelSettings.values !== "object") {
-      return NextResponse.json({ ok: false, error: "modelSettings requires model and values" }, { status: 400 });
+    const modelSettings = b.modelSettings as { model?: unknown; values?: unknown; reset?: unknown };
+    if (typeof modelSettings.model !== "string") {
+      return NextResponse.json({ ok: false, error: "modelSettings requires a model" }, { status: 400 });
     }
     try {
-      updatedModelSettings = writeModelRuntimeSettings(modelSettings.model, modelSettings.values as Record<string, unknown>);
+      if (modelSettings.reset === true) {
+        updatedModelSettings = resetModelRuntimeSettings(modelSettings.model);
+      } else {
+        if (!modelSettings.values || typeof modelSettings.values !== "object") {
+          return NextResponse.json({ ok: false, error: "modelSettings requires values or reset:true" }, { status: 400 });
+        }
+        updatedModelSettings = writeModelRuntimeSettings(modelSettings.model, modelSettings.values as Record<string, unknown>);
+      }
     } catch (error) {
       return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, { status: 400 });
     }

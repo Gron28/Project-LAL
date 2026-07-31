@@ -51,6 +51,16 @@ const debugLogger = createDebugLogger('STARTUP');
 // interactive conversation with no tool calls would never reclaim and could
 // grow toward the V8 heap limit. This interval closes that gap.
 const PRESSURE_CHECK_INTERVAL_MS = 30_000;
+let windowTitleExitHandlerInstalled = false;
+
+function clearWindowTitleOnExit() {
+  try {
+    writeTerminalTitle((value) => process.stdout.write(value), '');
+  } catch {
+    // Best-effort: clearing the title during exit must not produce
+    // a visible error (e.g. EPIPE if stdout is already closed).
+  }
+}
 
 export interface StartInteractiveUIOptions {
   postRenderConnectIde?: boolean;
@@ -277,12 +287,11 @@ function setWindowTitle(settings: LoadedSettings, folderName?: string) {
   const windowTitle = computeWindowTitle(folderName);
   writeTerminalTitle((value) => process.stdout.write(value), windowTitle);
 
-  process.on('exit', () => {
-    try {
-      writeTerminalTitle((value) => process.stdout.write(value), '');
-    } catch {
-      // Best-effort: clearing the title during exit must not produce
-      // a visible error (e.g. EPIPE if stdout is already closed).
-    }
-  });
+  // The UI can be mounted repeatedly in tests and by in-process relaunch
+  // flows. Keep one process-lifetime cleanup listener instead of accumulating
+  // an anonymous listener for every mount.
+  if (!windowTitleExitHandlerInstalled) {
+    process.on('exit', clearWindowTitleOnExit);
+    windowTitleExitHandlerInstalled = true;
+  }
 }

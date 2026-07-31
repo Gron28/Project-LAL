@@ -7,9 +7,14 @@ After=network-online.target
 Type=exec
 WorkingDirectory=%h/Desktop/local-ai-lab/web
 ExecStart=%h/Desktop/local-ai-lab/web/run_web.sh
+# Ask the live owner to terminate its model children before systemd signals the
+# web process. The leading "-" keeps shutdown available if the HTTP listener is
+# already gone (for example after a crash).
+ExecStop=-/usr/bin/curl --fail --silent --show-error --max-time 15 -X DELETE http://127.0.0.1:8770/api/sysinfo
 Restart=on-failure
 RestartSec=3
-TimeoutStopSec=15
+TimeoutStopSec=30
+SuccessExitStatus=0 143
 KillMode=control-group
 
 [Install]
