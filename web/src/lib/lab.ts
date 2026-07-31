@@ -964,8 +964,13 @@ export async function activatePublicModel(model: string, minContext = 0): Promis
     if (servingRuntimeStatus().backend === "llama.cpp") await stopAllServing();
     const runtimeProfile = managedOllamaModel(model);
     const verified = await verifyOllamaRuntime(runtimeProfile, requiredContext);
-    if (verified.context < requiredContext) {
-      throw new Error(`Ollama loaded ${model} with ${verified.context} context, expected at least ${requiredContext}`);
+    // Ollama may clamp the requested KV-cache size to the model/runtime's real
+    // maximum (for example, qwen3:0.6b reports 40,960 when Windows requests
+    // 65,536). Treat the backend's measured allocation as the effective context
+    // instead of rejecting an otherwise healthy model; downstream requests use
+    // this value so they cannot exceed what Ollama actually loaded.
+    if (!Number.isFinite(verified.context) || verified.context < 2_048) {
+      throw new Error(`Ollama reported an invalid context for ${model}: ${verified.context}`);
     }
     markOllamaServing(model, verified.context, verified.offload);
     const contextProfile = recordVerifiedContext(model, "ollama", requiredContext, verified.context, verified.offload);
