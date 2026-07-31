@@ -139,7 +139,7 @@ describe('useLoadingIndicator', () => {
     expect(result.current.elapsedTime).toBe(0);
   });
 
-  it('should pause elapsedTime while a tool is executing', async () => {
+  it('should keep counting wall-clock while a tool is executing', async () => {
     const { result, rerender } = renderHook(
       ({ isToolExecuting }) =>
         useLoadingIndicator(
@@ -162,10 +162,12 @@ describe('useLoadingIndicator', () => {
     });
     expect(result.current.elapsedTime).toBe(2);
 
+    // The displayed clock is a total-turn wall-clock: it keeps advancing
+    // through tool execution instead of freezing.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    expect(result.current.elapsedTime).toBe(2);
+    expect(result.current.elapsedTime).toBe(7);
 
     act(() => {
       rerender({ isToolExecuting: false });
@@ -173,7 +175,7 @@ describe('useLoadingIndicator', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(result.current.elapsedTime).toBe(3);
+    expect(result.current.elapsedTime).toBe(8);
   });
 
   it('should exclude tokens produced while a tool is executing from the rate baseline', async () => {

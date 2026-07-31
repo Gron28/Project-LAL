@@ -1,4 +1,4 @@
-import { activatePublicModel, allModels, beginGeneration, contextProfileForModel, isPublicModelName, modelRuntimeSettings, ollamaSupportsThinking, SERVE_PORT, touchServing } from "@/lib/lab";
+import { activatePublicModel, allModels, beginGeneration, contextProfileForModel, isPublicModelName, modelRuntimeSettings, ollamaSupportsThinking, OPENVINO_PORT, SERVE_PORT, touchServing } from "@/lib/lab";
 import { appendHostObservationForClientDevice } from "@/lib/runs";
 import { recordUsage } from "@/lib/usage-ledger";
 import { acquireCliGpuLease, cliAuthenticatedDeviceId, cliAuthorized, recordCliAccess, streamWithRelease, unauthorizedResponse } from "@/lib/lal-cli";
@@ -180,6 +180,7 @@ export async function POST(request: Request) {
   try {
     const runtime = await activatePublicModel(model);
     const isOllama = runtime.backend === "ollama";
+    const isOpenVino = runtime.backend === "openvino";
     const effectiveThinking = isOllama
       ? managedSettings.thinking && await ollamaSupportsThinking(runtime.runtimeProfile)
       : managedSettings.thinking;
@@ -217,6 +218,7 @@ export async function POST(request: Request) {
       ...(managedMaxTokens != null ? { max_tokens: managedMaxTokens } : {}),
       chat_template_kwargs: { ...priorTemplate, enable_thinking: effectiveThinking },
       ...(isOllama ? { think: effectiveThinking } : {}),
+      ...(modelInfo?.source === "openvino" ? { response_language: managedSettings.responseLanguage } : {}),
     };
     const droppedTools: string[] = [];
     const upstreamPayload = payload.stream === true
@@ -229,7 +231,7 @@ export async function POST(request: Request) {
           // native `n_probs` param bypasses that validation and still returns
           // OAI-shaped logprobs on streamed deltas (verified against b9835,
           // 2026-07-19) — so tool-carrying turns get the J-space signal too.
-          ...(!isOllama
+          ...(!isOllama && !isOpenVino
             ? hasTools
               ? { n_probs: 3 }
               : { logprobs: true, top_logprobs: 3 }
@@ -256,7 +258,8 @@ export async function POST(request: Request) {
     // vision model swap, and lens teardown.
     const endGeneration = beginGeneration();
     const releaseAll = () => { endGeneration(); release(); };
-    const upstream = await fetch(`${isOllama ? "http://127.0.0.1:11434" : `http://127.0.0.1:${SERVE_PORT}`}/v1/chat/completions`, {
+    const openAiPort = isOpenVino ? OPENVINO_PORT : SERVE_PORT;
+    const upstream = await fetch(`${isOllama ? "http://127.0.0.1:11434" : `http://127.0.0.1:${openAiPort}`}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", accept: request.headers.get("accept") ?? "application/json" },
       body: JSON.stringify({ ...upstreamPayload, model: upstreamModel }),

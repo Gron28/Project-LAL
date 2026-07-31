@@ -52,6 +52,10 @@ class LalLocalWindowsLauncherTest(unittest.TestCase):
         )
         self.assertIn("$env:OLLAMA_HOST = '127.0.0.1:11434'", script)
         self.assertIn("$env:OLLAMA_MODELS = $OllamaModels", script)
+        self.assertIn("$env:OLLAMA_VULKAN = '1'", script)
+        self.assertIn("$env:OLLAMA_IGPU_ENABLE = '1'", script)
+        self.assertIn("$env:LAL_OPENVINO_MODEL_ID = 'openvino/qwen3-8b-npu'", script)
+        self.assertIn("$env:LAL_OPENVINO_MAX_PROMPT_LEN = '2048'", script)
         self.assertIn(
             "$UserOllamaModels = Join-Path $env:USERPROFILE '.ollama\\models'",
             script,
@@ -64,6 +68,13 @@ class LalLocalWindowsLauncherTest(unittest.TestCase):
             "LAL_CLI_TOKEN",
             "LAL_MANAGED",
             "OLLAMA_MODELS",
+            "OLLAMA_VULKAN",
+            "OLLAMA_IGPU_ENABLE",
+            "LAL_OPENVINO_PYTHON",
+            "LAL_OPENVINO_MODEL_PATH",
+            "LAL_OPENVINO_MODEL_ID",
+            "LAL_OPENVINO_CACHE_DIR",
+            "LAL_OPENVINO_MAX_PROMPT_LEN",
         ):
             self.assertIn(f"'{name}'", script)
         self.assertIn("$PreviousEnvironment = Save-ProcessEnvironment", script)

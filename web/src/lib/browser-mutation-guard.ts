@@ -58,9 +58,32 @@ export function authorizeBrowserMutation(request: Request): BrowserMutationAutho
     return { ok: false, status: 403, code: "origin_invalid" };
   }
 
-  if (suppliedOrigin.origin !== targetOrigin) {
+  if (suppliedOrigin.origin !== targetOrigin && !sameLoopbackOrigin(suppliedOrigin.origin, targetOrigin)) {
     return { ok: false, status: 403, code: "origin_mismatch" };
   }
 
   return { ok: true };
+}
+
+// The launcher opens the browser at http://127.0.0.1:8771 while the Next dev
+// server reports its own origin as http://localhost:8771, so a strict string
+// compare rejected every save with origin_mismatch (observed live: all model
+// settings writes 403'd, settings.json never gained a modelSettings block).
+// 127.0.0.1, localhost, and ::1 are the same machine's loopback; treat them as
+// one origin when scheme and port match. CSRF protection is unaffected — a real
+// cross-site page's Origin is its own public host, never a loopback name.
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+function sameLoopbackOrigin(a: string, b: string): boolean {
+  try {
+    const ua = new URL(a);
+    const ub = new URL(b);
+    return (
+      ua.protocol === ub.protocol
+      && ua.port === ub.port
+      && LOOPBACK_HOSTS.has(ua.hostname)
+      && LOOPBACK_HOSTS.has(ub.hostname)
+    );
+  } catch {
+    return false;
+  }
 }

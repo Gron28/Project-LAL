@@ -13,6 +13,7 @@ type Options = {
   topK: number;
   repeatPenalty: number;
   thinking: boolean;
+  responseLanguage: "model" | "en" | "es";
 };
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -112,6 +113,12 @@ export default function LlmSettings({
               {think ? "On" : "Off"}
             </button>
           </Row>
+
+          {model.startsWith("openvino/") && <Row label="NPU response language" hint="This controls the OpenVINO request, not your Windows language.">
+            <select value={opts?.responseLanguage ?? "model"} onChange={(e) => save({ responseLanguage: e.target.value as Options["responseLanguage"] })} className="text-xs bg-[var(--bg,#0c0c0c)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-white outline-none">
+              <option value="model">Model default</option><option value="en">English</option><option value="es">Spanish</option>
+            </select>
+          </Row>}
 
           <Row label="Voice (read-aloud)" hint="SAM = retro robotic; SAM clear = old-school but understandable; Standard = the modern system voice.">
             <select

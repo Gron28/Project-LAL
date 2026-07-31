@@ -19,6 +19,7 @@ export type ModelRuntimeSettings = {
   topK: number;
   repeatPenalty: number;
   thinking: boolean;
+  responseLanguage: "model" | "en" | "es";
   updatedAt: string | null;
 };
 
@@ -31,7 +32,7 @@ export function modelDirectories(): string[] {
   return [...new Set([MODELS_DIR, path.join(resolvePlatformDirectories().data, "models")])];
 }
 export type ModelScanRoot = {
-  kind: "gguf" | "ollama";
+  kind: "gguf" | "ollama" | "openvino";
   path: string;
   exists: boolean;
   readable: boolean;
@@ -55,6 +56,14 @@ export function modelScanRoots(): ModelScanRoot[] {
     try { fs.accessSync(OLLAMA_STORE, fs.constants.R_OK); roots.push({ kind: "ollama", path: OLLAMA_STORE, exists: true, readable: true }); }
     catch (error) { roots.push({ kind: "ollama", path: OLLAMA_STORE, exists: true, readable: false, detail: error instanceof Error ? error.message : String(error) }); }
   }
+  if (OPENVINO_MODEL_PATH) {
+    const exists = fs.existsSync(OPENVINO_MODEL_PATH);
+    if (!exists) roots.push({ kind: "openvino", path: OPENVINO_MODEL_PATH, exists: false, readable: true });
+    else {
+      try { fs.accessSync(OPENVINO_MODEL_PATH, fs.constants.R_OK); roots.push({ kind: "openvino", path: OPENVINO_MODEL_PATH, exists: true, readable: true }); }
+      catch (error) { roots.push({ kind: "openvino", path: OPENVINO_MODEL_PATH, exists: true, readable: false, detail: error instanceof Error ? error.message : String(error) }); }
+    }
+  }
   return roots;
 }
 const LLAMA_DIR = path.join(ROOT, "llama", "llama-b9835");
@@ -65,10 +74,21 @@ const CONVOS_DIR = path.join(DATA, "conversations");
 const EXPERIMENTS_DIR = path.join(DATA, "experiments");
 const SETTINGS_FILE = path.join(DATA, "settings.json");
 export const SERVE_PORT = 8099;
+export const OPENVINO_PORT = 8100;
+const OPENVINO_PYTHON = process.env.LAL_OPENVINO_PYTHON || "";
+const OPENVINO_MODEL_PATH = process.env.LAL_OPENVINO_MODEL_PATH || "";
+const OPENVINO_MODEL_ID = process.env.LAL_OPENVINO_MODEL_ID || "openvino/qwen3-8b-npu";
+const OPENVINO_CACHE_DIR = process.env.LAL_OPENVINO_CACHE_DIR || path.join(ROOT, ".local-windows", "openvino-cache", "qwen3-8b-npu");
+// Qwen3-8B's exported architecture supports 40,960 positions. Do not impose
+// a smaller gateway cap: coding-agent system and tool context needs this room.
+const OPENVINO_MAX_PROMPT_LEN = Math.max(256, Number(process.env.LAL_OPENVINO_MAX_PROMPT_LEN) || 40960);
 export function localRuntimeAvailability() {
   return {
     llamaServer: fs.existsSync(LLAMA_SERVER) ? "available" as const : "missing" as const,
     ollamaStore: fs.existsSync(OLLAMA_STORE) ? "available" as const : "missing" as const,
+    openvinoNpu: OPENVINO_PYTHON && OPENVINO_MODEL_PATH && fs.existsSync(OPENVINO_PYTHON) && fs.existsSync(path.join(OPENVINO_MODEL_PATH, "openvino_model.bin"))
+      ? "available" as const
+      : "missing" as const,
   };
 }
 
@@ -100,7 +120,28 @@ export const DEFAULT_OPTIONS: Options = {
   num_ctx: 8192, num_predict: -1, num_gpu: null,
   temperature: 0.6, top_p: 0.9, top_k: 40, repeat_penalty: 1.1,
 };
-const WINDOWS_OLLAMA_CONTEXT = 8_192;
+// The Windows default is sized to the machine's total RAM instead of a flat 8K.
+// Native Windows Ollama (Vulkan/iGPU) allocates the KV cache from shared system
+// RAM, so a larger context is exactly what "engage the RAM" means here; Ollama
+// gracefully offloads layers to CPU rather than OOM-crashing when a big context
+// won't fit the iGPU budget, so the cost of a generous default is speed, not a
+// failed load. 8K left the KV cache tiny (fans never spun) and, with thinking on,
+// the window filled in a single turn — the "instantly runs out of tokens" report.
+// The user can still lower or raise this per model in the Models UI.
+function windowsOllamaContextDefault(): number {
+  const gib = os.totalmem() / 1024 ** 3;
+  if (gib < 12) return 32_768;
+  if (gib < 24) return 65_536;
+  if (gib < 48) return 131_072;
+  return 262_144;
+}
+const WINDOWS_OLLAMA_CONTEXT = windowsOllamaContextDefault();
+// How long native Ollama keeps a model resident after the last request. The old
+// "10m" forced a cold reload after any short pause — the "should load quicker"
+// report. On Windows nothing competes for the iGPU (llama-server is not used
+// here), so holding the model warm is free; elsewhere the shared-GPU box keeps
+// the shorter window so llama-server can reclaim VRAM.
+const OLLAMA_KEEP_ALIVE = process.platform === "win32" ? "60m" : "10m";
 type SettingsFile = {
   model?: string;
   options?: Partial<Options>;
@@ -157,9 +198,11 @@ export function modelRuntimeSettings(model: string): ModelRuntimeSettings {
   const saved = settings.modelSettings[model] ?? {};
   const nativeMaximum = nativeContextLimit(model);
   const info = publicModels().find((item) => item.name === model);
-  const safeUnsavedDefault = info?.source === "local"
-    ? Math.min(32_768, nativeMaximum ?? 32_768)
-    : process.platform === "win32" ? WINDOWS_OLLAMA_CONTEXT : OLLAMA_CLI_CONTEXT;
+  const safeUnsavedDefault = info?.source === "openvino"
+    ? nativeMaximum ?? 40_960
+    : info?.source === "local"
+      ? Math.min(32_768, nativeMaximum ?? 32_768)
+      : process.platform === "win32" ? WINDOWS_OLLAMA_CONTEXT : OLLAMA_CLI_CONTEXT;
   const fallbackContext = Math.max(safeUnsavedDefault, settings.options.num_ctx || DEFAULT_OPTIONS.num_ctx);
   const contextMaximum = nativeMaximum ?? 1_048_576;
   return {
@@ -171,6 +214,7 @@ export function modelRuntimeSettings(model: string): ModelRuntimeSettings {
     topK: Math.round(finiteNumber(saved.topK, settings.options.top_k, 0, 10_000)),
     repeatPenalty: finiteNumber(saved.repeatPenalty, settings.options.repeat_penalty, 0, 2),
     thinking: typeof saved.thinking === "boolean" ? saved.thinking : true,
+    responseLanguage: saved.responseLanguage === "en" || saved.responseLanguage === "es" ? saved.responseLanguage : "model",
     updatedAt: typeof saved.updatedAt === "string" ? saved.updatedAt : null,
   };
 }
@@ -188,6 +232,7 @@ export function writeModelRuntimeSettings(model: string, patch: Partial<ModelRun
     topK: Math.round(finiteNumber(patch.topK, current.topK, 0, 10_000)),
     repeatPenalty: finiteNumber(patch.repeatPenalty, current.repeatPenalty, 0, 2),
     thinking: typeof patch.thinking === "boolean" ? patch.thinking : current.thinking,
+    responseLanguage: patch.responseLanguage === "en" || patch.responseLanguage === "es" ? patch.responseLanguage : current.responseLanguage,
     updatedAt: new Date().toISOString(),
   };
   writeSettings({ modelSettings: { [model]: next } });
@@ -241,7 +286,7 @@ export function renameModel(oldName: string, newName: string): { ok: boolean; er
   }
 }
 
-export type ModelInfo = { name: string; source: "local" | "ollama"; path: string; gb: number };
+export type ModelInfo = { name: string; source: "local" | "ollama" | "openvino"; path: string; gb: number };
 // Context-agnostic on purpose. The suffix used to be "-lal-cli-16k" and the
 // number in the NAME is exactly what rotted when the value changed, so it no
 // longer encodes one.
@@ -303,7 +348,8 @@ export function isPublicModelName(name: string): boolean {
 export function publicModels(): ModelInfo[] {
   return allModels().filter((model) => isPublicModelName(model.name));
 }
-function preferredRuntimeBackend(model: ModelInfo | undefined): "ollama" | "llama.cpp" {
+function preferredRuntimeBackend(model: ModelInfo | undefined): "ollama" | "llama.cpp" | "openvino" {
+  if (model?.source === "openvino") return "openvino";
   // Linux keeps its measured llama.cpp/Vulkan path for most Ollama blobs.
   // The Windows checkout does not ship that Linux runtime, so every model
   // installed through Ollama must stay behind Ollama's native Windows server.
@@ -350,13 +396,22 @@ export function allModels(): ModelInfo[] {
     }
   };
   walk(base);
+  if (OPENVINO_MODEL_PATH && fs.existsSync(path.join(OPENVINO_MODEL_PATH, "openvino_model.bin"))) {
+    let bytes = 0;
+    try {
+      for (const entry of fs.readdirSync(OPENVINO_MODEL_PATH, { withFileTypes: true })) {
+        if (entry.isFile()) bytes += fs.statSync(path.join(OPENVINO_MODEL_PATH, entry.name)).size;
+      }
+    } catch {}
+    out.push({ name: OPENVINO_MODEL_ID, source: "openvino", path: path.join(OPENVINO_MODEL_PATH, "openvino_model.bin"), gb: +(bytes / 1e9).toFixed(1) });
+  }
   return out;
 }
 
 // ---- llama-server singleton (persists across requests in one Node process) ----
-type Srv = { proc: ChildProcess | null; model: string | null; ollamaModel: string | null; ollamaCtx?: number; ollamaOffload?: string | null; lastUsedAt?: number; loras: ServingLora[]; ctx: number; offload?: string | null; inflight?: number };
+type Srv = { proc: ChildProcess | null; model: string | null; localBackend?: "llama.cpp" | "openvino" | null; ollamaModel: string | null; ollamaCtx?: number; ollamaOffload?: string | null; lastUsedAt?: number; loras: ServingLora[]; ctx: number; offload?: string | null; inflight?: number };
 const g = globalThis as unknown as { __lab_srv?: Srv; __lab_idle_reaper?: ReturnType<typeof setInterval> };
-if (!g.__lab_srv) g.__lab_srv = { proc: null, model: null, ollamaModel: null, loras: [], ctx: 0 };
+if (!g.__lab_srv) g.__lab_srv = { proc: null, model: null, localBackend: null, ollamaModel: null, loras: [], ctx: 0 };
 const srv = g.__lab_srv;
 if (!Array.isArray(srv.loras)) srv.loras = [];
 if (!Number.isFinite(srv.ctx)) srv.ctx = 0;
@@ -447,7 +502,7 @@ export async function parkServing(waitMs = RESTART_DRAIN_MS): Promise<boolean> {
 export function stopServing(force = true): boolean {
   if (!force && generationsInFlight() > 0) return false;
   killServerProcess();
-  srv.proc = null; srv.model = null; srv.loras = []; srv.ctx = 0; srv.offload = null;
+  srv.proc = null; srv.model = null; srv.localBackend = null; srv.loras = []; srv.ctx = 0; srv.offload = null;
   return true;
 }
 
@@ -521,11 +576,11 @@ export function servingRuntimeStatus() {
     alive: (!!srv.proc && srv.proc.exitCode === null) || !!srv.ollamaModel,
     model: servingModel(),
     context: srv.model ? srv.ctx || null : srv.ollamaCtx ?? null,
-    backend: srv.model ? "llama.cpp" : srv.ollamaModel ? "ollama" : null,
+    backend: srv.model ? srv.localBackend ?? "llama.cpp" : srv.ollamaModel ? "ollama" : null,
     gpuOffload: srv.model ? srv.offload ?? null : srv.ollamaOffload ?? null,
     loras: srv.loras.map((adapter) => adapter.key),
     lastUsedAt: srv.lastUsedAt ?? null,
-    logPath: path.join(ROOT, "out", "llama-server.log"),
+    logPath: path.join(ROOT, "out", srv.localBackend === "openvino" ? "openvino-npu.log" : "llama-server.log"),
   };
 }
 
@@ -589,13 +644,13 @@ export async function stopAllServing(): Promise<void> {
 export type ActivatedModelRuntime = {
   model: string;
   runtimeProfile: string;
-  backend: "ollama" | "llama.cpp";
+  backend: "ollama" | "llama.cpp" | "openvino";
   context: number;
   gpuOffload: string;
   contextProfile: ContextProfile;
 };
 
-function contextIdentity(model: string, backend: "ollama" | "llama.cpp"): string {
+function contextIdentity(model: string, backend: "ollama" | "llama.cpp" | "openvino"): string {
   const info = publicModels().find((item) => item.name === model);
   let artifact = `${info?.path ?? model}:unknown`;
   try {
@@ -606,6 +661,7 @@ function contextIdentity(model: string, backend: "ollama" | "llama.cpp"): string
   if (backend === "llama.cpp") {
     try { const stat = fs.statSync(LLAMA_SERVER); runtime = `${backend}:${stat.size}:${stat.mtimeMs}`; } catch {}
   }
+  if (backend === "openvino") runtime = `${backend}:${OPENVINO_PYTHON}:${OPENVINO_MAX_PROMPT_LEN}`;
   return crypto.createHash("sha256").update(`${artifact}\n${contextHardwareFingerprint(runtime)}`).digest("hex");
 }
 
@@ -634,7 +690,10 @@ export async function ollamaSupportsThinking(model: string): Promise<boolean> {
 
 function nativeContextLimit(model: string): number | null {
   const info = publicModels().find((item) => item.name === model);
-  if (!info || preferredRuntimeBackend(info) === "ollama") return null;
+  if (!info) return null;
+  const backend = preferredRuntimeBackend(info);
+  if (backend === "ollama") return null;
+  if (backend === "openvino") return OPENVINO_MAX_PROMPT_LEN;
   try {
     const stat = fs.statSync(info.path), key = `${info.path}:${stat.size}:${stat.mtimeMs}`;
     if (nativeContextCache.has(key)) return nativeContextCache.get(key) ?? null;
@@ -679,7 +738,7 @@ export function resolvedContextTarget(model: string, minimum = 0): number {
   return profile.modelMaxTokens ? Math.min(requested, profile.modelMaxTokens) : requested;
 }
 
-function recordVerifiedContext(model: string, backend: "ollama" | "llama.cpp", requested: number, active: number, offload: string): ContextProfile {
+function recordVerifiedContext(model: string, backend: "ollama" | "llama.cpp" | "openvino", requested: number, active: number, offload: string): ContextProfile {
   const previous = contextProfileForModel(model);
   const profile = makeContextProfile({
     model, backend, modelMaxTokens: previous.modelMaxTokens,
@@ -722,7 +781,7 @@ export async function verifyOllamaRuntime(model: string, requestedContext = OLLA
   const loaded = await fetch("http://127.0.0.1:11434/api/generate", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model, prompt: "", stream: false, keep_alive: "10m", options: { num_ctx: requestedContext, num_predict: 1 } }),
+    body: JSON.stringify({ model, prompt: "", stream: false, keep_alive: OLLAMA_KEEP_ALIVE, options: { num_ctx: requestedContext, num_predict: 1 } }),
     signal: AbortSignal.timeout(180_000),
   });
   if (!loaded.ok) throw new Error(`Ollama failed to load ${model}: HTTP ${loaded.status}`);
@@ -739,6 +798,74 @@ export async function verifyOllamaRuntime(model: string, requestedContext = OLLA
   const sizeVram = runtime.size_vram ?? 0;
   const offload = sizeVram > 0 ? `gpu:${Math.round((sizeVram / Math.max(1, size)) * 100)}%` : "cpu";
   return { context: context || requestedContext, offload };
+}
+
+async function ensureOpenVinoServing(model: string, context: number): Promise<void> {
+  const current = servingRuntimeStatus();
+  if (
+    current.alive &&
+    current.model === model &&
+    current.backend === "openvino" &&
+    (current.context ?? 0) >= context
+  ) {
+    touchServing();
+    return;
+  }
+  if (!OPENVINO_PYTHON || !fs.existsSync(OPENVINO_PYTHON)) {
+    throw new Error("OpenVINO NPU Python runtime is not installed.");
+  }
+  if (!OPENVINO_MODEL_PATH || !fs.existsSync(path.join(OPENVINO_MODEL_PATH, "openvino_model.bin"))) {
+    throw new Error(`OpenVINO NPU model is missing: ${OPENVINO_MODEL_PATH || "not configured"}`);
+  }
+  try {
+    const occupied = await fetch(`http://127.0.0.1:${OPENVINO_PORT}/health`, { signal: AbortSignal.timeout(1_000) });
+    if (occupied.ok && !srv.proc) throw new Error(`OpenVINO port ${OPENVINO_PORT} is owned by an unmanaged process.`);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("unmanaged process")) throw error;
+  }
+  stopServing();
+  await unloadOllamaAll();
+  fs.mkdirSync(path.join(ROOT, "out"), { recursive: true });
+  const logPath = path.join(ROOT, "out", "openvino-npu.log");
+  const logFd = fs.openSync(logPath, "a");
+  const serverScript = path.join(ROOT, "scripts", "openvino_npu_server.py");
+  const proc = spawn(OPENVINO_PYTHON, [
+    serverScript,
+    "--model-path", OPENVINO_MODEL_PATH,
+    "--model-id", OPENVINO_MODEL_ID,
+    "--cache-dir", OPENVINO_CACHE_DIR,
+    "--max-prompt-len", String(OPENVINO_MAX_PROMPT_LEN),
+    "--port", String(OPENVINO_PORT),
+  ], {
+    cwd: ROOT,
+    env: process.env,
+    detached: false,
+    windowsHide: true,
+    stdio: ["ignore", logFd, logFd],
+  });
+  fs.closeSync(logFd);
+  srv.proc = proc;
+  srv.model = model;
+  srv.localBackend = "openvino";
+  srv.ctx = context;
+  srv.offload = "npu:100%";
+  srv.loras = [];
+  // NPU compilation scales sharply with the configured prompt length. 4k
+  // takes roughly 90 seconds on the Windows laptop, so do not fail early.
+  const deadline = Date.now() + 180_000;
+  while (Date.now() < deadline && proc.exitCode === null) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${OPENVINO_PORT}/health`, { signal: AbortSignal.timeout(2_000) });
+      const body = response.ok ? await response.json() as { model?: string; device?: string } : {};
+      if (response.ok && body.model === OPENVINO_MODEL_ID && body.device === "NPU") {
+        touchServing();
+        return;
+      }
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  stopServing();
+  throw new Error(`OpenVINO NPU server failed to start. Inspect ${logPath}.`);
 }
 
 /** Single-GPU model handoff used by both settings switches and inference. */
@@ -764,6 +891,23 @@ export async function activatePublicModel(model: string, minContext = 0): Promis
     (current.context ?? 0) >= requiredContext;
   if (!canReuseCurrent) {
     await stopAllServing();
+  }
+
+  if (expectedBackend === "openvino") {
+    await ensureOpenVinoServing(model, requiredContext);
+    const verified = servingRuntimeStatus();
+    if (!verified.alive || verified.model !== model || verified.backend !== "openvino") {
+      throw new Error(`OpenVINO reported ready without the requested model ${model}`);
+    }
+    const contextProfile = recordVerifiedContext(model, "openvino", requiredContext, requiredContext, "npu:100%");
+    return {
+      model,
+      runtimeProfile: OPENVINO_MODEL_ID,
+      backend: "openvino",
+      context: requiredContext,
+      gpuOffload: "npu:100%",
+      contextProfile,
+    };
   }
 
   if (expectedBackend === "ollama") {
@@ -807,7 +951,8 @@ export async function probePublicModelContext(model: string, emit?: (profile: Co
       // Passing the candidate bypasses no limit: activatePublicModel clamps to
       // native metadata and verifies the backend-reported allocation.
       const runtime = await activatePublicModel(model, candidate);
-      const smoke = await fetch(runtime.backend === "ollama" ? "http://127.0.0.1:11434/api/chat" : `http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
+      const openAiPort = runtime.backend === "openvino" ? OPENVINO_PORT : SERVE_PORT;
+      const smoke = await fetch(runtime.backend === "ollama" ? "http://127.0.0.1:11434/api/chat" : `http://127.0.0.1:${openAiPort}/v1/chat/completions`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(runtime.backend === "ollama"
           ? { model: runtime.runtimeProfile, messages: [{ role: "user", content: "Reply OK" }], stream: false, options: { num_ctx: candidate, num_predict: 1 }, keep_alive: -1 }
@@ -958,7 +1103,7 @@ export async function ensureServing(model: string, minCtx = 0, loras: ServingLor
       ["-m", mi.path, "-ngl", String(ngl), "--host", "127.0.0.1", "--port", String(SERVE_PORT), "-c", ctxArg, "--jinja", ...longContextArgs, ...loraArgs],
       { env, stdio: logFd === undefined ? "ignore" : ["ignore", logFd, logFd] });
     if (logFd !== undefined) try { fs.closeSync(logFd); } catch {}
-    srv.proc = proc; srv.model = model; srv.loras = normalizedLoras; srv.ctx = ctx;
+    srv.proc = proc; srv.model = model; srv.localBackend = "llama.cpp"; srv.loras = normalizedLoras; srv.ctx = ctx;
     srv.offload = ngl === 0 ? "cpu" : `gpu:${ngl}-layers`;
     const deadline = Date.now() + waitMs;
     while (Date.now() < deadline) {
@@ -1144,7 +1289,7 @@ function seedSuites() {
   catch { return; }
   if (!existing.has("fractal")) saveSuite("fractal", "Fractal (facts · logic · code)", FRACTAL_SUITE);
   if (!existing.has("general")) saveSuite("general", "General (math · lore)", BENCH_SUITE);
-  for (const id of ["coding", "planning", "agentic", "instruct", "webgen", "orchestrator", "open-inquiry"]) {
+  for (const id of ["coding", "planning", "research", "agentic", "instruct", "webgen", "orchestrator", "open-inquiry"]) {
     if (existing.has(id)) continue;
     const s = loadSeedSuite(id);
     if (s) saveSuite(id, s.label, s.items, { grade: s.grade, maxTokens: s.maxTokens, think: s.think });
@@ -1341,11 +1486,16 @@ export async function runBench(model: string, items: BenchItem[] = BENCH_SUITE, 
   // lab's llama-server (b9835) is too old to load newer architectures. Local GGUFs
   // (our trained models) still use the lab llama-server.
   const isOllama = mi0?.source === "ollama";
+  const isOpenVino = mi0?.source === "openvino";
   let baseUrl: string;
   if (isOllama) {
     stopServing();                                // free VRAM so ollama can use the GPU
     baseUrl = "http://127.0.0.1:11434";
     srv.ollamaModel = model;
+  } else if (isOpenVino) {
+    if (opts.lora) throw new Error("OpenVINO NPU serving does not support runtime LoRA adapters");
+    await activatePublicModel(model);
+    baseUrl = `http://127.0.0.1:${OPENVINO_PORT}`;
   } else {
     if (srv.ollamaModel) { await stopOllama(srv.ollamaModel); srv.ollamaModel = null; }
     await ensureServing(model, maxTokens > 4096 ? maxTokens + 1024 : 0, opts.lora ? [opts.lora] : []);

@@ -22,10 +22,11 @@ type ModelRuntimeSettings = {
   topK: number;
   repeatPenalty: number;
   thinking: boolean;
+  responseLanguage: "model" | "en" | "es";
   updatedAt: string | null;
 };
-type Model = { name: string; source: "local" | "ollama"; path: string; gb: number };
-type ScanRoot = { kind: "gguf" | "ollama"; path: string; exists: boolean; readable: boolean; detail?: string };
+type Model = { name: string; source: "local" | "ollama" | "openvino"; path: string; gb: number };
+type ScanRoot = { kind: "gguf" | "ollama" | "openvino"; path: string; exists: boolean; readable: boolean; detail?: string };
 type Inventory = {
   state: "loading" | "ready" | "empty" | "failed";
   models: Model[];
@@ -33,7 +34,7 @@ type Inventory = {
   scannedAt?: string;
   roots: ScanRoot[];
   diagnostics: string[];
-  backend?: { serving: string | null; llamaServer: string; ollamaStore: string };
+  backend?: { serving: string | null; llamaServer: string; ollamaStore: string; openvinoNpu: string };
   server?: { origin: string; buildId: string };
 };
 type InventoryEnvelope = { inventory?: Inventory; contextProfiles?: Record<string, ContextProfile | null>; modelSettings?: Record<string, ModelRuntimeSettings>; settingsRevision?: string; error?: string };
@@ -200,10 +201,10 @@ export default function ModelsPage() {
             <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm" style={{ color: isDefault ? "var(--accent-ai)" : undefined }}>{model.name}</span>{isDefault && <span className="text-[9px] border border-[var(--accent-ai)] text-[var(--accent-ai)] rounded-full px-1.5 py-0.5">DEFAULT</span>}{isActive && <span className="text-[9px] border border-[var(--accent-success)] text-[var(--accent-success)] rounded-full px-1.5 py-0.5">RESIDENT</span>}</div>
-                <div className="mt-1 text-[10px] text-[var(--muted)]">{model.source} · {model.gb} GB · requested {tokens(profile?.requestedTokens)}, active {tokens(profile?.activeTokens)}, verified {tokens(profile?.verifiedTokens)}, native max {tokens(profile?.modelMaxTokens)}</div>
+                <div className="mt-1 text-[10px] text-[var(--muted)]">{model.source === "openvino" ? "OpenVINO NPU" : model.source === "ollama" ? "Ollama" : "llama.cpp / GGUF"} · {model.gb} GB · requested {tokens(profile?.requestedTokens)}, active {tokens(profile?.activeTokens)}, verified {tokens(profile?.verifiedTokens)}, native max {tokens(profile?.modelMaxTokens)}</div>
                 {profile?.reason && <div className="mt-1 text-[10px] text-[var(--muted)]">{profile.reason}</div>}
               </div>
-              <div className="flex flex-wrap gap-1.5">{!isDefault && <button className={button} disabled={!!busy} onClick={() => void mutateModel("default", model)}>Set default</button>}<button className={button} disabled={!!busy} onClick={() => void mutateModel("use", model)}>Load now</button><button className={button} disabled={!!busy} title="Probe 32K, 64K, and 128K context allocations with real inference" onClick={() => void mutateModel("probe", model)}>{busy === `probe:${model.name}` ? "Optimizing…" : "Optimize context"}</button>{model.source === "local" && <a className={button} href={`/api/download?model=${encodeURIComponent(model.name)}`}><Download size={12} /> Export</a>}<button className={button} disabled={!!busy} onClick={() => void mutateModel("delete", model)}><Trash2 size={12} /></button></div>
+              <div className="flex flex-wrap gap-1.5">{!isDefault && <button className={button} disabled={!!busy} onClick={() => void mutateModel("default", model)}>Set default</button>}<button className={button} disabled={!!busy} onClick={() => void mutateModel("use", model)}>Load now</button><button className={button} disabled={!!busy} title="Probe 32K, 64K, and 128K context allocations with real inference" onClick={() => void mutateModel("probe", model)}>{busy === `probe:${model.name}` ? "Optimizing…" : "Optimize context"}</button>{model.source === "local" && <a className={button} href={`/api/download?model=${encodeURIComponent(model.name)}`}><Download size={12} /> Export</a>}{model.source !== "openvino" && <button className={button} disabled={!!busy} onClick={() => void mutateModel("delete", model)}><Trash2 size={12} /></button>}</div>
             </div>
             {settings && <div className="grid gap-3 rounded-[var(--r-md)] border border-[var(--border-soft)] bg-[var(--surface-2)] p-3 md:grid-cols-2 xl:grid-cols-4">
               <label className="text-[10px] text-[var(--muted)]">Maximum context
@@ -219,6 +220,12 @@ export default function ModelsPage() {
                 <button type="button" className={`${button} mt-1 w-full ${settings.thinking ? "border-[var(--accent-ai)] text-[var(--accent-ai)]" : ""}`} onClick={() => editModelSettings(model.name, { thinking: !settings.thinking })}>{settings.thinking ? "On" : "Off"}</button>
                 <span className="mt-1 block">Default for Chat, Agent, and CLI requests.</span>
               </div>
+              {model.source === "openvino" && <label className="text-[10px] text-[var(--muted)]">Response language
+                <select className={`${input} mt-1`} value={settings.responseLanguage} onChange={(event) => editModelSettings(model.name, { responseLanguage: event.target.value as ModelRuntimeSettings["responseLanguage"] })}>
+                  <option value="model">Model default</option><option value="en">English</option><option value="es">Spanish</option>
+                </select>
+                <span className="mt-1 block">Adds an explicit language instruction to the OpenVINO request; it does not change Windows.</span>
+              </label>}
               <div className="flex flex-col justify-between gap-2">
                 <div className="grid grid-cols-2 gap-2 text-[10px] text-[var(--muted)]"><label>Top P<input className={`${input} mt-1`} type="number" min={0} max={1} step={0.05} value={settings.topP} onChange={(event) => editModelSettings(model.name, { topP: Number(event.target.value) })} /></label><label>Max output<input className={`${input} mt-1`} type="number" min={-1} step={1024} value={settings.maxOutputTokens} onChange={(event) => editModelSettings(model.name, { maxOutputTokens: Number(event.target.value) })} /></label></div>
                 <button className={button} disabled={!!busy} onClick={() => void saveModelSettings(model)}>{busy === `settings:${model.name}` ? "Saving…" : "Save and sync"}</button>

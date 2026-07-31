@@ -227,7 +227,14 @@ export async function runToolLoop(opts: {
   const { baseUrl, model, exec, onEvent } = opts;
   const tools = opts.tools ?? TOOL_DEFS;
   const maxRounds = opts.maxRounds ?? 15;
-  const maxTokens = opts.maxTokens ?? 8192;
+  // A write_file/edit_file round must be able to emit a whole file, so any round
+  // whose toolset includes a mutation tool is guaranteed at least this many
+  // completion tokens (bounded only by the room left in ctx), regardless of the
+  // caller's per-round reasoning cap or a finite "Max output" setting. This is the
+  // "a file write gets at least ~40k tokens" guarantee: a small maxTokens still
+  // caps reasoning/research rounds, but never strangles a file write mid-write.
+  const MIN_COMPLETION_TOKENS = 40_960;
+  const maxTokens = opts.maxTokens ?? MIN_COMPLETION_TOKENS;
   const messages = opts.messages.slice();
   // Silence detector: if the whole run produces neither visible text nor one
   // successful tool call, ending "done" would be a lie the user experiences as
@@ -295,7 +302,12 @@ export async function runToolLoop(opts: {
     const roundTools = forceMutationTool
       ? tools.filter((tool) => tool.function.name === "write_file" || tool.function.name === "edit_file")
       : tools;
-    const body: Record<string, unknown> = { model, messages, tools: roundTools, stream: true, stream_options: { include_usage: true }, temperature: opts.temperature ?? 0, max_tokens: maxTokens };
+    // A round that can call write_file/edit_file gets the full completion floor so
+    // a generated file is never cut off; every other round keeps the smaller
+    // anti-runaway cap so a reasoning chain can't eat the whole context.
+    const wantsWriteRoom = roundTools.some((tool) => tool.function.name === "write_file" || tool.function.name === "edit_file");
+    const roundMaxTokens = wantsWriteRoom ? Math.max(maxTokens, MIN_COMPLETION_TOKENS) : maxTokens;
+    const body: Record<string, unknown> = { model, messages, tools: roundTools, stream: true, stream_options: { include_usage: true }, temperature: opts.temperature ?? 0, max_tokens: roundMaxTokens };
     // A mutation-stage contract is not satisfied by prose.  Coder v2 proved it
     // can emit native calls when required, but otherwise sometimes describes the
     // intended edit and stops.  Require a tool turn until the first successful
@@ -317,10 +329,9 @@ export async function runToolLoop(opts: {
       // Reserve only the minimum viable completion here. The actual request is
       // clamped below to the room left after the current prompt; reserving a
       // fixed 30% of the context rejected otherwise-valid tool turns early.
-      // The floor is 40960 (not the old 512) so a write_file/edit call generating
-      // a whole file never gets cut off mid-generation while there is genuinely
-      // room left in ctx — modes now serve at ctx:65536 to make room for this.
-      const MIN_COMPLETION_TOKENS = 40_960;
+      // The floor is MIN_COMPLETION_TOKENS (not the old 512) so a write_file/edit
+      // call generating a whole file never gets cut off mid-generation while there
+      // is genuinely room left in ctx — modes serve at ctx:65536 to make room.
       const reserveTokens = MIN_COMPLETION_TOKENS + 1024;
       if (estimatedTokens + reserveTokens >= opts.ctx) {
         // Try shrinking before failing: old tool outputs are the bulk of a long
@@ -338,7 +349,7 @@ export async function runToolLoop(opts: {
       // Fit the actual request to the remaining context after tool schemas and
       // transcript content. A fixed reservation can otherwise pass preflight
       // while the backend rejects the request as "too many tokens".
-      body.max_tokens = Math.min(maxTokens, Math.max(MIN_COMPLETION_TOKENS, opts.ctx - estimatedTokens - 1024));
+      body.max_tokens = Math.min(roundMaxTokens, Math.max(MIN_COMPLETION_TOKENS, opts.ctx - estimatedTokens - 1024));
     }
     // llama-server occasionally returns a transient 5xx immediately after a
     // long/truncated tool-call turn. Retrying the exact idempotent inference
@@ -577,9 +588,9 @@ export async function runToolLoop(opts: {
         // that's an empty-string content, for run_shell an empty command that
         // "succeeds" doing nothing — and the model never learns its own call
         // was truncated, so it can't retry correctly. Refuse to run and say why.
-        output = "error: tool call arguments were truncated, malformed, or repetitive — the tool was NOT run. Keep each write_file content below 6000 characters. Split the implementation into smaller files/components, or write a short valid base file and extend it with bounded edit_file calls. Do not repeat the same oversized call.";
+        output = "error: tool call arguments were truncated, malformed, or repetitive — the tool was NOT run. A single write_file may emit a large file (tens of thousands of tokens), but if one file is genuinely huge, split the implementation into smaller files/components, or write a valid base file and extend it with bounded edit_file calls. Do not repeat the same oversized call.";
       } else if (priorFailure) {
-        output = `error: this exact ${c.name} call already failed and repeating it cannot produce new information. Original result: ${priorFailure.originalOutput}. Change strategy now. If the path was missing, do not read it again—create the required file with write_file (under 6000 characters).`;
+        output = `error: this exact ${c.name} call already failed and repeating it cannot produce new information. Original result: ${priorFailure.originalOutput}. Change strategy now. If the path was missing, do not read it again—create the required file with write_file.`;
       } else if (validateToolArguments(c.name, args)) {
         output = "error: invalid tool arguments — " + validateToolArguments(c.name, args) + ". The tool was NOT run; retry with the required fields." + toolCallExample(c.name);
       } else if (isDuplicateMutationCall) {

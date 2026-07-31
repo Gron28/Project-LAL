@@ -21,6 +21,9 @@ $LocalRuntime = Join-Path $StateRoot 'runtime'
 $TokenFile = Join-Path $StateRoot 'cli-token'
 $WebLog = Join-Path $StateRoot 'web.log'
 $WebErrorLog = Join-Path $StateRoot 'web.error.log'
+$OpenVinoPython = Join-Path $StateRoot 'npu-env\Scripts\python.exe'
+$OpenVinoModel = Join-Path $StateRoot 'models\openvino-qwen3-8b-int4-cw'
+$OpenVinoCache = Join-Path $StateRoot 'openvino-cache\qwen3-8b-npu'
 $GatewayUrl = 'http://127.0.0.1:8771'
 $GatewayHealthUrl = "$GatewayUrl/api/agent/models"
 $WebProcess = $null
@@ -69,7 +72,20 @@ function Assert-LoopbackListener {
   param([int]$Port, [string]$Name)
   $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)
   if ($listeners.Count -eq 0) {
-    throw "$Name answered on port $Port, but its listener binding could not be verified."
+    $netstatListeners = @(
+      & netstat.exe -ano -p tcp |
+        Select-String -Pattern "^\s*TCP\s+\S*:$Port\s+\S+\s+LISTENING\s+\d+\s*$"
+    )
+    if ($netstatListeners.Count -eq 0) {
+      throw "$Name answered on port $Port, but its listener binding could not be verified."
+    }
+    $nonLoopback = @($netstatListeners | Where-Object {
+      $_ -notmatch "^\s*TCP\s+(127\.0\.0\.1|\[::1\]|::1):$Port\s+"
+    })
+    if ($nonLoopback.Count -gt 0) {
+      throw "$Name is exposed beyond loopback on port $Port. Refusing to use it."
+    }
+    return
   }
   $nonLoopback = @($listeners | Where-Object { $_.LocalAddress -notin @('127.0.0.1', '::1') })
   if ($nonLoopback.Count -gt 0) {
@@ -84,7 +100,7 @@ function Save-ProcessEnvironment {
     $exists = Test-Path -LiteralPath "Env:\$name"
     $snapshot[$name] = @{
       Exists = $exists
-      Value = if ($exists) { (Get-Item -LiteralPath "Env:\$name").Value } else { $null }
+      Value = if ($exists) { [Environment]::GetEnvironmentVariable($name, 'Process') } else { $null }
     }
   }
   return $snapshot
@@ -100,6 +116,12 @@ function Restore-ProcessEnvironment {
       Remove-Item -LiteralPath "Env:\$name" -ErrorAction SilentlyContinue
     }
   }
+}
+
+function Normalize-ProcessPath {
+  $pathValue = [Environment]::GetEnvironmentVariable('Path', 'Process')
+  Remove-Item -LiteralPath 'Env:\PATH' -ErrorAction SilentlyContinue
+  $env:Path = $pathValue
 }
 
 function Resolve-ApplicationCommand {
@@ -177,10 +199,19 @@ $OverriddenEnvironmentNames = @(
   'LAL_API_KEY',
   'LAL_CLI_TOKEN',
   'LAL_MANAGED',
-  'OLLAMA_MODELS'
+  'OLLAMA_MODELS',
+  'OLLAMA_VULKAN',
+  'OLLAMA_IGPU_ENABLE',
+  'OLLAMA_KEEP_ALIVE',
+  'LAL_OPENVINO_PYTHON',
+  'LAL_OPENVINO_MODEL_PATH',
+  'LAL_OPENVINO_MODEL_ID',
+  'LAL_OPENVINO_CACHE_DIR',
+  'LAL_OPENVINO_MAX_PROMPT_LEN'
 )
 $PreviousEnvironment = Save-ProcessEnvironment $OverriddenEnvironmentNames
 try {
+  Normalize-ProcessPath
   $env:LAL_HOME = $CliHome
   $env:QWEN_HOME = $CliHome
   $env:LAL_GATEWAY_URL = $GatewayUrl
@@ -188,6 +219,21 @@ try {
   $env:LAL_CLI_TOKEN = $Token
   $env:LAL_MANAGED = '1'
   $env:OLLAMA_MODELS = $OllamaModels
+  $env:OLLAMA_VULKAN = '1'
+  $env:OLLAMA_IGPU_ENABLE = '1'
+  # Keep a loaded model resident for an hour after its last use. Ollama's default
+  # (5 minutes) forced a cold reload after any short pause; on this box nothing
+  # else contends for the iGPU, so staying warm is free and makes both the CLI
+  # and the web UI respond immediately on the next turn. The daemon reads this as
+  # the default for every request that does not set keep_alive itself.
+  $env:OLLAMA_KEEP_ALIVE = '60m'
+  if ((Test-Path $OpenVinoPython) -and (Test-Path (Join-Path $OpenVinoModel 'openvino_model.bin'))) {
+    $env:LAL_OPENVINO_PYTHON = $OpenVinoPython
+    $env:LAL_OPENVINO_MODEL_PATH = $OpenVinoModel
+    $env:LAL_OPENVINO_MODEL_ID = 'openvino/qwen3-8b-npu'
+    $env:LAL_OPENVINO_CACHE_DIR = $OpenVinoCache
+    $env:LAL_OPENVINO_MAX_PROMPT_LEN = '2048'
+  }
 
   Write-Host 'Project-LAL isolated Windows session'
   Write-Host "  Web:       $GatewayUrl"

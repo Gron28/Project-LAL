@@ -16,7 +16,7 @@ export type RegistryArtifact = {
   id: `artifact:sha256:${string}`;
   sha256: string;
   kind: "model" | "adapter";
-  format: "gguf" | "ollama-blob" | "unknown";
+  format: "gguf" | "ollama-blob" | "openvino-ir" | "unknown";
   sizeBytes: number;
   observedAt: string;
 };
@@ -24,8 +24,8 @@ export type RegistryArtifact = {
 export type RegistryRuntime = {
   id: `runtime:sha256:${string}`;
   artifactId: RegistryArtifact["id"];
-  backend: "llama.cpp" | "ollama";
-  source: "local" | "ollama" | "hive";
+  backend: "llama.cpp" | "ollama" | "openvino";
+  source: "local" | "ollama" | "openvino" | "hive";
   profileId?: string;
   contextCeiling?: number;
   versionHash?: string;
@@ -51,7 +51,7 @@ export type CapabilityRegistrySnapshot = {
 
 export type RegistryInventoryItem = {
   name: string;
-  source: "local" | "ollama";
+  source: "local" | "ollama" | "openvino";
   path: string;
   sizeBytes?: number;
   /** An Ollama blob's content digest, if a manifest scanner supplied it. */
@@ -84,7 +84,7 @@ function runtimeId(value: Omit<RegistryRuntime, "id">): RegistryRuntime["id"] { 
 function normalizeAlias(source: RegistryInventoryItem["source"], name: string): string { return `${source}:${name}`; }
 
 function profileMatches(item: RegistryInventoryItem, profile: ModelProfile): boolean {
-  return (profile.provider === "ollama" ? "ollama" : "local") === item.source && profile.model === item.name;
+  return (profile.provider === "ollama" ? "ollama" : profile.provider === "openvino" ? "openvino" : "local") === item.source && profile.model === item.name;
 }
 
 /** Build a deterministic snapshot from already-present bytes and HIVE profiles. */
@@ -102,14 +102,14 @@ export async function buildCapabilityRegistrySnapshot(
     const artifactId = `artifact:sha256:${digest}` as const;
     const sizeBytes = item.sizeBytes ?? fs.statSync(item.path).size;
     const artifact: RegistryArtifact = {
-      id: artifactId, sha256: digest, kind: "model", format: item.source === "ollama" ? "ollama-blob" : "gguf", sizeBytes, observedAt: generatedAt,
+      id: artifactId, sha256: digest, kind: "model", format: item.source === "ollama" ? "ollama-blob" : item.source === "openvino" ? "openvino-ir" : "gguf", sizeBytes, observedAt: generatedAt,
     };
     artifacts.set(artifactId, artifact);
 
     const matchingProfiles = profiles.filter((profile) => profileMatches(item, profile));
     const runtimeInputs: Omit<RegistryRuntime, "id">[] = matchingProfiles.length
       ? matchingProfiles.map((profile) => ({ artifactId, backend: profile.provider, source: "hive", profileId: profile.id, contextCeiling: profile.contextCeiling, versionHash: profile.versionHash }))
-      : [{ artifactId, backend: item.source === "ollama" ? "ollama" : "llama.cpp", source: item.source }];
+      : [{ artifactId, backend: item.source === "ollama" ? "ollama" : item.source === "openvino" ? "openvino" : "llama.cpp", source: item.source }];
     const runtimeIds: RegistryRuntime["id"][] = [];
     for (const input of runtimeInputs) {
       const id = runtimeId(input);

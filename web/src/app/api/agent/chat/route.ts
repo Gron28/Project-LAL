@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { activatePublicModel, allModels, contextProfileForModel, readSettings, resolvedContextTarget, getConvo, saveConvo, newId, webSearch, retrieveDocs, servingModel, modelRuntimeSettings, ollamaSupportsThinking, SERVE_PORT, type Convo } from "@/lib/lab";
+import { activatePublicModel, allModels, contextProfileForModel, readSettings, resolvedContextTarget, getConvo, saveConvo, newId, webSearch, retrieveDocs, servingModel, modelRuntimeSettings, ollamaSupportsThinking, OPENVINO_PORT, SERVE_PORT, type Convo } from "@/lib/lab";
 import { startRun, type EmitFn } from "@/lib/runs";
 
 export const dynamic = "force-dynamic";
@@ -171,6 +171,7 @@ export async function POST(req: NextRequest) {
     emit({ k: "model_loading", v: { model: requestedModel, ctx: requestedContext, contextProfile: contextProfileForModel(requestedModel) } });
     const runtime = await activatePublicModel(requestedModel, requestedContext);
     const useOllama = runtime.backend === "ollama";
+    const openAiEndpoint = `http://127.0.0.1:${runtime.backend === "openvino" ? OPENVINO_PORT : SERVE_PORT}/v1/chat/completions`;
     const effectiveThink = useOllama
       ? think && await ollamaSupportsThinking(runtime.runtimeProfile)
       : think;
@@ -191,6 +192,7 @@ export async function POST(req: NextRequest) {
       top_p: runtimeSettings.topP,
       top_k: runtimeSettings.topK,
       repeat_penalty: runtimeSettings.repeatPenalty,
+      ...(runtime.backend === "openvino" ? { response_language: runtimeSettings.responseLanguage } : {}),
     };
     if (runtimeSettings.maxOutputTokens > 0) payload.max_tokens = runtimeSettings.maxOutputTokens;
     if (!think) payload.chat_template_kwargs = { enable_thinking: false };
@@ -214,7 +216,7 @@ export async function POST(req: NextRequest) {
         await pumpOllama(upstream, emit, signal, acc, runtime.context);
         return;
       }
-      let upstream = await fetch(`http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
+      let upstream = await fetch(openAiEndpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
@@ -227,7 +229,7 @@ export async function POST(req: NextRequest) {
         const fallback = { ...payload };
         delete fallback.logprobs;
         delete fallback.top_logprobs;
-        upstream = await fetch(`http://127.0.0.1:${SERVE_PORT}/v1/chat/completions`, {
+        upstream = await fetch(openAiEndpoint, {
           method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(fallback), signal,
         });
       }

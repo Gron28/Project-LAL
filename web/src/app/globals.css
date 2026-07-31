@@ -1,4 +1,5 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+@source "../**/*.{ts,tsx}";
 
 /* Local AI Lab theme. Tokens track the CLI's lal-dark theme so the terminal and the
    web are visibly the same product: lime-green + yellow on green-tinted near-black,

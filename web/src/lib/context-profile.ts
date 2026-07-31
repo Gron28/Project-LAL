@@ -125,7 +125,7 @@ export class ContextProfileStore {
 
 export function makeContextProfile(input: {
   model: string;
-  backend: "llama.cpp" | "ollama";
+  backend: "llama.cpp" | "ollama" | "openvino";
   modelMaxTokens: number | null;
   requestedTokens: number;
   activeTokens?: number | null;

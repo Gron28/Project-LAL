@@ -26,7 +26,11 @@ export async function POST(req: NextRequest) {
     const existing = b.mode === "append" ? (getSuite(b.id)?.items || []) : [];
     items = [...existing, ...imported];
   }
-  return NextResponse.json(saveSuite(b.id, b.label || b.id, items || []));
+  return NextResponse.json(saveSuite(b.id, b.label || b.id, items || [], {
+    grade: b.grade,
+    maxTokens: b.maxTokens,
+    think: b.think,
+  }));
 }
 
 export async function DELETE(req: NextRequest) {

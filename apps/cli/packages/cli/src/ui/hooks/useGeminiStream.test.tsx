@@ -4473,6 +4473,12 @@ describe('useGeminiStream', () => {
       await act(async () => {
         vi.advanceTimersByTime(60);
       });
+      // Answer text is released on a steady-rate pacer; drain it so the
+      // commit-to-<Static> clipping is asserted against the full stream (the
+      // stream is still held open, so this remains a mid-stream assertion).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
 
       // terminalHeight=24, no ref → fallback viewport max(4, 24-12)=12,
       // commit budget max(4, 12-5)=7. The pending tail must stay near that
@@ -4539,6 +4545,14 @@ describe('useGeminiStream', () => {
       });
       await act(async () => {
         vi.advanceTimersByTime(60);
+      });
+      // Streamed answer text is released on a steady-rate pacer, so a single
+      // throttle window only surfaces a slice. These tests exercise the
+      // commit-to-<Static> logic on the fully-streamed content, so drain the
+      // pacer (the stream is still held open — this asserts the incremental
+      // commit behavior mid-stream, before finalize).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
       });
       return releaseStream;
     };

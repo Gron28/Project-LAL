@@ -103,7 +103,7 @@ export type ModelCapability = "chat" | "structured_output" | "tools" | "coding" 
 
 export type ModelProfile = {
   id: string;
-  provider: "llama.cpp" | "ollama";
+  provider: "llama.cpp" | "ollama" | "openvino";
   model: string;
   checkpoint?: string;
   adapter?: string;

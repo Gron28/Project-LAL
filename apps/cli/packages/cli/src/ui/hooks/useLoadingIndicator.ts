@@ -19,11 +19,14 @@ export const useLoadingIndicator = (
   const [timerResetKey, setTimerResetKey] = useState(0);
   const isTimerActive = streamingState === StreamingState.Responding;
 
-  const elapsedTimeFromTimer = useTimer(
-    isTimerActive,
-    timerResetKey,
-    isTimerActive && isToolExecuting,
-  );
+  // Total-turn wall-clock: the status timer keeps counting across the
+  // queue → thinking → tool-execution phases so the elapsed reading always
+  // advances. Previously it was paused while a tool ran, which — on
+  // tool-heavy local-model turns — left almost no ungated model-generation
+  // time to measure, so the floored display sat at "0s" for the whole turn.
+  // Tool time is still excluded from the token-rate baseline below via
+  // `isToolExecuting`; only the displayed clock counts continuously.
+  const elapsedTimeFromTimer = useTimer(isTimerActive, timerResetKey);
 
   const isPhraseCyclingActive = streamingState === StreamingState.Responding;
   const isWaiting = streamingState === StreamingState.WaitingForConfirmation;

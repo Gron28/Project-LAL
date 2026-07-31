@@ -389,6 +389,19 @@ const EDIT_TOOL_NAMES = new Set([
 ]);
 const STREAM_UPDATE_THROTTLE_MS = 60;
 const STREAM_PENDING_ITEM_MAX_CHARS = 16_384;
+// Steady-rate "typewriter" pacer for streamed answer text. Local backends
+// (Ollama / OpenVINO) hand us content in large, irregular bursts, so applying
+// each burst wholesale makes the answer lurch forward ~15-20 chars at a time
+// with dead gaps between — the "laggy / less polished" feel versus a
+// token-by-token llama.cpp stream. Instead we accumulate streamed content and
+// release it in small, even slices on a short interval so output flows
+// smoothly regardless of arrival cadence. A backlog is drained over roughly
+// STREAM_PACE_TARGET_TICKS ticks, so the pacer never falls far behind a fast
+// stream. Every explicit flush (stream end, tool call, cancel, thinking→answer
+// transition) still drains the queue completely and synchronously.
+const STREAM_PACE_INTERVAL_MS = 30;
+const STREAM_PACE_TARGET_TICKS = 6;
+const STREAM_PACE_MIN_CHARS = 3;
 // Rows kept in reserve below the commit budget so the incremental commit fires
 // BEFORE MarkdownDisplay's safety-net clip (which reserves 2). Keeping the
 // pending item's rendered height under the safety budget stops that clip from
@@ -1958,11 +1971,78 @@ export const useGeminiStream = (
       const bufferedEvents: BufferedStreamEvent[] = [];
       let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
+      // Answer text awaiting steady-rate release (see STREAM_PACE_* above).
+      // Thoughts keep using `bufferedEvents`; only streamed content is paced.
+      let contentPaceQueue = '';
+      let contentPaceTimer: ReturnType<typeof setInterval> | null = null;
+
+      const stopContentPacer = () => {
+        if (contentPaceTimer) {
+          clearInterval(contentPaceTimer);
+          contentPaceTimer = null;
+        }
+      };
+
+      // Emit whatever paced content remains, all at once. Used by every
+      // explicit (synchronous) flush so the "drain everything now" contract the
+      // rest of the turn loop relies on is preserved exactly.
+      const drainContentPaceQueue = () => {
+        stopContentPacer();
+        if (!contentPaceQueue) {
+          return;
+        }
+        const text = contentPaceQueue;
+        contentPaceQueue = '';
+        geminiMessageBuffer = handleContentEvent(
+          text,
+          geminiMessageBuffer,
+          userMessageTimestamp,
+        );
+      };
+
+      // One paced tick: release a small, even slice so a burst is spread over
+      // several ticks instead of appearing as a single jump.
+      const releasePacedContentChunk = () => {
+        if (!contentPaceQueue) {
+          stopContentPacer();
+          return;
+        }
+        const chunkSize = Math.max(
+          STREAM_PACE_MIN_CHARS,
+          Math.ceil(contentPaceQueue.length / STREAM_PACE_TARGET_TICKS),
+        );
+        const text = contentPaceQueue.slice(0, chunkSize);
+        contentPaceQueue = contentPaceQueue.slice(chunkSize);
+        if (!contentPaceQueue) {
+          stopContentPacer();
+        }
+        geminiMessageBuffer = handleContentEvent(
+          text,
+          geminiMessageBuffer,
+          userMessageTimestamp,
+        );
+      };
+
+      const enqueuePacedContent = (text: string) => {
+        if (!text) {
+          return;
+        }
+        contentPaceQueue += text;
+        if (!contentPaceTimer) {
+          contentPaceTimer = setInterval(
+            releasePacedContentChunk,
+            STREAM_PACE_INTERVAL_MS,
+          );
+        }
+      };
+
       const discardBufferedStreamEvents = () => {
         if (flushTimer) {
           clearTimeout(flushTimer);
           flushTimer = null;
         }
+        stopContentPacer();
+        contentPaceQueue = '';
         bufferedEvents.length = 0;
       };
 
@@ -1973,6 +2053,9 @@ export const useGeminiStream = (
         }
 
         if (bufferedEvents.length === 0) {
+          // Buffered thoughts may be empty while paced answer text is still
+          // pending — an explicit flush must still surface that immediately.
+          drainContentPaceQueue();
           return;
         }
 
@@ -2024,6 +2107,9 @@ export const useGeminiStream = (
             userMessageTimestamp,
           );
         }
+        // Paced answer text is chronologically the tail of the stream, so
+        // surface it after any buffered reasoning has been committed.
+        drainContentPaceQueue();
       };
 
       const scheduleBufferedStreamFlush = () => {
@@ -2057,6 +2143,9 @@ export const useGeminiStream = (
               });
               break;
             case ServerGeminiEventType.Thought:
+              // Reasoning resumes: surface any paced answer text first so the
+              // thought never renders ahead of content that preceded it.
+              drainContentPaceQueue();
               // Subject-only chunks are discrete status updates for the
               // loading indicator and render immediately. Anything carrying
               // streamed text (with or without a subject) goes through the
@@ -2085,8 +2174,9 @@ export const useGeminiStream = (
                 thoughtBuffer = '';
               }
               setThought((prev) => (prev ? null : prev));
-              bufferedEvents.push({ kind: 'content', value: event.value });
-              scheduleBufferedStreamFlush();
+              // Paced release (see STREAM_PACE_* above): accumulate the burst
+              // and drip it out smoothly instead of applying it in one jump.
+              enqueuePacedContent(event.value);
               break;
             case ServerGeminiEventType.ToolCallProgress: {
               // Live tool-call argument streaming: count chars toward the

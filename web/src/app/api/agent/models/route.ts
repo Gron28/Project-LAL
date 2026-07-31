@@ -40,6 +40,7 @@ async function inventoryResponse(req?: NextRequest) {
         serving: servingModel(),
         llamaServer: runtimeAvailability.llamaServer,
         ollamaStore: runtimeAvailability.ollamaStore,
+        openvinoNpu: runtimeAvailability.openvinoNpu,
       },
       server: {
         origin: req ? new URL(req.url).origin : "local",
@@ -74,7 +75,7 @@ export async function GET(req: NextRequest) {
         scannedAt: new Date().toISOString(),
         roots: modelScanRoots(),
         diagnostics: [error instanceof Error ? error.message : String(error)],
-        backend: { serving: null, llamaServer: "unknown", ollamaStore: "unknown" },
+        backend: { serving: null, llamaServer: "unknown", ollamaStore: "unknown", openvinoNpu: "unknown" },
         server: { origin: new URL(req.url).origin, buildId: deploymentBuildId() },
       },
       error: "model inventory failed",
@@ -183,6 +184,9 @@ export async function DELETE(req: NextRequest) {
   const u = new URL(req.url);
   const name = (u.searchParams.get("name") || "").trim();
   const sourceRaw = u.searchParams.get("source") || "local";
+  if (sourceRaw === "openvino") {
+    return NextResponse.json({ ok: false, error: "OpenVINO models are managed by the local NPU runtime and cannot be deleted here" }, { status: 400 });
+  }
   const source = sourceRaw === "ollama" ? "ollama" : "local";
   if (!name) return NextResponse.json({ ok: false, error: "name required" }, { status: 400 });
 

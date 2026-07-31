@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Stat, LossChart, MetricHistoryChart, SourceLossChart, BlockHeatmap, GradientTerrain3D, LengthHistogramChart, ProbePanel, DeltaHeatmap, DeltaSurface3D, ConceptGalaxy3D, type AdapterDelta, type AdapterEvolution, type GalaxySnapshot } from "@/components/charts";
 import { SignalTrace } from "@/components/ui/signal-trace";
+import PruningLab from "./pruning-lab";
+import ModelComparisonLab from "./model-comparison-lab";
 
 type Row = {
   event: string; step?: number; steps?: number; loss?: number; best?: number;
@@ -178,7 +180,7 @@ export default function TrainPage() {
   // Four sections used to be one long vertical stack — every graph, always
   // rendered, regardless of whether you came here to watch a live run or dig
   // into a past checkpoint's internals. Tabs make each its own focused screen.
-  const [viewTab, setViewTab] = useState<"live" | "compare" | "evolution" | "galaxy">("live");
+  const [viewTab, setViewTab] = useState<"live" | "comparison" | "pruning" | "compare" | "evolution" | "galaxy">("live");
   const [checkpoints, setCheckpoints] = useState<string[]>([]);
   const [compareSel, setCompareSel] = useState<string[]>([]);
   const [compareResults, setCompareResults] = useState<AdapterDelta[] | null>(null);
@@ -403,7 +405,7 @@ export default function TrainPage() {
     <div className="min-h-dvh bg-[var(--bg)] text-[var(--text)] px-3 py-4 pb-20 md:pb-10">
       <div className="max-w-[1760px] mx-auto">
         <div className="flex items-center gap-1 mb-2 overflow-x-auto pb-0.5">
-          {([["live", "Live"], ["compare", "Model deltas"], ["evolution", "Evolution"], ["galaxy", "Concept space"]] as const).map(([id, label]) => (
+          {([["live", "Live"], ["comparison", "Comparison queue"], ["pruning", "Pruning lab"], ["compare", "Model deltas"], ["evolution", "Evolution"], ["galaxy", "Concept space"]] as const).map(([id, label]) => (
             <button key={id} onClick={() => setViewTab(id)} className="h-8 px-3 rounded-[var(--r-md)] border text-[10px] whitespace-nowrap"
               style={{ color: viewTab === id ? "var(--bg)" : "var(--text-2)", background: viewTab === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: viewTab === id ? "var(--accent-ai)" : "var(--border)", fontWeight: viewTab === id ? 700 : 400 }}>
               {label}
@@ -738,6 +740,14 @@ export default function TrainPage() {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="min-w-0" style={{ display: viewTab === "pruning" ? undefined : "none" }}>
+            <PruningLab />
+          </div>
+
+          <div className="min-w-0" style={{ display: viewTab === "comparison" ? undefined : "none" }}>
+            <ModelComparisonLab />
           </div>
 
           {/* ---- compare model deltas: not raw weights (no natural "shape" to a weight

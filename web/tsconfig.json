@@ -49,7 +49,9 @@
     ".next-recovery4/types/**/*.ts",
     ".next-recovery4/dev/types/**/*.ts",
     ".next-recovery5/types/**/*.ts",
-    ".next-recovery5/dev/types/**/*.ts"
+    ".next-recovery5/dev/types/**/*.ts",
+    ".next-e2e-openvino/types/**/*.ts",
+    ".next-e2e-openvino/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

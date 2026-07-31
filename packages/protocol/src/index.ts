@@ -21,13 +21,13 @@ export type ContextVerificationStatus =
  */
 export type ContextProfile = {
   model: string;
-  backend: "llama.cpp" | "ollama";
+  backend: "llama.cpp" | "ollama" | "openvino";
   modelMaxTokens: number | null;
   requestedTokens: number;
   activeTokens: number | null;
   verifiedTokens: number | null;
   verification: ContextVerificationStatus;
-  source: "gguf" | "ollama" | "cache" | "runtime" | "fallback";
+  source: "gguf" | "ollama" | "openvino" | "cache" | "runtime" | "fallback";
   gpuOffload: string | null;
   fingerprint: string;
   checkedAt: string | null;

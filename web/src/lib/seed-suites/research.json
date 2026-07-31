@@ -1,0 +1,44 @@
+{
+  "label": "Research synthesis (evidence-bound)",
+  "grade": "checks",
+  "maxTokens": 1200,
+  "think": true,
+  "items": [
+    {
+      "cat": "source-synthesis",
+      "q": "You are given this research packet only:\n[1] The Northstar pilot began in March 2024 with 120 users.\n[2] A July 2024 audit found weekly retention rose from 31% to 46%, but support tickets rose 18%.\n[3] A September 2024 survey had 80 respondents; 62% said onboarding was clear.\nWrite a concise research brief with: a one-sentence conclusion, the three dated facts, one limitation, and one next measurement. Do not invent sources or causal claims.",
+      "checks": [
+        { "type": "regex", "pattern": "March 2024", "flags": "i" },
+        { "type": "regex", "pattern": "31%", "flags": "i" },
+        { "type": "regex", "pattern": "46%", "flags": "i" },
+        { "type": "regex", "pattern": "18%", "flags": "i" },
+        { "type": "regex", "pattern": "80", "flags": "i" },
+        { "type": "regex", "pattern": "limitation|limit", "flags": "i" },
+        { "type": "not_regex", "pattern": "proved|caused|causal", "flags": "i" }
+      ]
+    },
+    {
+      "cat": "conflict-resolution",
+      "q": "Research packet:\n- Study A: 200 users, randomized, 4 weeks; conversion increased 3 percentage points.\n- Study B: 40 volunteers, observational, 12 weeks; conversion did not change.\nGive a recommendation that distinguishes evidence strength, states what cannot be concluded, and proposes the smallest next study. Use fewer than 180 words.",
+      "checks": [
+        { "type": "regex", "pattern": "random|randomized", "flags": "i" },
+        { "type": "regex", "pattern": "observational|volunteer", "flags": "i" },
+        { "type": "regex", "pattern": "cannot|uncertain|not enough|limit", "flags": "i" },
+        { "type": "regex", "pattern": "next|study|test", "flags": "i" },
+        { "type": "max_words", "n": 180 }
+      ]
+    },
+    {
+      "cat": "research-plan",
+      "q": "Design a small, reproducible comparison of two local language models for code-review usefulness. Include: fixed task set, identical settings, success criteria, latency measurement, failure logging, and a rule preventing the evaluator from changing prompts after results are seen. Keep it practical and under 220 words.",
+      "checks": [
+        { "type": "regex", "pattern": "fixed|same|identical", "flags": "i" },
+        { "type": "regex", "pattern": "latency|first.token|tok/s|speed", "flags": "i" },
+        { "type": "regex", "pattern": "failure|error|log", "flags": "i" },
+        { "type": "regex", "pattern": "prompt", "flags": "i" },
+        { "type": "regex", "pattern": "criterion|criteria|success", "flags": "i" },
+        { "type": "max_words", "n": 220 }
+      ]
+    }
+  ]
+}
