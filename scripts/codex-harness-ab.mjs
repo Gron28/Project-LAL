@@ -534,6 +534,27 @@ async function executeHarness({ engine, model, fixture, trial, root, options }) 
   return result;
 }
 
+const FLOORS_FILE = path.join(REPO, 'benchmarks', 'codex-harness-ab', 'floors.json');
+
+/**
+ * An untouched fixture is not worth zero: measured floors range from 5 to 65.
+ * Raw scores are therefore not comparable across fixtures, and headroom
+ * captured -- (score - floor) / (100 - floor) -- is.
+ */
+function loadFloors(file = FLOORS_FILE) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return parsed?.floors && typeof parsed.floors === 'object' ? parsed.floors : {};
+  } catch {
+    return {};
+  }
+}
+
+function headroom(score, floor) {
+  if (typeof floor !== 'number' || floor >= 100) return null;
+  return Math.max(0, Math.min(1, (score - floor) / (100 - floor)));
+}
+
 async function gradeFixtureState(fixture, repo, artifactDir) {
   const publicTest = await runCommand('npm', ['test'], { cwd: repo, timeoutMs: 90_000 });
   const typecheck = await runCommand('npm', ['run', 'typecheck'], { cwd: repo, timeoutMs: 90_000 });
@@ -560,7 +581,7 @@ function median(values) {
   return ordered.length % 2 ? ordered[middle] : (ordered[middle - 1] + ordered[middle]) / 2;
 }
 
-function byFixture(results, engine) {
+function byFixture(results, engine, floors = {}) {
   const selected = results.filter((result) => result.engine === engine);
   const fixtures = [...new Set(selected.map((result) => result.fixture))].sort();
   return Object.fromEntries(fixtures.map((fixture) => {
@@ -571,15 +592,17 @@ function byFixture(results, engine) {
       medianScore: median(runs.map((result) => result.score)),
       medianWallMs: median(runs.map((result) => result.wallMs)),
       medianTotalTokens: median(runs.map((result) => result.trace?.totalTokens ?? 0)),
+      floor: floors[fixture]?.score ?? null,
+      medianHeadroom: headroom(median(runs.map((result) => result.score)), floors[fixture]?.score),
     }];
   }));
 }
 
-function aggregate(results, engine) {
+function aggregate(results, engine, floors = {}) {
   const selected = results.filter((result) => result.engine === engine);
   return {
     runs: selected.length,
-    byFixture: byFixture(results, engine),
+    byFixture: byFixture(results, engine, floors),
     passes: selected.filter((result) => result.pass).length,
     passRate: selected.length ? selected.filter((result) => result.pass).length / selected.length : null,
     medianWallMs: median(selected.map((result) => result.wallMs)),
@@ -622,7 +645,7 @@ function gateVerdict(results, engines) {
  * gap with explicit sample sizes rather than a winner, because at three trials
  * a per-fixture pass rate only takes the values 0, 1/3, 2/3 and 1.
  */
-function parityReport(results, engines) {
+function parityReport(results, engines, floors = {}) {
   const referenceEngines = engines.filter((engine) => ENGINES[engine]?.kind === 'reference');
   const localEngines = engines.filter((engine) => ENGINES[engine]?.kind === 'lal');
   if (!referenceEngines.length || !localEngines.length) {
@@ -631,7 +654,7 @@ function parityReport(results, engines) {
   const reference = referenceEngines[0];
   const referenceRuns = results.filter((result) => result.engine === reference);
   if (!referenceRuns.length) return { status: 'pending', reason: 'No reference runs completed yet.' };
-  const referenceAggregate = aggregate(results, reference);
+  const referenceAggregate = aggregate(results, reference, floors);
   const attemptedFixtures = Object.keys(referenceAggregate.byFixture);
   const saturated = attemptedFixtures.length > 0
     && attemptedFixtures.every((fixture) => {
@@ -639,7 +662,7 @@ function parityReport(results, engines) {
       return entry.passes === entry.runs && entry.medianScore === 100;
     });
   const gaps = localEngines.map((engine) => {
-    const local = aggregate(results, engine);
+    const local = aggregate(results, engine, floors);
     const balanced = local.runs === referenceAggregate.runs && local.runs > 0;
     return {
       engine,
@@ -657,9 +680,14 @@ function parityReport(results, engines) {
       }])),
     };
   });
+  const degenerateFixtures = attemptedFixtures.filter((fixture) => floors[fixture]?.hiddenPasses === true);
   return {
     status: gaps.every((gap) => gap.balanced) ? 'complete' : 'unbalanced',
     reference,
+    degenerateFixtures,
+    degenerateNote: degenerateFixtures.length
+      ? `These fixtures pass their hidden check untouched, so they cannot tell a solved task from an unsolved one: ${degenerateFixtures.join(', ')}.`
+      : null,
     saturated,
     saturationNote: saturated
       ? 'The reference passed every attempted fixture at full score; this battery bounds the gap from below but cannot resolve its shape. Harder fixtures are required.'
@@ -735,7 +763,21 @@ function schedule(fixtures, engines, runs) {
   return entries;
 }
 
-function renderParity(report) {
+/**
+ * A report is derived, never trusted: parity is recomputed from the stored
+ * results against the floors measured now, so a battery run before its
+ * fixtures were calibrated still renders a normalised report.
+ */
+function renderParity(report, floors = loadFloors()) {
+  const engines = Object.keys(report.aggregates ?? {});
+  const results = Array.isArray(report.results) ? report.results : [];
+  const derived = results.length
+    ? { ...report, aggregates: Object.fromEntries(engines.map((engine) => [engine, aggregate(results, engine, floors)])), parity: parityReport(results, engines, floors) }
+    : report;
+  return renderParityLines(derived);
+}
+
+function renderParityLines(report) {
   const lines = [];
   const pct = (value) => (value == null ? '   -  ' : `${(value * 100).toFixed(0).padStart(4)}% `);
   const ratio = (value) => (value == null ? '  -  ' : `${value.toFixed(2)}x`);
@@ -743,6 +785,8 @@ function renderParity(report) {
   lines.push(`battery ${report.root ?? ''}`);
   lines.push(`complete=${report.complete} status=${parity.status ?? 'pending'} reference=${parity.reference ?? '-'}`);
   if (parity.saturated) lines.push(`SATURATED: ${parity.saturationNote}`);
+  lines.push('');
+  if (parity.degenerateFixtures?.length) lines.push(`DEGENERATE: ${parity.degenerateNote}`);
   lines.push('');
   lines.push('engine        runs  pass   medScore  medWall  medTokens  medTools');
   for (const [engine, entry] of Object.entries(report.aggregates ?? {})) {
@@ -759,10 +803,13 @@ function renderParity(report) {
   for (const gap of parity.gaps ?? []) {
     lines.push('');
     lines.push(`gap ${gap.engine} -> ${parity.reference}  balanced=${gap.balanced}  passRate ${pct(gap.passRateGap)} score ${gap.medianScoreGap ?? '-'}  wall ${ratio(gap.medianWallRatio)}  tokens ${ratio(gap.medianTokenRatio)}  tools ${ratio(gap.medianToolCallRatio)}`);
-    lines.push('  fixture                        local      reference');
+    lines.push('  fixture                        floor  local            reference');
     for (const [fixture, sides] of Object.entries(gap.byFixture ?? {})) {
-      const cell = (side) => (side ? `${side.passes}/${side.runs} @${side.medianScore}` : '   -   ');
-      lines.push(`  ${fixture.padEnd(30)} ${cell(sides.local).padEnd(10)} ${cell(sides.reference)}`);
+      const cell = (side) => (side
+        ? `${side.passes}/${side.runs} @${side.medianScore}${side.medianHeadroom == null ? '' : ` (${(side.medianHeadroom * 100).toFixed(0)}%)`}`
+        : '   -   ');
+      const floor = sides.reference?.floor ?? sides.local?.floor;
+      lines.push(`  ${fixture.padEnd(30)} ${String(floor ?? '-').padStart(5)}  ${cell(sides.local).padEnd(16)} ${cell(sides.reference)}`);
     }
   }
   return `${lines.join('\n')}\n`;
@@ -795,7 +842,8 @@ export async function main() {
       floors[fixture] = { score, scoring, publicTestPasses: graded.publicTest.code === 0, hiddenPasses: graded.hidden.pass, behaviorPasses: graded.hidden.behavior };
     }
     fs.rmSync(root, { recursive: true, force: true });
-    process.stdout.write(`${JSON.stringify({ schema: 'codex-harness-ab/calibration/v1', note: 'Score awarded to an untouched fixture. Any engine score must be read against this floor.', floors }, null, 2)}\n`);
+    if (flag('write')) fs.writeFileSync(FLOORS_FILE, `${JSON.stringify({ schema: 'codex-harness-ab/calibration/v1', capturedAt: new Date().toISOString(), floors }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ schema: 'codex-harness-ab/calibration/v1', wrote: flag('write') ? FLOORS_FILE : null, note: 'Score awarded to an untouched fixture. Any engine score must be read against this floor.', floors }, null, 2)}\n`);
     return;
   }
   if (flag('list')) {
@@ -854,6 +902,7 @@ export async function main() {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const root = path.resolve(String(readArg('artifact-root', path.join(DEFAULT_DATA, stamp))));
   fs.mkdirSync(root, { recursive: true });
+  const floors = loadFloors();
   const environment = await environmentFingerprint(options);
   fs.writeFileSync(path.join(root, 'environment.json'), `${JSON.stringify(environment, null, 2)}\n`);
   const entries = schedule(selectedFixtures, engines, runs);
@@ -865,7 +914,7 @@ export async function main() {
     process.stderr.write(`\n=== ${index + 1}/${entries.length} ${entry.engine} ${options.model} ${entry.fixture} trial ${entry.trial} ===\n`);
     const result = await executeHarness({ ...entry, model: options.model, root, options });
     results.push(result);
-    const partial = { schema: 'codex-harness-ab/summary/v1', complete: false, root, environment, results, aggregates: Object.fromEntries(engines.map((engine) => [engine, aggregate(results, engine)])), gate: gateVerdict(results, engines), parity: parityReport(results, engines) };
+    const partial = { schema: 'codex-harness-ab/summary/v1', complete: false, root, environment, results, aggregates: Object.fromEntries(engines.map((engine) => [engine, aggregate(results, engine, floors)])), gate: gateVerdict(results, engines), parity: parityReport(results, engines, floors) };
     fs.writeFileSync(path.join(root, 'summary.json'), `${JSON.stringify(partial, null, 2)}\n`);
     process.stderr.write(`${result.pass ? 'PASS' : 'FAIL'} score=${result.score} wall=${Math.round(result.wallMs / 1000)}s tools=${result.trace.toolCalls}\n`);
   }
@@ -876,9 +925,10 @@ export async function main() {
     environment,
     schedule: entries,
     results,
-    aggregates: Object.fromEntries(engines.map((engine) => [engine, aggregate(results, engine)])),
+    aggregates: Object.fromEntries(engines.map((engine) => [engine, aggregate(results, engine, floors)])),
     gate: gateVerdict(results, engines),
-    parity: parityReport(results, engines),
+    parity: parityReport(results, engines, floors),
+    floors,
   };
   fs.writeFileSync(path.join(root, 'summary.json'), `${JSON.stringify(report, null, 2)}\n`);
   fs.writeFileSync(path.join(DEFAULT_DATA, 'latest.json'), `${JSON.stringify({ root, complete: report.complete, aggregates: report.aggregates, gate: report.gate, parity: report.parity }, null, 2)}\n`);
@@ -890,4 +940,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   await main();
 }
 
-export { aggregate, byFixture, componentScores, ENGINES, isScratchPath, scratchWrites, shellPayload, stripHeredocs, prepareReferenceConfigDir, renderParity, gateVerdict, isMutation, isVerification, parityReport, referenceArgs, referenceEnv, REFERENCE_SCRUBBED_ENV, schedule, summarizeTrace, TAXONOMY, workspaceViolations };
+export { aggregate, byFixture, componentScores, ENGINES, headroom, isScratchPath, loadFloors, scratchWrites, shellPayload, stripHeredocs, prepareReferenceConfigDir, renderParity, gateVerdict, isMutation, isVerification, parityReport, referenceArgs, referenceEnv, REFERENCE_SCRUBBED_ENV, schedule, summarizeTrace, TAXONOMY, workspaceViolations };

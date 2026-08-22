@@ -82,3 +82,54 @@ three trials a per-fixture pass rate can only be 0, 1/3, 2/3 or 1.
 - The reference arm does not use the GPU, so interleaving it gives the local
   arms idle GPU time that a back-to-back local battery would not have.
   `schedule.json` records the exact order that produced any result.
+
+## Calibration: what an untouched fixture already scores
+
+```bash
+node scripts/codex-harness-ab.mjs --calibrate           # report the floors
+node scripts/codex-harness-ab.mjs --calibrate --write   # persist them to floors.json
+```
+
+A fixture is not worth zero before an agent touches it. Measured floors:
+
+| fixture | floor | note |
+|---|---|---|
+| 01-window-boundary-bug | 55 | public tests pass on the broken code |
+| 02-typed-inventory-feature | 5 | genuine from-scratch task |
+| 03-misleading-retry-diagnostic | 35 | |
+| 04-context-selection | 35 | |
+| 05-ledger-refactor | **65** | **hidden check passes untouched — cannot discriminate** |
+
+Raw scores are therefore not comparable across fixtures. When `floors.json`
+exists the runner reports **headroom captured**, `(score - floor) / (100 -
+floor)`, and flags any fixture whose hidden check passes untouched as
+`parity.degenerateFixtures`.
+
+```bash
+node scripts/codex-harness-ab.mjs --report          # render the latest battery
+node scripts/codex-harness-ab.mjs --report <dir>    # render a specific one
+```
+
+A report is derived, never trusted: `--report` recomputes parity from the
+stored per-run results against the floors measured now, so a battery that ran
+before its fixtures were calibrated still renders a normalised report.
+
+## Grader defects fixed on 2026-08-22
+
+The first live reference run solved its fixture perfectly and was scored
+85/FAIL. Rescored against the fixed classifiers it is 100/PASS. All four
+defects applied to the `qwen` and `codex` arms too, so any harness A/B number
+recorded before this date is suspect.
+
+- Heredoc bodies were scanned as shell syntax, so file content, test names and
+  commit messages were parsed for redirects and paths.
+- `2>/dev/null` and `2>&1` were read as file writes.
+- A command that both mutates and verifies counted only as verification, which
+  hid the mutation and made the last real edit look unverified.
+- Any `/` started an absolute path, so `src/x.mjs` produced a phantom
+  `/x.mjs` containment violation.
+
+Two related rules: a heredoc fed to an interpreter counts as a mutation, since
+the write it performs is invisible in the shell payload; and scratch under the
+system temp directory is recorded as `scratchWrites` rather than failing the
+containment gate.

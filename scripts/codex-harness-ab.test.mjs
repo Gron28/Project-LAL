@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { assertFixtureCatalog, listFixtures, writeFixture } from '../benchmarks/codex-harness-ab/fixtures.mjs';
-import { gateVerdict, isMutation, scratchWrites, shellPayload, stripHeredocs, isVerification, parityReport, prepareReferenceConfigDir, referenceArgs, referenceEnv, REFERENCE_SCRUBBED_ENV, schedule, summarizeTrace, TAXONOMY, workspaceViolations } from './codex-harness-ab.mjs';
+import { gateVerdict, headroom, isMutation, scratchWrites, shellPayload, stripHeredocs, isVerification, parityReport, prepareReferenceConfigDir, referenceArgs, referenceEnv, REFERENCE_SCRUBBED_ENV, schedule, summarizeTrace, TAXONOMY, workspaceViolations } from './codex-harness-ab.mjs';
 
 test('fixture catalog is complete and disposable setup writes every task', () => {
   assertFixtureCatalog();
@@ -160,8 +160,8 @@ test('parity reports a per-fixture gap and flags a saturated battery', () => {
   assert.equal(gap.passRateGap, 0.5);
   assert.equal(gap.medianScoreGap, 35);
   assert.equal(gap.medianWallRatio, 0.5);
-  assert.deepEqual(gap.byFixture.b.reference, { runs: 1, passes: 1, medianScore: 100, medianWallMs: 1000, medianTotalTokens: 0 });
-  assert.deepEqual(gap.byFixture.b.local, { runs: 1, passes: 0, medianScore: 40, medianWallMs: 2000, medianTotalTokens: 0 });
+  assert.deepEqual(gap.byFixture.b.reference, { runs: 1, passes: 1, medianScore: 100, medianWallMs: 1000, medianTotalTokens: 0, floor: null, medianHeadroom: null });
+  assert.deepEqual(gap.byFixture.b.local, { runs: 1, passes: 0, medianScore: 40, medianWallMs: 2000, medianTotalTokens: 0, floor: null, medianHeadroom: null });
   assert.equal(parityReport(results, ['qwen']).status, 'pending');
   const unsaturated = parityReport([...results.slice(1), make('reference', 'a', false, 60, 1000)], ['qwen', 'reference']);
   assert.equal(unsaturated.saturated, false);
@@ -241,4 +241,28 @@ test('heredoc bodies are stripped but trailing commands survive', () => {
   assert.equal(payload.includes('npm run build'), false, 'heredoc body must not be scanned');
   assert.equal(payload.includes('npm test'), true, 'the command after the heredoc must survive');
   assert.equal(shellPayload({ input: { command: 'cat a.txt 2>/dev/null 2>&1' } }).includes('>'), false);
+});
+
+test('scores are normalised against the measured floor of each fixture', () => {
+  // An untouched 05-ledger-refactor already scores 65, so 82 is a third of the
+  // available headroom, not "82%".
+  assert.equal(headroom(65, 65), 0);
+  assert.equal(headroom(100, 65), 1);
+  assert.equal(Math.round(headroom(82, 65) * 100), 49);
+  assert.equal(headroom(50, 5), 45 / 95);
+  assert.equal(headroom(90, undefined), null, 'an unmeasured fixture has no headroom');
+  assert.equal(headroom(10, 55), 0, 'scoring below the floor is clamped');
+
+  const make = (engine, fixture, pass, score) => ({ engine, fixture, pass, score, wallMs: 1000, hardGates: { safety: true } });
+  const floors = { a: { score: 55, hiddenPasses: false }, b: { score: 65, hiddenPasses: true } };
+  const parity = parityReport([
+    make('reference', 'a', true, 100), make('reference', 'b', true, 100),
+    make('qwen', 'a', false, 55), make('qwen', 'b', false, 65),
+  ], ['qwen', 'reference'], floors);
+  // Both local runs scored at the floor: they captured none of the headroom.
+  assert.equal(parity.gaps[0].byFixture.a.local.medianHeadroom, 0);
+  assert.equal(parity.gaps[0].byFixture.a.reference.medianHeadroom, 1);
+  // A fixture whose hidden check passes untouched cannot discriminate.
+  assert.deepEqual(parity.degenerateFixtures, ['b']);
+  assert.match(parity.degenerateNote, /cannot tell a solved task from an unsolved one/);
 });
