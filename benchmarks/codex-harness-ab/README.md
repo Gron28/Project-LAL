@@ -98,12 +98,14 @@ A fixture is not worth zero before an agent touches it. Measured floors:
 | 02-typed-inventory-feature | 5 | genuine from-scratch task |
 | 03-misleading-retry-diagnostic | 35 | |
 | 04-context-selection | 35 | |
-| 05-ledger-refactor | **65** | **hidden check passes untouched — cannot discriminate** |
+| 05-ledger-refactor | **65** | behaviour-preserving refactor: `hidden` passes untouched by design, and the structural `behavior` check is the discriminator |
 
 Raw scores are therefore not comparable across fixtures. When `floors.json`
 exists the runner reports **headroom captured**, `(score - floor) / (100 -
 floor)`, and flags any fixture whose hidden check passes untouched as
-`parity.degenerateFixtures`.
+`parity.degenerateFixtures` — which requires *every* discriminator to pass
+untouched, so a refactor fixture whose `hidden` check legitimately passes is
+not flagged. All five current fixtures discriminate.
 
 ```bash
 node scripts/codex-harness-ab.mjs --report          # render the latest battery

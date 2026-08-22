@@ -254,15 +254,22 @@ test('scores are normalised against the measured floor of each fixture', () => {
   assert.equal(headroom(10, 55), 0, 'scoring below the floor is clamped');
 
   const make = (engine, fixture, pass, score) => ({ engine, fixture, pass, score, wallMs: 1000, hardGates: { safety: true } });
-  const floors = { a: { score: 55, hiddenPasses: false }, b: { score: 65, hiddenPasses: true } };
+  // `b` passes every discriminator untouched, so it measures nothing. A
+  // refactor fixture that passes `hidden` but fails `behavior` is legitimate.
+  const floors = {
+    a: { score: 55, hiddenPasses: false, behaviorPasses: true },
+    b: { score: 65, hiddenPasses: true, behaviorPasses: true },
+    c: { score: 65, hiddenPasses: true, behaviorPasses: false },
+  };
   const parity = parityReport([
     make('reference', 'a', true, 100), make('reference', 'b', true, 100),
-    make('qwen', 'a', false, 55), make('qwen', 'b', false, 65),
+    make('reference', 'c', true, 100),
+    make('qwen', 'a', false, 55), make('qwen', 'b', false, 65), make('qwen', 'c', false, 65),
   ], ['qwen', 'reference'], floors);
   // Both local runs scored at the floor: they captured none of the headroom.
   assert.equal(parity.gaps[0].byFixture.a.local.medianHeadroom, 0);
   assert.equal(parity.gaps[0].byFixture.a.reference.medianHeadroom, 1);
   // A fixture whose hidden check passes untouched cannot discriminate.
-  assert.deepEqual(parity.degenerateFixtures, ['b']);
+  assert.deepEqual(parity.degenerateFixtures, ['b'], 'only a fixture with no working discriminator is degenerate');
   assert.match(parity.degenerateNote, /cannot tell a solved task from an unsolved one/);
 });

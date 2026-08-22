@@ -680,7 +680,12 @@ function parityReport(results, engines, floors = {}) {
       }])),
     };
   });
-  const degenerateFixtures = attemptedFixtures.filter((fixture) => floors[fixture]?.hiddenPasses === true);
+  // A fixture is degenerate only when NO discriminator separates a solved task
+  // from an unsolved one. A behaviour-preserving refactor legitimately passes
+  // its hidden correctness check untouched -- the structural `behavior` check
+  // is what detects whether the refactor happened -- so requiring both is the
+  // correct rule.
+  const degenerateFixtures = attemptedFixtures.filter((fixture) => floors[fixture]?.hiddenPasses === true && floors[fixture]?.behaviorPasses === true);
   return {
     status: gaps.every((gap) => gap.balanced) ? 'complete' : 'unbalanced',
     reference,
@@ -839,7 +844,15 @@ export async function main() {
       // An untouched fixture has no mutation, so it can never earn the
       // post-edit verification points, and its tree is clean but uncommitted.
       const { scoring, score } = componentScores({ ...graded, safety: true, verificationAfterMutation: false, hygieneClean: false });
-      floors[fixture] = { score, scoring, publicTestPasses: graded.publicTest.code === 0, hiddenPasses: graded.hidden.pass, behaviorPasses: graded.hidden.behavior };
+      floors[fixture] = {
+        score,
+        scoring,
+        publicTestPasses: graded.publicTest.code === 0,
+        hiddenPasses: graded.hidden.pass,
+        behaviorPasses: graded.hidden.behavior,
+        // At least one discriminator must fail on an untouched fixture.
+        discriminates: !(graded.hidden.pass && graded.hidden.behavior),
+      };
     }
     fs.rmSync(root, { recursive: true, force: true });
     if (flag('write')) fs.writeFileSync(FLOORS_FILE, `${JSON.stringify({ schema: 'codex-harness-ab/calibration/v1', capturedAt: new Date().toISOString(), floors }, null, 2)}\n`);
