@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Local-first personal AI system",
   "scripts": {
-    "test": "npm run check:prompt-tool-visibility && npm --prefix web run test && node --test web/src/lib/protocol/protocol.conformance.test.ts packages/protocol/src/agent-runtime.test.ts scripts/backup-owner-data.test.mjs && node scripts/check_protocol_drift.mjs && python3 -m unittest tests.test_lal_windows_release",
+    "test": "npm run check:prompt-tool-visibility && npm --prefix web run test && node --test web/src/lib/protocol/protocol.conformance.test.ts packages/protocol/src/agent-runtime.test.ts scripts/backup-owner-data.test.mjs scripts/codex-harness-ab.test.mjs && node scripts/check_protocol_drift.mjs && python3 -m unittest tests.test_lal_windows_release",
     "build": "npm --prefix web run build",
     "cli:test": "npm --prefix apps/cli run test --workspace=packages/cli",
     "smoke": "./scripts/smoke-project-lal.sh",
@@ -13,6 +13,7 @@
     "inventory:host": "node scripts/inventory-host-assumptions.mjs",
     "release:lal": "./scripts/release-lal-cli.sh",
     "bench:html001": "node scripts/html001.mjs",
+    "bench:codex-harness": "node scripts/codex-harness-ab.mjs",
     "doctor": "node scripts/doctor.mjs",
     "backup:owner": "node scripts/backup-owner-data.mjs",
     "health:daily": "node scripts/health-check.mjs",
