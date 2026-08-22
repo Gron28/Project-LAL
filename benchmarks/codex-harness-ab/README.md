@@ -135,3 +135,25 @@ Two related rules: a heredoc fed to an interpreter counts as a mutation, since
 the write it performs is invisible in the shell payload; and scratch under the
 system temp directory is recorded as `scratchWrites` rather than failing the
 containment gate.
+
+## Rescoring evidence already paid for
+
+```bash
+node scripts/codex-harness-ab.mjs --rescore          # latest battery
+node scripts/codex-harness-ab.mjs --rescore <dir>    # a specific one
+```
+
+A run's trace, command exit codes and repository state are durable, so a
+grader fix can be applied to a battery that already ran instead of buying new
+sessions. `--rescore` recomputes every result from `trace.jsonl` (recovering
+real event timestamps from `trace-timing.jsonl`), writes
+`summary.rescored.json` next to the original, and prints which runs changed.
+
+### Token accounting differs between harnesses
+
+One harness folds cached input into `input_tokens`; the other reports
+`cache_read_input_tokens` and `cache_creation_input_tokens` alongside a tiny
+`input_tokens`. Trusting the reported field undercounted the reference arm by
+roughly 9x and made a 0.45x token ratio look like 0.02x. `summarizeTrace` now
+detects which convention applies (reported input at or above cached reads means
+it is inclusive) and records the components in `trace.tokenAccounting`.

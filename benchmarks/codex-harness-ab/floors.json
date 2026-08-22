@@ -1,0 +1,76 @@
+{
+  "schema": "codex-harness-ab/calibration/v1",
+  "capturedAt": "2026-08-22T22:35:08.711Z",
+  "floors": {
+    "01-window-boundary-bug": {
+      "score": 55,
+      "scoring": {
+        "correctness": 20,
+        "behavior": 20,
+        "buildTypecheck": 10,
+        "verificationAfterFinalEdit": 0,
+        "scopeGitHygiene": 5
+      },
+      "publicTestPasses": true,
+      "hiddenPasses": false,
+      "behaviorPasses": true,
+      "discriminates": true
+    },
+    "02-typed-inventory-feature": {
+      "score": 5,
+      "scoring": {
+        "correctness": 0,
+        "behavior": 0,
+        "buildTypecheck": 0,
+        "verificationAfterFinalEdit": 0,
+        "scopeGitHygiene": 5
+      },
+      "publicTestPasses": false,
+      "hiddenPasses": false,
+      "behaviorPasses": false,
+      "discriminates": true
+    },
+    "03-misleading-retry-diagnostic": {
+      "score": 35,
+      "scoring": {
+        "correctness": 0,
+        "behavior": 20,
+        "buildTypecheck": 10,
+        "verificationAfterFinalEdit": 0,
+        "scopeGitHygiene": 5
+      },
+      "publicTestPasses": false,
+      "hiddenPasses": false,
+      "behaviorPasses": true,
+      "discriminates": true
+    },
+    "04-context-selection": {
+      "score": 35,
+      "scoring": {
+        "correctness": 0,
+        "behavior": 20,
+        "buildTypecheck": 10,
+        "verificationAfterFinalEdit": 0,
+        "scopeGitHygiene": 5
+      },
+      "publicTestPasses": false,
+      "hiddenPasses": false,
+      "behaviorPasses": true,
+      "discriminates": true
+    },
+    "05-ledger-refactor": {
+      "score": 65,
+      "scoring": {
+        "correctness": 50,
+        "behavior": 0,
+        "buildTypecheck": 10,
+        "verificationAfterFinalEdit": 0,
+        "scopeGitHygiene": 5
+      },
+      "publicTestPasses": true,
+      "hiddenPasses": true,
+      "behaviorPasses": false,
+      "discriminates": true
+    }
+  }
+}
