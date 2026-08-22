@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { assertFixtureCatalog, listFixtures, writeFixture } from '../benchmarks/codex-harness-ab/fixtures.mjs';
-import { gateVerdict, isMutation, isVerification, parityReport, referenceArgs, referenceEnv, REFERENCE_SCRUBBED_ENV, schedule, summarizeTrace, TAXONOMY, workspaceViolations } from './codex-harness-ab.mjs';
+import { gateVerdict, isMutation, scratchWrites, shellPayload, stripHeredocs, isVerification, parityReport, prepareReferenceConfigDir, referenceArgs, referenceEnv, REFERENCE_SCRUBBED_ENV, schedule, summarizeTrace, TAXONOMY, workspaceViolations } from './codex-harness-ab.mjs';
 
 test('fixture catalog is complete and disposable setup writes every task', () => {
   assertFixtureCatalog();
@@ -64,9 +64,17 @@ test('workspace safety catches mutations outside the fixture and permits reads',
     { name: 'edit', input: { file_path: '/bench/repo/src/a.mjs' } },
     { name: 'run_shell_command', input: { command: 'cat /tmp/reference.txt' } },
   ], repo), []);
+  // Scratch under the system temp directory is ordinary agent behaviour: it
+  // is recorded, but it does not fail the containment gate.
   assert.deepEqual(workspaceViolations([
     { name: 'run_shell_command', input: { command: 'cp /bench/repo/src/a.mjs /tmp/a.mjs' } },
+  ], repo), []);
+  assert.deepEqual(scratchWrites([
+    { name: 'run_shell_command', input: { command: 'cp /bench/repo/src/a.mjs /tmp/a.mjs' } },
   ], repo), [{ tool: 'run_shell_command', path: '/tmp/a.mjs' }]);
+  assert.deepEqual(workspaceViolations([
+    { name: 'run_shell_command', input: { command: 'cp /bench/repo/src/a.mjs /home/operator/stolen.mjs' } },
+  ], repo), [{ tool: 'run_shell_command', path: '/home/operator/stolen.mjs' }]);
 });
 
 test('balanced gate implements quality and speed win paths', () => {
@@ -105,7 +113,10 @@ test('workspace safety is enforced for reference mutations outside the fixture',
   ], repo, TAXONOMY.reference), [{ tool: 'Write', path: '/etc/passwd' }]);
   assert.deepEqual(workspaceViolations([
     { name: 'Bash', input: { command: 'cp /bench/repo/src/a.mjs /tmp/a.mjs' } },
-  ], repo, TAXONOMY.reference), [{ tool: 'Bash', path: '/tmp/a.mjs' }]);
+  ], repo, TAXONOMY.reference), []);
+  assert.deepEqual(workspaceViolations([
+    { name: 'Bash', input: { command: 'cp /bench/repo/src/a.mjs /etc/cron.d/pwn' } },
+  ], repo, TAXONOMY.reference), [{ tool: 'Bash', path: '/etc/cron.d/pwn' }]);
 });
 
 test('reference traces earn post-edit verification credit', () => {
@@ -149,8 +160,8 @@ test('parity reports a per-fixture gap and flags a saturated battery', () => {
   assert.equal(gap.passRateGap, 0.5);
   assert.equal(gap.medianScoreGap, 35);
   assert.equal(gap.medianWallRatio, 0.5);
-  assert.deepEqual(gap.byFixture.b.reference, { runs: 1, passes: 1, medianScore: 100, medianWallMs: 1000 });
-  assert.deepEqual(gap.byFixture.b.local, { runs: 1, passes: 0, medianScore: 40, medianWallMs: 2000 });
+  assert.deepEqual(gap.byFixture.b.reference, { runs: 1, passes: 1, medianScore: 100, medianWallMs: 1000, medianTotalTokens: 0 });
+  assert.deepEqual(gap.byFixture.b.local, { runs: 1, passes: 0, medianScore: 40, medianWallMs: 2000, medianTotalTokens: 0 });
   assert.equal(parityReport(results, ['qwen']).status, 'pending');
   const unsaturated = parityReport([...results.slice(1), make('reference', 'a', false, 60, 1000)], ['qwen', 'reference']);
   assert.equal(unsaturated.saturated, false);
@@ -175,4 +186,59 @@ test('reference launch isolates configuration and never forwards the gateway cre
   assert.equal(JSON.stringify(env).includes('secret-token'), false);
   assert.equal(env.CLAUDE_CONFIG_DIR, '/bench/run/home/claude');
   assert.equal(env.PATH, '/usr/bin');
+});
+
+test('reference config dir carries credentials and nothing else', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-config-'));
+  const source = path.join(root, 'source-claude');
+  fs.mkdirSync(source);
+  // Everything the operator's real config directory would otherwise contribute.
+  fs.writeFileSync(path.join(source, '.credentials.json'), '{"token":"secret"}');
+  fs.writeFileSync(path.join(source, 'settings.json'), '{"model":"other"}');
+  fs.writeFileSync(path.join(source, 'CLAUDE.md'), 'operator instructions');
+  fs.mkdirSync(path.join(source, 'plugins'));
+
+  const home = path.join(root, 'home');
+  const configDir = prepareReferenceConfigDir(home, source);
+  assert.deepEqual(fs.readdirSync(configDir), ['.credentials.json']);
+  assert.equal(fs.readFileSync(path.join(configDir, '.credentials.json'), 'utf8'), '{"token":"secret"}');
+  assert.equal(fs.statSync(path.join(configDir, '.credentials.json')).mode & 0o777, 0o600);
+
+  fs.rmSync(path.join(source, '.credentials.json'));
+  assert.throws(() => prepareReferenceConfigDir(path.join(root, 'home2'), source), /needs credentials/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('reference arm cannot spawn subagents or reach the network', () => {
+  const args = referenceArgs({ prompt: 'p', repo: '/r', model: 'opus' });
+  const disallowed = args.slice(args.indexOf('--disallowed-tools') + 1);
+  // Subagents would give the reference parallel compute the local arms lack,
+  // and hide an unbounded number of billable sessions behind one run.
+  for (const tool of ['WebSearch', 'WebFetch', 'Task']) assert.ok(disallowed.includes(tool), `${tool} must be disallowed`);
+});
+
+test('classifier survives the shell shapes a real agent actually emits', () => {
+  const reference = TAXONOMY.reference;
+  const bash = (command) => ({ name: 'Bash', input: { command } });
+  // Every case below is a verbatim shape from the first reference trace that
+  // the original classifier got wrong.
+  assert.equal(isMutation(bash('ls -la && cat TASK.md package.json 2>/dev/null'), reference), false, 'fd redirection is not a file write');
+  assert.equal(isMutation(bash("git add -A && git commit -q -F - <<'EOF' && git status --short\nFix boundary\nEOF"), reference), false, 'commit message body is not shell');
+  assert.equal(isMutation(bash("cat > src/x.mjs <<'EOF'\nconst a = b > c;\nEOF"), reference), true, 'redirect into a file is a write');
+  // A command that both edits and tests must count as both, or the last real
+  // edit looks unverified.
+  const both = bash('cp src/x.mjs /tmp/fixed.mjs && git stash -q && npm test');
+  assert.equal(isMutation(both, reference), true);
+  assert.equal(isVerification(both, reference), true);
+  // A heredoc fed to an interpreter can write anything invisibly.
+  assert.equal(isMutation(bash("python3 - <<'PY'\nopen('src/x.mjs','w').write('hi')\nPY"), reference), true);
+  // Relative paths must not be read as absolute ones.
+  assert.deepEqual(workspaceViolations([bash('cat -n src/rate-window.mjs && cat -n test/rate-window.test.mjs')], '/bench/repo', reference), []);
+});
+
+test('heredoc bodies are stripped but trailing commands survive', () => {
+  const payload = stripHeredocs("cat >> test/a.mjs <<'EOF'\nnpm run build\nEOF\nnpm test | tail -25");
+  assert.equal(payload.includes('npm run build'), false, 'heredoc body must not be scanned');
+  assert.equal(payload.includes('npm test'), true, 'the command after the heredoc must survive');
+  assert.equal(shellPayload({ input: { command: 'cat a.txt 2>/dev/null 2>&1' } }).includes('>'), false);
 });

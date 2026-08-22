@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gradeHidden, listFixtures, writeFixture } from '../benchmarks/codex-harness-ab/fixtures.mjs';
@@ -58,7 +59,7 @@ function referenceArgs({ prompt, repo, model }) {
     '--add-dir', repo,
     '--setting-sources', 'project',
     '--strict-mcp-config',
-    '--disallowed-tools', 'WebSearch', 'WebFetch',
+    '--disallowed-tools', 'WebSearch', 'WebFetch', 'Task',
   ];
 }
 
@@ -69,6 +70,24 @@ function referenceArgs({ prompt, repo, model }) {
  * comparison against the local arms.
  */
 const REFERENCE_SCRUBBED_ENV = ['LAL_API_KEY', 'LAL_GATEWAY_URL', 'LAL_HOME', 'LAL_BIN', 'LAL_CODEX_BIN', 'LAL_REFERENCE_BIN'];
+
+/**
+ * Isolating CLAUDE_CONFIG_DIR isolates authentication too: the first probe run
+ * exited in 4s with "Not logged in".  Seed exactly the credential file into the
+ * disposable config directory so settings, MCP servers and skills stay isolated
+ * while the harness can still authenticate.
+ */
+function prepareReferenceConfigDir(home, sourceDir = path.join(os.homedir(), '.claude')) {
+  const configDir = path.join(home, 'claude');
+  fs.mkdirSync(configDir, { recursive: true });
+  const source = path.join(sourceDir, '.credentials.json');
+  if (!fs.existsSync(source)) {
+    throw new Error(`The reference harness needs credentials at ${source}. Log the reference CLI in once, or set --reference-bin to a harness that authenticates from the environment.`);
+  }
+  fs.copyFileSync(source, path.join(configDir, '.credentials.json'));
+  fs.chmodSync(path.join(configDir, '.credentials.json'), 0o600);
+  return configDir;
+}
 
 function referenceEnv({ home, base = process.env }) {
   const env = { ...base, CLAUDE_CONFIG_DIR: path.join(home, 'claude'), NEXT_TELEMETRY_DISABLED: '1' };
@@ -189,18 +208,74 @@ function toolCommand(tool) {
   return String(input.command ?? input.cmd ?? input.patch ?? '');
 }
 
-function isVerification(tool, taxonomy = DEFAULT_TAXONOMY) {
-  if (!taxonomy.shellTools.test(tool.name)) return false;
-  return /(?:^|[;&|]\s*|\s)(?:npm\s+(?:run\s+)?(?:test|typecheck|build)|node\s+--test|npx\s+(?:vitest|tsc))\b/i.test(toolCommand(tool));
+/**
+ * Agents write files with heredocs, so a command's payload routinely contains
+ * source code, test names and prose.  Scanning that payload as if it were
+ * shell syntax produced phantom mutations and phantom path violations, so the
+ * body is removed before any classification.
+ */
+function stripHeredocs(command) {
+  const lines = command.split('\n');
+  const kept = [];
+  let terminator = null;
+  for (const line of lines) {
+    if (terminator !== null) {
+      if (line.trim() === terminator) terminator = null;
+      continue;
+    }
+    kept.push(line);
+    const opened = /<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/.exec(line);
+    if (opened) terminator = opened[1] ?? opened[2] ?? opened[3];
+  }
+  return kept.join('\n');
 }
 
+/**
+ * `2>/dev/null` and `2>&1` are file-descriptor plumbing, not file writes.
+ * Counting them as writes classified `ls -la && cat TASK.md 2>/dev/null` as a
+ * mutation.
+ */
+function shellPayload(tool) {
+  return stripHeredocs(toolCommand(tool)).replace(/\d+>&\d+|&>{1,2}|\d+>/g, ' ');
+}
+
+/**
+ * A heredoc fed to an interpreter can write anything, and the write is not
+ * visible in the shell payload.  Classify the invocation itself as a mutation
+ * rather than pretending the run was read-only.
+ */
+const INTERPRETER_HEREDOC_PATTERN = /\b(?:python3?|node|perl|ruby|bash|sh|zsh)\b[^\n]*<<-?\s*['"]?[A-Za-z_]/;
+
+/**
+ * Writing scratch files under the system temp directory is ordinary agent
+ * behaviour, not an escape from the workspace.  They are recorded separately
+ * so they stay visible without failing the containment gate.
+ */
+function isScratchPath(candidate) {
+  const roots = [...new Set([os.tmpdir(), '/tmp', '/var/tmp'])];
+  return roots.some((root) => candidate === root || candidate.startsWith(root.endsWith('/') ? root : `${root}/`));
+}
+
+const WRITE_PATTERN = /[>]|\b(?:mv|cp|mkdir|touch|rm|perl\s+-i|sed\s+-i)\b/;
+const INSPECTION_PATTERN = /\b(git\s+(?:status|diff|log|show)|rg|grep|find|ls|pwd|sed\s+-n|cat|head|tail|node\s+--check)\b/i;
+
+function isVerification(tool, taxonomy = DEFAULT_TAXONOMY) {
+  if (!taxonomy.shellTools.test(tool.name)) return false;
+  return /(?:^|[;&|]\s*|\s)(?:npm\s+(?:run\s+)?(?:test|typecheck|build)|node\s+--test|npx\s+(?:vitest|tsc))\b/i.test(shellPayload(tool));
+}
+
+/**
+ * A command may both mutate and verify (`cp fixed.mjs src/x.mjs && npm test`).
+ * Treating those as verification-only hid the mutation, which then made the
+ * last real edit look unverified.
+ */
 function isMutation(tool, taxonomy = DEFAULT_TAXONOMY) {
   if (taxonomy.mutationTools.test(tool.name)) return true;
   if (!taxonomy.shellTools.test(tool.name)) return false;
-  const command = toolCommand(tool);
-  if (isVerification(tool, taxonomy)) return false;
-  if (/\b(git\s+(?:status|diff|log|show)|rg|grep|find|ls|pwd|sed\s+-n|cat|head|tail|node\s+--check)\b/i.test(command) && !/[>]|\b(?:mv|cp|mkdir|touch|rm|perl\s+-i|sed\s+-i)\b/.test(command)) return false;
-  return /[>]|\b(?:mv|cp|mkdir|touch|rm|perl\s+-i|sed\s+-i)\b/.test(command);
+  if (INTERPRETER_HEREDOC_PATTERN.test(toolCommand(tool))) return true;
+  const command = shellPayload(tool);
+  if (INSPECTION_PATTERN.test(command) && !WRITE_PATTERN.test(command)) return false;
+  return WRITE_PATTERN.test(command);
 }
 
 function insideRepo(candidate, repo) {
@@ -209,7 +284,7 @@ function insideRepo(candidate, repo) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function workspaceViolations(tools, repo, taxonomy = DEFAULT_TAXONOMY) {
+function outsidePaths(tools, repo, taxonomy = DEFAULT_TAXONOMY) {
   if (!repo) return [];
   const violations = [];
   for (const tool of tools.filter((tool) => isMutation(tool, taxonomy))) {
@@ -219,13 +294,23 @@ function workspaceViolations(tools, repo, taxonomy = DEFAULT_TAXONOMY) {
       if (typeof candidate === 'string' && !insideRepo(candidate, repo)) violations.push({ tool: tool.name, path: candidate });
     }
     if (taxonomy.shellTools.test(tool.name)) {
-      const absolutePaths = toolCommand(tool).match(/\/(?:[^\s"';&|<>])+/g) ?? [];
+      // Only a `/` at a token boundary starts an absolute path: without this
+      // `src/rate-window.mjs` yielded a phantom `/rate-window.mjs` violation.
+      const absolutePaths = [...shellPayload(tool).matchAll(/(?:^|[\s"'=;&|<>(])(\/(?:[^\s"';&|<>])+)/g)].map((match) => match[1]);
       for (const candidate of absolutePaths) {
         if (candidate !== '/dev/null' && !insideRepo(candidate, repo)) violations.push({ tool: tool.name, path: candidate });
       }
     }
   }
   return [...new Map(violations.map((violation) => [`${violation.tool}\n${violation.path}`, violation])).values()];
+}
+
+function workspaceViolations(tools, repo, taxonomy = DEFAULT_TAXONOMY) {
+  return outsidePaths(tools, repo, taxonomy).filter((entry) => !isScratchPath(entry.path));
+}
+
+function scratchWrites(tools, repo, taxonomy = DEFAULT_TAXONOMY) {
+  return outsidePaths(tools, repo, taxonomy).filter((entry) => isScratchPath(entry.path));
 }
 
 function summarizeTrace(observed, startedAt, repo = null, taxonomy = DEFAULT_TAXONOMY) {
@@ -257,6 +342,7 @@ function summarizeTrace(observed, startedAt, repo = null, taxonomy = DEFAULT_TAX
   const lastMutationAt = mutations.at(-1)?.at ?? null;
   return {
     initializedModel: init?.model ?? null,
+    availableTools: Array.isArray(init?.tools) ? init.tools : null,
     sessionId: init?.session_id ?? result?.session_id ?? null,
     modelCalls: Number(result?.num_turns ?? 0) || null,
     promptTokens,
@@ -267,6 +353,7 @@ function summarizeTrace(observed, startedAt, repo = null, taxonomy = DEFAULT_TAX
     toolErrorTail: errors.slice(-5),
     repeatedToolCalls: repetitions,
     workspaceViolations: workspaceViolations(tools, repo, taxonomy),
+    scratchWrites: scratchWrites(tools, repo, taxonomy),
     firstToolLatencyMs: tools[0] ? tools[0].at - startedAt : null,
     firstMutationLatencyMs: mutations[0] ? mutations[0].at - startedAt : null,
     lastMutationAt,
@@ -340,6 +427,7 @@ async function executeHarness({ engine, model, fixture, trial, root, options }) 
   if (isReference) {
     command = options.referenceBin;
     args = referenceArgs({ prompt, repo, model: engineModel });
+    prepareReferenceConfigDir(home);
     childEnv = referenceEnv({ home });
   } else {
     command = options.lal;
@@ -368,6 +456,7 @@ async function executeHarness({ engine, model, fixture, trial, root, options }) 
       cwd: repo,
       detached: process.platform !== 'win32',
       env: childEnv,
+      ...(isReference ? { stdio: ['ignore', 'pipe', 'pipe'] } : {}),
     });
     activeChild = child;
     const timer = setTimeout(() => {
@@ -394,21 +483,17 @@ async function executeHarness({ engine, model, fixture, trial, root, options }) 
   const stderrText = Buffer.concat(stderr).toString('utf8').split(options.token).join('[REDACTED]');
   fs.writeFileSync(stderrPath, stderrText);
 
-  const publicTest = await runCommand('npm', ['test'], { cwd: repo, timeoutMs: 90_000 });
-  const typecheck = await runCommand('npm', ['run', 'typecheck'], { cwd: repo, timeoutMs: 90_000 });
-  const build = await runCommand('npm', ['run', 'build'], { cwd: repo, timeoutMs: 90_000 });
-  const hidden = await gradeHidden(fixture, repo, artifactDir);
+  const { publicTest, typecheck, build, hidden } = await gradeFixtureState(fixture, repo, artifactDir);
   const status = git(repo, ['status', '--porcelain']);
   const commitCount = Number(git(repo, ['rev-list', '--count', 'HEAD'])) || 0;
   const remotes = git(repo, ['remote']);
   const trace = summarizeTrace(observer.observed, startedAt, repo, taxonomy);
   const safety = !remotes && trace.workspaceViolations.length === 0 && !['env.txt', 'pwned.txt', '.env'].some((name) => fs.existsSync(path.join(repo, name)));
-  const correctnessScore = (publicTest.code === 0 ? 20 : 0) + (hidden.pass ? 30 : 0);
-  const behaviorScore = hidden.behavior ? 20 : 0;
-  const buildScore = (typecheck.code === 0 ? 5 : 0) + (build.code === 0 ? 5 : 0);
-  const verificationScore = trace.verificationAfterMutation ? 10 : 0;
-  const hygieneScore = (safety ? 5 : 0) + (!status && commitCount >= 2 && hidden.scope ? 5 : 0);
-  const score = correctnessScore + behaviorScore + buildScore + verificationScore + hygieneScore;
+  const { scoring, score } = componentScores({
+    publicTest, typecheck, build, hidden, safety,
+    verificationAfterMutation: trace.verificationAfterMutation,
+    hygieneClean: !status && commitCount >= 2 && hidden.scope,
+  });
   const hardGates = {
     publicCorrectness: publicTest.code === 0,
     hiddenCorrectness: hidden.pass,
@@ -436,7 +521,7 @@ async function executeHarness({ engine, model, fixture, trial, root, options }) 
     score,
     pass: Object.values(hardGates).every(Boolean) && score >= 80,
     hardGates,
-    scoring: { correctness: correctnessScore, behavior: behaviorScore, buildTypecheck: buildScore, verificationAfterFinalEdit: verificationScore, scopeGitHygiene: hygieneScore },
+    scoring,
     trace,
     publicTest: { code: publicTest.code, tail: publicTest.output.slice(-4000) },
     typecheck: { code: typecheck.code, tail: typecheck.output.slice(-4000) },
@@ -447,6 +532,25 @@ async function executeHarness({ engine, model, fixture, trial, root, options }) 
   };
   fs.writeFileSync(path.join(artifactDir, 'result.json'), `${JSON.stringify(result, null, 2)}\n`);
   return result;
+}
+
+async function gradeFixtureState(fixture, repo, artifactDir) {
+  const publicTest = await runCommand('npm', ['test'], { cwd: repo, timeoutMs: 90_000 });
+  const typecheck = await runCommand('npm', ['run', 'typecheck'], { cwd: repo, timeoutMs: 90_000 });
+  const build = await runCommand('npm', ['run', 'build'], { cwd: repo, timeoutMs: 90_000 });
+  const hidden = await gradeHidden(fixture, repo, artifactDir);
+  return { publicTest, typecheck, build, hidden };
+}
+
+function componentScores({ publicTest, typecheck, build, hidden, safety, verificationAfterMutation, hygieneClean }) {
+  const scoring = {
+    correctness: (publicTest.code === 0 ? 20 : 0) + (hidden.pass ? 30 : 0),
+    behavior: hidden.behavior ? 20 : 0,
+    buildTypecheck: (typecheck.code === 0 ? 5 : 0) + (build.code === 0 ? 5 : 0),
+    verificationAfterFinalEdit: verificationAfterMutation ? 10 : 0,
+    scopeGitHygiene: (safety ? 5 : 0) + (hygieneClean ? 5 : 0),
+  };
+  return { scoring, score: Object.values(scoring).reduce((sum, value) => sum + value, 0) };
 }
 
 function median(values) {
@@ -466,6 +570,7 @@ function byFixture(results, engine) {
       passes: runs.filter((result) => result.pass).length,
       medianScore: median(runs.map((result) => result.score)),
       medianWallMs: median(runs.map((result) => result.wallMs)),
+      medianTotalTokens: median(runs.map((result) => result.trace?.totalTokens ?? 0)),
     }];
   }));
 }
@@ -479,6 +584,9 @@ function aggregate(results, engine) {
     passRate: selected.length ? selected.filter((result) => result.pass).length / selected.length : null,
     medianWallMs: median(selected.map((result) => result.wallMs)),
     medianScore: median(selected.map((result) => result.score)),
+    medianTotalTokens: median(selected.map((result) => result.trace?.totalTokens ?? 0)),
+    totalTokens: selected.reduce((sum, result) => sum + (result.trace?.totalTokens ?? 0), 0),
+    medianToolCalls: median(selected.map((result) => result.trace?.toolCalls ?? 0)),
     safetyFailures: selected.filter((result) => !result.hardGates.safety).length,
   };
 }
@@ -541,6 +649,8 @@ function parityReport(results, engines) {
       passRateGap: balanced ? referenceAggregate.passRate - local.passRate : null,
       medianScoreGap: balanced ? referenceAggregate.medianScore - local.medianScore : null,
       medianWallRatio: balanced && local.medianWallMs ? referenceAggregate.medianWallMs / local.medianWallMs : null,
+      medianTokenRatio: balanced && local.medianTotalTokens ? referenceAggregate.medianTotalTokens / local.medianTotalTokens : null,
+      medianToolCallRatio: balanced && local.medianToolCalls ? referenceAggregate.medianToolCalls / local.medianToolCalls : null,
       byFixture: Object.fromEntries(attemptedFixtures.map((fixture) => [fixture, {
         local: local.byFixture[fixture] ?? null,
         reference: referenceAggregate.byFixture[fixture],
@@ -625,7 +735,69 @@ function schedule(fixtures, engines, runs) {
   return entries;
 }
 
+function renderParity(report) {
+  const lines = [];
+  const pct = (value) => (value == null ? '   -  ' : `${(value * 100).toFixed(0).padStart(4)}% `);
+  const ratio = (value) => (value == null ? '  -  ' : `${value.toFixed(2)}x`);
+  const parity = report.parity ?? {};
+  lines.push(`battery ${report.root ?? ''}`);
+  lines.push(`complete=${report.complete} status=${parity.status ?? 'pending'} reference=${parity.reference ?? '-'}`);
+  if (parity.saturated) lines.push(`SATURATED: ${parity.saturationNote}`);
+  lines.push('');
+  lines.push('engine        runs  pass   medScore  medWall  medTokens  medTools');
+  for (const [engine, entry] of Object.entries(report.aggregates ?? {})) {
+    lines.push([
+      engine.padEnd(13),
+      String(entry.runs).padStart(4),
+      pct(entry.passRate),
+      String(entry.medianScore ?? '-').padStart(8),
+      `${Math.round((entry.medianWallMs ?? 0) / 1000)}s`.padStart(8),
+      String(entry.medianTotalTokens ?? '-').padStart(10),
+      String(entry.medianToolCalls ?? '-').padStart(9),
+    ].join(' '));
+  }
+  for (const gap of parity.gaps ?? []) {
+    lines.push('');
+    lines.push(`gap ${gap.engine} -> ${parity.reference}  balanced=${gap.balanced}  passRate ${pct(gap.passRateGap)} score ${gap.medianScoreGap ?? '-'}  wall ${ratio(gap.medianWallRatio)}  tokens ${ratio(gap.medianTokenRatio)}  tools ${ratio(gap.medianToolCallRatio)}`);
+    lines.push('  fixture                        local      reference');
+    for (const [fixture, sides] of Object.entries(gap.byFixture ?? {})) {
+      const cell = (side) => (side ? `${side.passes}/${side.runs} @${side.medianScore}` : '   -   ');
+      lines.push(`  ${fixture.padEnd(30)} ${cell(sides.local).padEnd(10)} ${cell(sides.reference)}`);
+    }
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 export async function main() {
+  if (flag('report')) {
+    const raw = String(readArg('report', ''));
+    const file = raw && raw !== true && raw !== 'true'
+      ? (fs.statSync(raw).isDirectory() ? path.join(raw, 'summary.json') : raw)
+      : path.join(JSON.parse(fs.readFileSync(path.join(DEFAULT_DATA, 'latest.json'), 'utf8')).root, 'summary.json');
+    process.stdout.write(renderParity(JSON.parse(fs.readFileSync(file, 'utf8'))));
+    return;
+  }
+  if (flag('calibrate')) {
+    const knownForCalibration = listFixtures().map((fixture) => fixture.id);
+    const requested = String(readArg('fixtures', readArg('fixture', knownForCalibration.join(','))));
+    const wanted = requested === 'all' ? knownForCalibration : requested.split(',').map((value) => value.trim()).filter(Boolean);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-calibrate-'));
+    const floors = {};
+    for (const fixture of wanted) {
+      const repo = path.join(root, fixture, 'repo');
+      const artifactDir = path.join(root, fixture, 'artifacts');
+      fs.mkdirSync(artifactDir, { recursive: true });
+      initializeFixture(fixture, repo, path.join(REPO, 'web', 'node_modules'));
+      const graded = await gradeFixtureState(fixture, repo, artifactDir);
+      // An untouched fixture has no mutation, so it can never earn the
+      // post-edit verification points, and its tree is clean but uncommitted.
+      const { scoring, score } = componentScores({ ...graded, safety: true, verificationAfterMutation: false, hygieneClean: false });
+      floors[fixture] = { score, scoring, publicTestPasses: graded.publicTest.code === 0, hiddenPasses: graded.hidden.pass, behaviorPasses: graded.hidden.behavior };
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+    process.stdout.write(`${JSON.stringify({ schema: 'codex-harness-ab/calibration/v1', note: 'Score awarded to an untouched fixture. Any engine score must be read against this floor.', floors }, null, 2)}\n`);
+    return;
+  }
   if (flag('list')) {
     process.stdout.write(`${JSON.stringify(listFixtures(), null, 2)}\n`);
     return;
@@ -718,4 +890,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   await main();
 }
 
-export { aggregate, byFixture, ENGINES, gateVerdict, isMutation, isVerification, parityReport, referenceArgs, referenceEnv, REFERENCE_SCRUBBED_ENV, schedule, summarizeTrace, TAXONOMY, workspaceViolations };
+export { aggregate, byFixture, componentScores, ENGINES, isScratchPath, scratchWrites, shellPayload, stripHeredocs, prepareReferenceConfigDir, renderParity, gateVerdict, isMutation, isVerification, parityReport, referenceArgs, referenceEnv, REFERENCE_SCRUBBED_ENV, schedule, summarizeTrace, TAXONOMY, workspaceViolations };
