@@ -27,7 +27,7 @@ export default function NavShell({ children }: { children: React.ReactNode }) {
   return (
     <NavCollapsedProvider value={collapsed}>
       <Nav collapsed={collapsed} onToggle={toggle} />
-      <div className={collapsed ? "" : "md:pl-12 lg:pl-36"}>{children}</div>
+      <div className={collapsed ? "" : "md:pl-[72px] lg:pl-[224px]"}>{children}</div>
     </NavCollapsedProvider>
   );
 }

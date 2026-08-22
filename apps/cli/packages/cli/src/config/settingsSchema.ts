@@ -1460,9 +1460,9 @@ const SETTINGS_SCHEMA = {
         label: 'Skip Loop Detection',
         category: 'Model',
         requiresRestart: false,
-        default: false,
+        default: true,
         description:
-          'Skip headless loop heuristics (content/thought repetition, read/action/shell stagnation, global duplicates, and alternating calls). Interactive sessions always skip these broad heuristics. Headless runs default to false. Exact consecutive calls and the per-turn cap remain active in every mode.',
+          'Skip broad loop heuristics (content/thought repetition, read/action/shell stagnation, global duplicates, and alternating calls). This defaults to true because legitimate file exploration often resembles a loop. Set to false to opt into the heuristics. Exact consecutive calls and the per-turn cap remain active in every mode.',
         showInDialog: false,
       },
       maxToolCallsPerTurn: {

@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { resolveSafe } from "@/lib/tools";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
+import { DEFAULT_WORKSPACE, workspaceGrantRepository } from "@/lib/workspace-grants";
 
 export const dynamic = "force-dynamic";
 
@@ -9,13 +11,13 @@ export const dynamic = "force-dynamic";
 // so describe_image (a workspace-file tool) can actually see it — without this,
 // showing the agent a screenshot meant copying it into the workspace by hand
 // outside the app entirely.
-const DEFAULT_WORKSPACE = path.join(path.resolve(process.cwd(), ".."), "workspace");
-
 export async function POST(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const b = await req.json().catch(() => ({}));
-  const project = typeof b.project === "string" && b.project ? b.project : DEFAULT_WORKSPACE;
-  let root: string;
-  try { root = fs.realpathSync(path.resolve(project)); } catch { return NextResponse.json({ error: "project not found" }, { status: 400 }); }
+  if (!(typeof b.project === "string" && b.project)) fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true });
+  const root = workspaceGrantRepository.resolveGrantedDirectory(typeof b.project === "string" && b.project ? b.project : DEFAULT_WORKSPACE);
+  if (!root) return NextResponse.json({ error: "project is not owner-granted or no longer exists" }, { status: 403 });
 
   const name = String(b.filename || "upload").replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80) || "upload";
   const dataUrl = String(b.dataUrl || "");

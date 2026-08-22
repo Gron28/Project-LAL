@@ -86,6 +86,100 @@ export function ServingStatusWidget({ ctx }: { ctx: WidgetCtx }) {
   );
 }
 
+function rate(value: number | null) {
+  return value == null ? "—" : `${value.toFixed(value >= 100 ? 0 : 1)} tok/s`;
+}
+
+/** Native llama.cpp counters, intentionally separate from request-ledger averages.
+ * This makes a stalled prefill, lost slot, or disabled metrics endpoint visible
+ * even before a request has reached LAL's own gateway. */
+export function RuntimeTelemetryWidget({ ctx }: { ctx: WidgetCtx }) {
+  const telemetry = ctx.snap?.runtime.telemetry;
+  if (!telemetry) return empty;
+  if (telemetry.state === "not-running") return <div className="h-full flex items-center justify-center text-[10px] text-[var(--muted)]">llama.cpp is idle</div>;
+  if (telemetry.state !== "ready") return <div className="h-full flex flex-col items-center justify-center gap-1 text-[10px] text-[var(--accent-warn)]"><span>runtime telemetry unavailable</span><span className="text-[var(--muted)] truncate max-w-full">{telemetry.error || "waiting for metrics"}</span></div>;
+  const active = telemetry.slots.find((slot) => slot.processing);
+  const slotDetail = active
+    ? `${active.cachedTokens ?? 0} cached · ${active.decodedTokens ?? 0} out`
+    : telemetry.slotsAvailable ? `${telemetry.slots.length} slot${telemetry.slots.length === 1 ? "" : "s"} observed` : "slot endpoint unavailable";
+  return (
+    <div className="flex flex-col gap-1.5 h-full justify-center text-[10px]">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+        <div className="flex justify-between gap-1"><span className="text-[var(--muted)]">prefill</span><span className="text-[var(--text)]">{rate(telemetry.promptTokensPerSecond)}</span></div>
+        <div className="flex justify-between gap-1"><span className="text-[var(--muted)]">decode</span><span className="text-[var(--accent-ai)]">{rate(telemetry.predictedTokensPerSecond)}</span></div>
+        <div className="flex justify-between gap-1"><span className="text-[var(--muted)]">KV cache</span><span>{telemetry.kvCacheUsagePct == null ? "—" : `${telemetry.kvCacheUsagePct}%`}</span></div>
+        <div className="flex justify-between gap-1"><span className="text-[var(--muted)]">slots</span><span>{telemetry.busySlots == null ? "—" : `${telemetry.busySlots}/${telemetry.totalSlots ?? "?"}`}</span></div>
+      </div>
+      <div className="border-t border-[var(--border-soft)] pt-1 text-[var(--muted)] truncate" title={slotDetail}>{active ? "active · " : "idle · "}{slotDetail}</div>
+      {telemetry.error && <div className="text-[var(--accent-warn)] truncate" title={telemetry.error}>partial: {telemetry.error}</div>}
+    </div>
+  );
+}
+
+export function GuardianStatusWidget({ ctx }: { ctx: WidgetCtx }) {
+  const guardian = ctx.snap?.guardian;
+  if (!guardian) return empty;
+  const starts = guardian.events.filter((event) => event.kind === "process_started").length;
+  const exits = guardian.events.filter((event) => event.kind === "process_exited").length;
+  const networkOpens = guardian.events.filter((event) => event.kind === "network_opened").length;
+  const latest = guardian.events[0];
+  const latestText = !latest ? "passive observer · no events yet"
+    : "process" in latest ? `${latest.kind === "process_started" ? "new" : "exit"} · ${latest.process.executable} · pid ${latest.process.pid}`
+      : `${latest.kind === "network_opened" ? "open" : "closed"} · ${latest.connection.process || "unattributed"} → ${latest.connection.remoteAddress}:${latest.connection.remotePort ?? "*"}`;
+  return (
+    <div className="flex flex-col gap-1.5 h-full justify-center text-[10px]">
+      <div className="flex justify-between"><span className="text-[var(--muted)]">processes</span><span className="text-[var(--accent-success)]">{guardian.processCount} observed</span></div>
+      <div className="flex justify-between"><span className="text-[var(--muted)]">executable proof</span><span className={guardian.executableHashCount ? "text-[var(--accent-ai)]" : "text-[var(--muted)]"}>{guardian.executableHashCount}/{guardian.processCount} hashed</span></div>
+      <div className="flex justify-between"><span className="text-[var(--muted)]">process guards</span><span className="text-[var(--text-2)]">{guardian.capabilityProcessCount} caps · {guardian.noNewPrivilegesProcessCount} NNP</span></div>
+      <div className="flex justify-between"><span className="text-[var(--muted)]">network</span><span className={guardian.networkObserver === "available" ? "text-[var(--accent-success)]" : "text-[var(--accent-warn)]"}>{guardian.networkObserver === "available" ? `${guardian.connectionCount} sockets` : "unavailable"}</span></div>
+      <div className="flex justify-between"><span className="text-[var(--muted)]">session events</span><span>+{starts} / −{exits} · {networkOpens} net</span></div>
+      <div className="flex gap-1 text-[9px] text-[var(--muted)]"><span className="text-[var(--accent-ai)]">● processes</span><span className={guardian.coverage.network ? "text-[var(--accent-ai)]" : ""}>{guardian.coverage.network ? "●" : "○"} network</span><span>○ files</span><span>○ malware</span></div>
+      <div className="border-t border-[var(--border-soft)] pt-1 text-[var(--muted)] truncate" title={latestText}>
+        {latestText}
+      </div>
+      {guardian.error && <div className="text-[var(--accent-danger)] truncate" title={guardian.error}>process sensor: unavailable</div>}
+      {guardian.networkError && <div className="text-[var(--accent-warn)] truncate" title={guardian.networkError}>network sensor: unavailable</div>}
+    </div>
+  );
+}
+
+function guardianEventText(event: NonNullable<Snapshot["guardian"]["events"][number]>) {
+  if ("process" in event) return `${event.kind === "process_started" ? "+" : "−"} process · ${event.process.executable} · ${event.process.pid}`;
+  return `${event.kind === "network_opened" ? "→" : "×"} ${event.connection.process || "unknown"} · ${event.connection.remoteAddress}:${event.connection.remotePort ?? "*"}`;
+}
+
+export function GuardianTimelineWidget({ ctx }: { ctx: WidgetCtx }) {
+  const guardian = ctx.snap?.guardian;
+  if (!guardian) return empty;
+  if (!guardian.events.length) return <div className="h-full flex items-center justify-center text-[10px] text-[var(--muted)]">no Guardian events in this WebUI session</div>;
+  return <div className="h-full overflow-auto text-[10px]">
+    {guardian.events.slice(0, 30).map((event, index) => <div key={`${event.ts}-${index}`} className="flex gap-2 border-b border-[var(--border-soft)] py-1"><span className="shrink-0 text-[var(--muted)]">{new Date(event.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span><span className="truncate" title={guardianEventText(event)}>{guardianEventText(event)}</span></div>)}
+  </div>;
+}
+
+export function GuardianAdaptersWidget({ ctx }: { ctx: WidgetCtx }) {
+  const adapters = ctx.snap?.guardianAdapters;
+  if (!adapters) return empty;
+  const ready = adapters.filter((adapter) => adapter.state === "available").length;
+  return <div className="flex h-full flex-col gap-1 text-[10px]">
+    <div className="flex justify-between border-b border-[var(--border-soft)] pb-1"><span className="text-[var(--muted)]">existing local defenses</span><span className={ready ? "text-[var(--accent-success)]" : "text-[var(--muted)]"}>{ready}/{adapters.length} ready</span></div>
+    <div className="min-h-0 flex-1 overflow-auto">
+      {adapters.map((adapter) => <div key={adapter.id} className="flex items-center justify-between gap-2 py-0.5"><span className="truncate" title={adapter.capabilities.join(", ")}>{adapter.name}</span><span className={adapter.state === "available" ? "text-[var(--accent-success)]" : "text-[var(--muted)]"}>{adapter.state === "available" ? "detected" : "not installed"}</span></div>)}
+    </div>
+  </div>;
+}
+
+export function GuardianFindingsWidget({ ctx }: { ctx: WidgetCtx }) {
+  const evidence = ctx.snap?.guardianEvidence;
+  if (!evidence) return empty;
+  if (!evidence.findings.length) return <div className="h-full flex flex-col items-center justify-center gap-1 text-[10px] text-[var(--muted)]"><span>no governed findings yet</span><span className="opacity-70">adapters are read-only until a scan is authorized</span></div>;
+  const tone = (severity: string) => severity === "critical" || severity === "high" ? "var(--accent-danger)" : severity === "medium" ? "var(--accent-warn)" : "var(--accent-ai)";
+  return <div className="h-full overflow-auto text-[10px]">
+    {!evidence.integrity && <div className="mb-1 rounded border border-[var(--accent-danger)] px-1 py-0.5 text-[var(--accent-danger)]">finding ledger integrity failed</div>}
+    {evidence.findings.map((finding) => <div key={finding.id} className="border-b border-[var(--border-soft)] py-1"><div className="flex gap-2"><span className="uppercase" style={{ color: tone(finding.severity) }}>{finding.severity}</span><span className="truncate" title={finding.title}>{finding.title}</span></div><div className="truncate text-[var(--muted)]" title={finding.target}>{finding.source} · {finding.target}</div></div>)}
+  </div>;
+}
+
 export function TrainLiveWidget({ ctx }: { ctx: WidgetCtx }) {
   const snap = ctx.snap; if (!snap) return empty;
   if (!snap.train.running) return <div className="h-full flex items-center justify-center text-[10px] text-[var(--muted)]">no training run active</div>;
@@ -210,8 +304,8 @@ export function QuickActionsWidget() {
     <div className="grid grid-cols-2 gap-2 h-full content-center">
       <Link href="/chat" className={btn}>Chat</Link>
       <Link href="/train" className={btn}>Train</Link>
-      <Link href="/benchmark" className={btn}>Bench</Link>
-      <Link href="/library" className={btn}>Library</Link>
+      <Link href="/benchmark" className={btn}>Evaluation</Link>
+      <Link href="/library" className={btn}>History</Link>
     </div>
   );
 }
@@ -272,7 +366,7 @@ export function QuickChatWidget({ ctx }: { ctx: WidgetCtx }) {
 
   return (
     <div className="flex flex-col h-full gap-1.5">
-      <select value={model} onChange={(e) => changeModel(e.target.value)}
+      <select aria-label="Quick chat model" value={model} onChange={(e) => changeModel(e.target.value)}
         className="shrink-0 w-full bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-1 text-[9px] text-[var(--text)] outline-none">
         {model && !ctx.snap?.models.some((m) => m.name === model) && <option value={model}>{model}</option>}
         {(ctx.snap?.models || []).map((m) => <option key={m.name} value={m.name}>{shortName(m.name)}</option>)}
@@ -287,7 +381,7 @@ export function QuickChatWidget({ ctx }: { ctx: WidgetCtx }) {
         <div ref={endRef} />
       </div>
       <div className="flex gap-1 shrink-0">
-        <input value={text} onChange={(e) => setText(e.target.value)}
+        <input aria-label="Quick chat message" value={text} onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           placeholder="quick ask…" disabled={busy}
           className="flex-1 min-w-0 bg-[var(--surface-2)] border border-[var(--border)] rounded px-2 py-1 text-[10px] text-[var(--text)] outline-none focus:border-[var(--border-loud)]" />
@@ -356,10 +450,10 @@ export function QuickTrainWidget({ ctx }: { ctx: WidgetCtx }) {
   }
   return (
     <div className="flex flex-col gap-1.5 h-full justify-center">
-      <select value={base} onChange={(e) => setBase(e.target.value)} className={sel}>
+      <select aria-label="Quick training base model" value={base} onChange={(e) => setBase(e.target.value)} className={sel}>
         {bases.map((b) => <option key={b} value={b}>{b.split("/").pop()}</option>)}
       </select>
-      <select value={dataFile} onChange={(e) => setDataFile(e.target.value)} className={sel}>
+      <select aria-label="Quick training dataset" value={dataFile} onChange={(e) => setDataFile(e.target.value)} className={sel}>
         {dataFiles.map((f) => <option key={f.name} value={f.name}>{f.name}</option>)}
       </select>
       <button onClick={start} disabled={busy || !base || !dataFile}
@@ -397,10 +491,10 @@ export function QuickBenchWidget({ ctx }: { ctx: WidgetCtx }) {
   const sel = "flex-1 min-w-0 bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-1 text-[9px] text-[var(--text)] outline-none";
   return (
     <div className="flex flex-col gap-1.5 h-full justify-center">
-      <select value={suite} onChange={(e) => setSuiteOverride(e.target.value)} className={sel}>
+      <select aria-label="Quick evaluation suite" value={suite} onChange={(e) => setSuiteOverride(e.target.value)} className={sel}>
         {snap.battery.suites.map((s) => <option key={s} value={s}>{s}</option>)}
       </select>
-      <select value={model} onChange={(e) => setModelOverride(e.target.value)} className={sel}>
+      <select aria-label="Quick evaluation model" value={model} onChange={(e) => setModelOverride(e.target.value)} className={sel}>
         {snap.models.map((m) => <option key={m.name} value={m.name}>{shortName(m.name)}</option>)}
       </select>
       <button onClick={run} disabled={busy || !suite || !model}
@@ -527,6 +621,11 @@ export const WIDGETS: Record<string, WidgetDef> = {
   "cpu-ram": { title: "CPU / RAM", minW: 3, minH: 1, defW: 3, defH: 3, component: CpuRamWidget },
   temps: { title: "Temps", minW: 1, minH: 1, defW: 2, defH: 2, component: TempsWidget },
   "serving-status": { title: "Serving", minW: 1, minH: 1, defW: 3, defH: 2, component: ServingStatusWidget },
+  "runtime-telemetry": { title: "Runtime telemetry", minW: 3, minH: 2, defW: 4, defH: 3, component: RuntimeTelemetryWidget },
+  "guardian-status": { title: "Guardian coverage", minW: 3, minH: 2, defW: 4, defH: 3, component: GuardianStatusWidget },
+  "guardian-timeline": { title: "Guardian timeline", minW: 4, minH: 3, defW: 5, defH: 5, component: GuardianTimelineWidget },
+  "guardian-adapters": { title: "Guardian adapters", minW: 3, minH: 3, defW: 5, defH: 4, component: GuardianAdaptersWidget },
+  "guardian-findings": { title: "Guardian findings", minW: 4, minH: 3, defW: 6, defH: 4, component: GuardianFindingsWidget },
   "train-live": { title: "Training (live)", minW: 4, minH: 2, defW: 6, defH: 4, component: TrainLiveWidget },
   "train-kpis": { title: "Training KPIs", minW: 2, minH: 1, defW: 3, defH: 2, component: TrainKpisWidget },
   "train-history": { title: "Train history", minW: 3, minH: 2, defW: 4, defH: 4, component: TrainHistoryWidget },

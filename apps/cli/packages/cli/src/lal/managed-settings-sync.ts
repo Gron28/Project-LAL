@@ -18,7 +18,17 @@ type ManagedModel = {
 };
 
 type ManagedSnapshot = {
-  model?: { name?: unknown };
+  model?: {
+    name?: unknown;
+    maxSessionTurns?: unknown;
+    skipLoopDetection?: unknown;
+    maxToolCallsPerTurn?: unknown;
+  };
+  tools?: {
+    shell?: {
+      defaultTimeoutMs?: unknown;
+    };
+  };
   modelProviders?: ModelProvidersConfig;
 };
 
@@ -36,6 +46,8 @@ export function startManagedSettingsSync(
   options: {
     intervalMs?: number;
     client?: Pick<GatewayClient, 'fetchClientSettings'>;
+    /** Preserve a model selected explicitly by `--model` on first sync. */
+    preserveInitialModel?: boolean;
   } = {},
 ): ManagedSettingsSyncHandle {
   const client = options.client ?? new GatewayClient();
@@ -69,10 +81,20 @@ export function startManagedSettingsSync(
     if (stopped || running) return;
     running = true;
     try {
-      const raw = (await client.fetchClientSettings()) as ManagedSnapshot | null;
+      const raw =
+        (await client.fetchClientSettings()) as ManagedSnapshot | null;
       if (stopped) return;
-      if (!raw?.modelProviders || !raw.model || typeof raw.model.name !== 'string') return;
-      const snapshot = JSON.stringify({ model: raw.model, modelProviders: raw.modelProviders });
+      if (
+        !raw?.modelProviders ||
+        !raw.model ||
+        typeof raw.model.name !== 'string'
+      )
+        return;
+      const snapshot = JSON.stringify({
+        model: raw.model,
+        tools: raw.tools,
+        modelProviders: raw.modelProviders,
+      });
       if (snapshot === lastSnapshot) return;
       const nextDefault = raw.model.name;
       const initial = !lastSnapshot;
@@ -81,16 +103,77 @@ export function startManagedSettingsSync(
       previousDefault = nextDefault;
 
       config.reloadModelProvidersConfig(raw.modelProviders);
+      const managedPolicy = [
+        ...(typeof raw.model.maxSessionTurns === 'number'
+          ? [
+              {
+                key: 'model.maxSessionTurns',
+                value: raw.model.maxSessionTurns,
+              },
+            ]
+          : []),
+        ...(typeof raw.model.skipLoopDetection === 'boolean'
+          ? [
+              {
+                key: 'model.skipLoopDetection',
+                value: raw.model.skipLoopDetection,
+              },
+            ]
+          : []),
+        ...(typeof raw.model.maxToolCallsPerTurn === 'number'
+          ? [
+              {
+                key: 'model.maxToolCallsPerTurn',
+                value: raw.model.maxToolCallsPerTurn,
+              },
+            ]
+          : []),
+        ...(typeof raw.tools?.shell?.defaultTimeoutMs === 'number'
+          ? [
+              {
+                key: 'tools.shell.defaultTimeoutMs',
+                value: raw.tools.shell.defaultTimeoutMs,
+              },
+            ]
+          : []),
+      ];
       settings.setValues([
-        { scope: SettingScope.User, key: 'modelProviders', value: raw.modelProviders },
+        {
+          scope: SettingScope.User,
+          key: 'modelProviders',
+          value: raw.modelProviders,
+        },
         { scope: SettingScope.User, key: 'model.name', value: nextDefault },
+        ...managedPolicy.map((value) => ({
+          scope: SettingScope.User,
+          ...value,
+        })),
       ]);
+
+      if (typeof raw.model.maxSessionTurns === 'number') {
+        config.setMaxSessionTurns(raw.model.maxSessionTurns);
+      }
+      if (typeof raw.model.skipLoopDetection === 'boolean') {
+        config.setSkipLoopDetection(raw.model.skipLoopDetection);
+      }
+      if (typeof raw.model.maxToolCallsPerTurn === 'number') {
+        config.setMaxToolCallsPerTurn(raw.model.maxToolCallsPerTurn);
+      }
+      if (typeof raw.tools?.shell?.defaultTimeoutMs === 'number') {
+        config.setShellDefaultTimeoutMs(raw.tools.shell.defaultTimeoutMs);
+      }
 
       // Adopt the host default at startup. During a live session, follow a
       // default change only if the terminal was still using the prior default;
       // an explicit local /model choice remains a session override.
-      if ((initial || config.getModel() === previous) && config.getModel() !== nextDefault) {
-        await config.setModel(nextDefault, { reason: 'LAL host default synchronized' });
+      if (
+        ((initial && !options.preserveInitialModel) ||
+          (!initial && config.getModel() === previous)) &&
+        config.getModel() !== nextDefault
+      ) {
+        await config.setModel(nextDefault, {
+          reason: 'LAL host default synchronized',
+        });
       }
       applyCurrentProfile(raw.modelProviders);
     } catch {

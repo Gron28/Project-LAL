@@ -28,7 +28,7 @@ export const CODE_MODE_NAMES: readonly CodeModeName[] = [
 
 export interface CodeModePreset {
   label: string;
-  /** Session turn ceiling — maps to Config.setMaxSessionTurns(). */
+  /** Session turn ceiling. Negative values leave the session unlimited. */
   maxRounds: number;
   /** Per-response output token ceiling — maps to samplingParams.max_tokens. */
   maxTokens: number;
@@ -85,7 +85,7 @@ PROGRESS RULE: after each stage completes, send one short line naming the stage,
 export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   default: {
     label: 'default',
-    maxRounds: 24,
+    maxRounds: -1,
     maxTokens: DEFAULT_CODE_MODE_MAX_TOKENS,
     think: true,
     temperature: 0,
@@ -93,7 +93,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   },
   'quick-edit': {
     label: 'quick-edit',
-    maxRounds: 8,
+    maxRounds: -1,
     maxTokens: DEFAULT_CODE_MODE_MAX_TOKENS,
     think: false,
     temperature: 0,
@@ -102,7 +102,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   },
   planning: {
     label: 'planning',
-    maxRounds: 16,
+    maxRounds: -1,
     maxTokens: DEFAULT_CODE_MODE_MAX_TOKENS,
     think: true,
     temperature: 0,
@@ -112,7 +112,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   },
   'deep-research': {
     label: 'deep-research',
-    maxRounds: 64,
+    maxRounds: -1,
     maxTokens: DEFAULT_CODE_MODE_MAX_TOKENS,
     think: true,
     temperature: 0.3,
@@ -121,7 +121,7 @@ export const CODE_MODE_PRESETS: Record<CodeModeName, CodeModePreset> = {
   },
   orchestrator: {
     label: 'orchestrator',
-    maxRounds: 120,
+    maxRounds: -1,
     maxTokens: DEFAULT_CODE_MODE_MAX_TOKENS,
     think: true,
     temperature: 0.2,

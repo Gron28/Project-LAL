@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { ContextProfileStore, contextCandidates, makeContextProfile, readGgufContextLength } from "./context-profile.ts";
+import { ContextProfileStore, contextCandidates, contextProbeCandidates, makeContextProfile, readGgufContextLength } from "./context-profile.ts";
 
 function string(value: string): Buffer {
   const bytes = Buffer.from(value);
@@ -13,7 +13,19 @@ function string(value: string): Buffer {
 
 test("context candidates prefer the largest supported verified tier", () => {
   assert.deepEqual(contextCandidates(70_000), [65_536, 32_768, 16_384, 8_192]);
+  assert.deepEqual(contextCandidates(262_144), [262_144, 131_072, 65_536, 32_768, 16_384, 8_192]);
   assert.deepEqual(contextCandidates(20_000), [16_384, 8_192]);
+});
+
+test("context probing resumes above the highest verified tier", () => {
+  assert.deepEqual(contextProbeCandidates(262_144, 100_000), {
+    ascending: [131_072, 262_144],
+    fallbacks: [],
+  });
+  assert.deepEqual(contextProbeCandidates(70_000, null), {
+    ascending: [32_768, 65_536],
+    fallbacks: [16_384, 8_192],
+  });
 });
 
 test("reads native context length from GGUF metadata without tensor data", (t) => {

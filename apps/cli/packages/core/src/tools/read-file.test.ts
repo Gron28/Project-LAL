@@ -813,12 +813,12 @@ describe('ReadFileTool', () => {
 
         const second = await read({ file_path: filePath });
         expect(typeof second.llmContent).toBe('string');
-        expect(second.llmContent).toMatch(
-          /unchanged since last read in this session/,
-        );
+        expect(second.llmContent).toMatch(/is unchanged/);
+        expect(second.llmContent).toMatch(/do not call read_file/);
         // Placeholder must not echo the original content.
         expect(second.llmContent).not.toContain('hello world');
         expect(second.returnDisplay).toMatch(/^Unchanged: /);
+        expect(second.returnDisplay).toContain('Do not read this file again');
       });
 
       it('re-emits bytes (no placeholder) after the read was evicted from history by microcompaction (issue #4239)', async () => {
@@ -836,13 +836,11 @@ describe('ReadFileTool', () => {
         // the model can no longer retrieve — it must re-emit real bytes.
         const second = await read({ file_path: filePath });
         expect(second.llmContent).toBe('hello world');
-        expect(second.llmContent).not.toMatch(/unchanged since/);
+        expect(second.llmContent).not.toMatch(/is unchanged/);
 
         // And a re-read re-arms the fast-path (bytes are back in history).
         const third = await read({ file_path: filePath });
-        expect(third.llmContent).toMatch(
-          /unchanged since last read in this session/,
-        );
+        expect(third.llmContent).toMatch(/is unchanged/);
       });
 
       it('a partial read after eviction does NOT re-arm the placeholder (Codex P2)', async () => {

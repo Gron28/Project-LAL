@@ -170,7 +170,10 @@ import { ideContextStore } from '../ide/ideContext.js';
 import { type File, type IdeContext } from '../ide/types.js';
 import { PermissionMode, type StopHookOutput } from '../hooks/types.js';
 
-const MAX_TURNS = 100;
+// Last-resort fuse for malformed providers that request another speaker turn
+// forever. Productive managed sessions and tool loops have their own policy;
+// this is deliberately far above the old user-visible 100-turn interruption.
+const MAX_TURNS = 1000;
 /**
  * PLAN 6 — how many times the runtime hands validation failures back before it
  * stops and reports honestly. Two, because the third attempt on the same defect

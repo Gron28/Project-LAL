@@ -362,15 +362,19 @@ class ReadFileToolInvocation extends BaseToolInvocation<
       makeRelative(absPath, this.config.getTargetDir()),
     );
     const llmContent =
-      `[File ${relativePath} unchanged since last read in this session — ` +
-      `the full content was provided earlier in this conversation. ` +
-      `If you cannot retrieve that prior content (e.g. after context ` +
-      `compaction) or you suspect the file was modified outside the read/edit ` +
-      `tools (shell command, MCP tool, another process), re-read with ` +
-      `explicit offset/limit to fetch current content.]`;
+      `[File ${relativePath} is unchanged. STOP: do not call read_file on it ` +
+      `again; continue using the full content already provided earlier in this ` +
+      `conversation. Only if that content was lost to context compaction, or ` +
+      `you have concrete evidence of an external shell/MCP/process mutation, ` +
+      `make one explicit offset/limit read.]`;
     return {
       llmContent,
-      returnDisplay: `Unchanged: ${relativePath}`,
+      // Managed stream transports may surface returnDisplay as the model's
+      // tool-result text. Keep the anti-loop instruction here as well as in
+      // llmContent instead of reducing it to an ambiguous cache status.
+      returnDisplay:
+        `Unchanged: ${relativePath}. Do not read this file again; ` +
+        `continue using the content already provided.`,
     };
   }
 }

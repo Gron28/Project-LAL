@@ -14,22 +14,22 @@
      (#3fa4b0 accent, #1e4a4c borders) while the terminal went lime-green and
      yellow; opening both side by side looked like two different tools. Hex values
      here are the CLI's, not approximations of them. */
-  --bg: #0b0f0c;            /* lal-dark Background */
-  --surface-1: #101613;
-  --surface-2: #161d18;
-  --surface-3: #1d261f;
+  --bg: #0b0d0c;
+  --surface-1: #111411;
+  --surface-2: #171b18;
+  --surface-3: #202620;
   --panel: var(--surface-1);
 
   /* Green-tinted neutrals rather than teal, so borders stop competing with the
      lime accent for attention. */
-  --border: #26312a;
-  --border-soft: #1a221d;
+  --border: #303730;
+  --border-soft: #222722;
   --border-loud: #a9ff73;   /* lal-dark AccentBlue slot — focused borders */
 
-  --text: #f2f7f1;          /* lal-dark Foreground */
-  --text-1: #f2f7f1;
-  --text-2: #b9c7b6;
-  --text-3: #7d8c79;
+  --text: #f4f6f1;
+  --text-1: #f4f6f1;
+  --text-2: #c2c9be;
+  --text-3: #899186;
   --muted: var(--text-3);
 
   /* The CLI's two signature hues: lime-green for anything active or agentic,
@@ -48,9 +48,9 @@
 
   /* Sharper corners. A terminal has square edges, and 12px radii on every panel
      was the single loudest thing making the web app feel unrelated to the CLI. */
-  --r-sm: 2px;
-  --r-md: 3px;
-  --r-lg: 4px;
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
   --r-full: 999px;
   --shadow-bubble: 0 1px 0 rgba(169,255,115,0.04);
 
@@ -61,6 +61,38 @@ html, body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+}
+body {
+  background-image:
+    radial-gradient(circle at 82% -10%, rgba(169, 255, 115, 0.055), transparent 31rem),
+    linear-gradient(rgba(255, 255, 255, 0.012) 1px, transparent 1px);
+  background-size: auto, 100% 32px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+::selection { background: rgba(169, 255, 115, 0.28); color: var(--text); }
+a, button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button, a, input, select, textarea { outline: none; }
+:focus-visible { outline: 2px solid var(--accent-ai) !important; outline-offset: 2px; }
+button:disabled { cursor: not-allowed; }
+.skip-link {
+  position: fixed; z-index: 100; left: 12px; top: 10px; transform: translateY(-160%);
+  border-radius: var(--r-md); background: var(--accent-ai); color: #071006;
+  padding: 9px 13px; font-weight: 700; transition: transform .15s ease;
+}
+.skip-link:focus { transform: translateY(0); }
+.page-shell { min-height: 100dvh; padding: 28px 28px 72px; }
+.page-frame { width: min(100%, 1480px); margin-inline: auto; }
+.page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+.page-eyebrow { color: var(--accent-ai); font: 700 11px/1 var(--font-data); letter-spacing: .16em; text-transform: uppercase; }
+.page-title { margin-top: 8px; font-size: clamp(26px, 3vw, 42px); line-height: 1.05; letter-spacing: -.035em; font-weight: 680; }
+.page-description { margin-top: 9px; max-width: 680px; color: var(--text-3); font-size: 14px; }
+.control-label { display: block; margin-bottom: 7px; color: var(--text-3); font-size: 11px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+.control { min-height: 42px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); color: var(--text); padding: 9px 12px; }
+@media (max-width: 767px) {
+  .page-shell { padding: 18px 16px calc(84px + env(safe-area-inset-bottom)); }
+  .page-header { align-items: flex-start; flex-direction: column; gap: 14px; margin-bottom: 18px; }
+  .page-title { font-size: 30px; }
 }
 
 @keyframes fade-in { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }
@@ -99,4 +131,5 @@ html, body { max-width: 100%; overflow-x: clip; }
 .signal-bar { transform-origin: bottom; animation: signal-bar 1s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
   .signal-bar { animation: none; transform: scaleY(0.7); }
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

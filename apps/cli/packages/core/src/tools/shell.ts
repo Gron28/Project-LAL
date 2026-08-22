@@ -2570,7 +2570,11 @@ export class ShellToolInvocation extends BaseToolInvocation<
 
       llmContent = [
         `Command: ${this.params.command}`,
-        `Directory: ${this.params.directory || '(root)'}`,
+        // "(root)" was ambiguous to local models: several interpreted it as
+        // filesystem `/` rather than the configured project root and then
+        // tried to repair an execution that had actually succeeded. Always
+        // return the concrete cwd that ShellExecutionService used.
+        `Directory: ${this.params.directory || this.config.getTargetDir()}`,
         `Output: ${result.output || '(empty)'}`,
         `Error: ${finalError}`, // Use the cleaned error string.
         `Exit Code: ${result.exitCode ?? '(none)'}`,
@@ -4767,7 +4771,7 @@ IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO N
 
 **Usage notes**:
 - The command argument is required.
-- You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). If not specified, commands will timeout after 120000ms (2 minutes).
+- You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). If omitted, the configured default applies (120000ms / 2 minutes unless the host overrides it).
 - It is very helpful if you write a clear, concise description of what this command does in 5-10 words.
 
 - Avoid using run_shell_command with the \`find\`, \`grep\`, \`cat\`, \`head\`, \`tail\`, \`sed\`, \`awk\`, or \`echo\` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:

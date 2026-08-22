@@ -1109,7 +1109,7 @@ describe('loadCliConfig', () => {
     expect(config.getIncludePartialMessages()).toBe(true);
   });
 
-  it('defaults broad loop heuristics on for interactive sessions', async () => {
+  it('defaults broad loop heuristics off for interactive sessions', async () => {
     process.argv = [
       'node',
       'script.js',
@@ -1119,15 +1119,15 @@ describe('loadCliConfig', () => {
     const argv = await parseArguments();
     const config = await loadCliConfig({}, argv);
 
-    expect(config.getSkipLoopDetection()).toBe(false);
+    expect(config.getSkipLoopDetection()).toBe(true);
   });
 
-  it('defaults broad loop heuristics on for unattended headless runs', async () => {
+  it('defaults broad loop heuristics off for unattended headless runs', async () => {
     process.argv = ['node', 'script.js', '--prompt', 'finish this project'];
     const argv = await parseArguments();
     const config = await loadCliConfig({}, argv);
 
-    expect(config.getSkipLoopDetection()).toBe(false);
+    expect(config.getSkipLoopDetection()).toBe(true);
   });
 
   it('honors an explicit loop heuristic opt-out in interactive mode', async () => {

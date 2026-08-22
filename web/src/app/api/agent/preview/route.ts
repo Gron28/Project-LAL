@@ -7,11 +7,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
-import path from "node:path";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
+import { DEFAULT_WORKSPACE, workspaceGrantRepository } from "@/lib/workspace-grants";
 
 export const dynamic = "force-dynamic";
 
-const DEFAULT_WORKSPACE = path.join(path.resolve(process.cwd(), ".."), "workspace");
 const LOG_CAP_BYTES = 65536;
 const LOG_CAP_LINES = 400;
 // Ports this app/box already depends on — refuse to let a preview collide with them.
@@ -33,12 +33,9 @@ type PreviewState = {
 const g = globalThis as unknown as { __code_preview?: PreviewState };
 
 function projectRoot(raw: string | null): { root: string } | { error: string } {
-  if (!raw) { fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true }); return { root: DEFAULT_WORKSPACE }; }
-  const p = path.resolve(raw);
-  try {
-    if (!fs.statSync(p).isDirectory()) return { error: "not a directory: " + p };
-  } catch { return { error: "directory not found: " + p }; }
-  return { root: p };
+  if (!raw) fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true });
+  const root = workspaceGrantRepository.resolveGrantedDirectory(raw || DEFAULT_WORKSPACE);
+  return root ? { root } : { error: "project is not owner-granted or no longer exists" };
 }
 
 function appendLog(state: PreviewState, chunk: string) {
@@ -80,6 +77,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const b = await req.json().catch(() => null);
   if (!b || typeof b.op !== "string") return NextResponse.json({ error: "expected {op:'start'|'stop', ...}" }, { status: 400 });
 

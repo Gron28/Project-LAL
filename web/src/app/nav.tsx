@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Activity, AlertTriangle, ChevronLeft, ChevronRight, Cpu, Download, LayoutDashboard, MessageSquare, TerminalSquare, GraduationCap, Library, Gauge, Network, Radio, X } from "lucide-react";
+import { AlertTriangle, BarChart3, Boxes, ChevronLeft, ChevronRight, Cpu, Database, Download, LayoutDashboard, MessageSquare, TerminalSquare, GraduationCap, Network, Radio, ShieldCheck, X } from "lucide-react";
 import { ICON_SIZE } from "@/components/ui/icon";
 import { SignalTrace } from "@/components/ui/signal-trace";
 
@@ -153,18 +153,22 @@ function ModelInventoryNotice() {
   </Link>;
 }
 
-// Monitor's sysinfo now lives in dashboard widgets, so it's dropped from nav to
-// keep the mobile bottom bar (h-14) compact — the route itself still exists.
-const items = [
+const primaryItems = [
   { href: "/", label: "Dashboard", Icon: LayoutDashboard },
   { href: "/chat", label: "Chat", Icon: MessageSquare },
   { href: "/code", label: "Code", Icon: TerminalSquare },
   { href: "/hive", label: "Hive", Icon: Network },
-  { href: "/train", label: "Train", Icon: GraduationCap },
-  { href: "/models", label: "Models", Icon: Download },
-  { href: "/monitor", label: "Monitor", Icon: Activity },
-  { href: "/library", label: "Library", Icon: Library },
-  { href: "/benchmark", label: "Bench", Icon: Gauge },
+  { href: "/guardian", label: "Guardian", Icon: ShieldCheck },
+  { href: "/train", label: "Lab", Icon: GraduationCap },
+];
+
+const labPaths = ["/train", "/models", "/benchmark", "/library", "/lens", "/cli"];
+const labItems = [
+  { href: "/train", label: "Training", Icon: GraduationCap },
+  { href: "/models", label: "Models", Icon: Boxes },
+  { href: "/benchmark", label: "Evaluation", Icon: BarChart3 },
+  { href: "/library", label: "History", Icon: Database },
+  { href: "/cli", label: "CLI", Icon: TerminalSquare },
 ];
 
 
@@ -184,7 +188,7 @@ function BrandMark({ size = 16 }: { size?: number }) {
       height={size}
       viewBox="0 0 24 24"
       fill="none"
-      stroke="var(--accent-ai)"
+      stroke="currentColor"
       strokeWidth="2"
       strokeLinecap="square"
       aria-hidden="true"
@@ -203,7 +207,7 @@ function BrandMark({ size = 16 }: { size?: number }) {
 
 export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const p = usePathname();
-  const active = (h: string) => (h === "/" ? p === "/" : p.startsWith(h));
+  const active = (h: string) => h === "/" ? p === "/" : h === "/train" ? labPaths.some((path) => p.startsWith(path)) : p.startsWith(h);
 
   return (
     <>
@@ -213,22 +217,35 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
           screen width; collapsed state takes NO layout space at all, with a small
           floating button left to bring it back. */}
       {!collapsed && (
-        <nav className="hidden md:flex md:flex-col fixed left-0 top-0 h-dvh w-12 lg:w-36 bg-[var(--surface-1)] border-r border-[var(--border)] z-50 py-2 gap-0.5">
-          <div className="px-0 lg:px-3 mb-2 text-center lg:text-left">
-            <span className="flex items-center justify-center lg:justify-start gap-2 text-[var(--text-2)] text-[11px] tracking-wide" style={{ fontFamily: "var(--font-display), monospace" }}>
-              <BrandMark />
+        <nav aria-label="Primary" className="hidden md:flex md:flex-col fixed left-0 top-0 h-dvh w-[72px] lg:w-[224px] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] backdrop-blur-xl border-r border-[var(--border)] z-50 px-2 lg:px-3 py-4 gap-1">
+          <div className="px-1 lg:px-2 mb-5 text-center lg:text-left">
+            <span className="flex items-center justify-center lg:justify-start gap-3 text-[var(--text)] text-sm font-semibold tracking-[-.01em]">
+              <span className="w-9 h-9 grid place-items-center rounded-[var(--r-md)] bg-[var(--accent-ai)] text-[#071006]"><BrandMark size={19} /></span>
               {/* "LAL" everywhere, matching the CLI and the `lal` command, instead of
                   a longer name the terminal never uses. */}
-              <span className="hidden lg:inline">LAL</span>
+              <span className="hidden lg:inline"><b className="block">Local AI Lab</b><small className="block mt-0.5 text-[10px] font-normal uppercase tracking-[.14em] text-[var(--text-3)]">Workstation</small></span>
             </span>
           </div>
-          {items.map(({ href, label, Icon }) => (
+          <div className="hidden lg:block px-2 mb-1 text-[10px] font-semibold uppercase tracking-[.15em] text-[var(--text-3)]">Workspace</div>
+          {primaryItems.map(({ href, label, Icon }) => (
             <Link key={href} href={href}
-              className="flex items-center justify-center lg:justify-start gap-2.5 mx-1.5 px-0 lg:px-2.5 py-2 rounded-[var(--r-md)] text-xs transition-colors"
+              aria-current={active(href) ? "page" : undefined}
+              className="min-h-11 flex items-center justify-center lg:justify-start gap-3 px-0 lg:px-3 rounded-[var(--r-md)] text-[13px] transition-colors"
               style={navItemStyle(active(href))}>
-              <Icon size={ICON_SIZE.md} /><span className="hidden lg:inline">{label}</span>
+              <Icon size={18} /><span className="hidden lg:inline">{label}</span>
             </Link>
           ))}
+          <div className="hidden lg:block mt-5 px-2 mb-1 text-[10px] font-semibold uppercase tracking-[.15em] text-[var(--text-3)]">Lab</div>
+          <div className="hidden lg:flex flex-col gap-0.5">
+            {labItems.map(({ href, label, Icon }) => {
+              const selected = p.startsWith(href) || (href === "/benchmark" && p.startsWith("/lens"));
+              return <Link key={href} href={href} aria-current={selected ? "page" : undefined}
+                className="min-h-9 flex items-center gap-3 rounded-[var(--r-md)] px-3 text-xs transition-colors"
+                style={{ color: selected ? "var(--accent-ai)" : "var(--text-3)", background: selected ? "color-mix(in srgb, var(--accent-ai) 8%, transparent)" : "transparent" }}>
+                <Icon size={14} />{label}
+              </Link>;
+            })}
+          </div>
           <div className="mt-auto">
             <GpuBadge />
             <button onClick={onToggle} title="hide sidebar"
@@ -246,11 +263,11 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
       )}
 
       {/* Mobile: bottom tab bar (unaffected by the desktop rail's collapse state) */}
-      <nav className="flex md:hidden fixed bottom-0 left-0 right-0 h-14 bg-[var(--surface-1)] border-t border-[var(--border)] z-50 pb-[env(safe-area-inset-bottom)] overflow-x-auto">
-        {items.map(({ href, label, Icon }) => (
-          <Link key={href} href={href} className="flex-none min-w-14 flex flex-col items-center justify-center gap-0.5 text-[9px] tracking-wide"
+      <nav aria-label="Primary" className="grid grid-cols-6 md:hidden fixed bottom-0 left-0 right-0 min-h-16 bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] backdrop-blur-xl border-t border-[var(--border)] z-50 pb-[env(safe-area-inset-bottom)]">
+        {primaryItems.map(({ href, label, Icon }) => (
+          <Link key={href} href={href} aria-current={active(href) ? "page" : undefined} className="min-h-16 flex flex-col items-center justify-center gap-1 text-[10px] font-medium tracking-wide"
             style={{ color: active(href) ? "var(--accent-ai)" : "var(--text-2)" }}>
-            <Icon size={ICON_SIZE.md} /><span>{label}</span>
+            <Icon size={19} /><span>{label}</span>
           </Link>
         ))}
       </nav>

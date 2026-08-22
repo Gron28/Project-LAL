@@ -905,24 +905,29 @@ export default function AgentChat() {
   const suggestSwitch = crashed && !lightModel && !suggestDismissed && !streaming;
 
   return (
-    <div className="relative flex flex-col h-app-below-nav bg-[var(--bg)] md:pl-64">
+    <main id="main-content" className="relative flex flex-col h-app-below-nav bg-[var(--bg)] md:pl-64">
+      <h1 className="sr-only">Chat</h1>
       {/* Header */}
-      <div className="shrink-0 flex items-center gap-2 px-3 h-12 border-b border-[var(--border-soft)]">
+      <div className="shrink-0 flex items-center gap-2 px-3 min-h-14 border-b border-[var(--border-soft)] bg-[var(--bg)]/90 backdrop-blur-md">
         <button
           onClick={() => { setListOpen((v) => !v); loadConvos(); }}
-          className="md:hidden text-[var(--muted)] hover:text-white px-1.5 py-1 -ml-1 inline-flex items-center"
+          className="md:hidden text-[var(--muted)] hover:text-white w-10 h-10 -ml-1 inline-flex items-center justify-center rounded-[var(--r-md)]"
           title="Chats"
           aria-label="Chats"
         >
           <Menu size={18} />
         </button>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">Chat</div>
+          <div className="hidden sm:block text-[11px] text-[var(--muted)] truncate">{convoId ? "Local conversation" : "New conversation"}</div>
+        </div>
+        <div className="ml-auto flex items-center gap-1.5 overflow-x-auto">
           <div className="hidden sm:block"><StatsGlance usage={usage} /></div>
           <button
             onClick={() => toggleModes(!webMode, docsMode)}
             title={webMode ? "Web grounding ON — replies use live search" : "Ground replies in live web search"}
             aria-label="Toggle web grounding"
-            className={`p-1.5 border rounded-[var(--r-sm)] ${webMode ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-white"}`}
+            className={`w-9 h-9 shrink-0 inline-grid place-items-center border rounded-[var(--r-md)] ${webMode ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-white"}`}
           >
             <Globe size={15} />
           </button>
@@ -930,7 +935,7 @@ export default function AgentChat() {
             onClick={() => toggleModes(webMode, !docsMode)}
             title={docsMode ? "Doc grounding ON — replies use your documents" : "Ground replies in your uploaded documents"}
             aria-label="Toggle document grounding"
-            className={`p-1.5 border rounded-[var(--r-sm)] ${docsMode ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-white"}`}
+            className={`w-9 h-9 shrink-0 inline-grid place-items-center border rounded-[var(--r-md)] ${docsMode ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-white"}`}
           >
             <FileText size={15} />
           </button>
@@ -938,7 +943,7 @@ export default function AgentChat() {
             onClick={() => { stopSpeech(); setSpeakOn((v) => !v); }}
             title={speakOn ? "Reading replies aloud (tap to mute)" : "Read replies aloud"}
             aria-label="Toggle read-aloud"
-            className={`p-1.5 border rounded-[var(--r-sm)] ${speakOn ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-white"}`}
+            className={`hidden sm:inline-grid w-9 h-9 shrink-0 place-items-center border rounded-[var(--r-md)] ${speakOn ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-white"}`}
           >
             {speakOn ? <Volume2 size={15} /> : <VolumeX size={15} />}
           </button>
@@ -946,7 +951,7 @@ export default function AgentChat() {
             onClick={() => setVoiceMode(true)}
             title="Voice mode (hands-free)"
             aria-label="Voice mode"
-            className="p-1.5 border border-[var(--border)] rounded-[var(--r-sm)] text-[var(--muted)] hover:text-[var(--accent-ai)] hover:border-[var(--accent-ai)]/50"
+            className="hidden sm:inline-grid w-9 h-9 shrink-0 place-items-center border border-[var(--border)] rounded-[var(--r-md)] text-[var(--muted)] hover:text-[var(--accent-ai)] hover:border-[var(--accent-ai)]/50"
           >
             <AudioLines size={15} />
           </button>
@@ -954,7 +959,7 @@ export default function AgentChat() {
             onClick={() => setSettingsOpen(true)}
             title="LLM settings"
             aria-label="LLM settings"
-            className="text-[var(--muted)] hover:text-white p-1.5 border border-[var(--border)] rounded-[var(--r-sm)]"
+            className="w-9 h-9 shrink-0 inline-grid place-items-center text-[var(--muted)] hover:text-white border border-[var(--border)] rounded-[var(--r-md)]"
           >
             <SlidersHorizontal size={15} />
           </button>
@@ -963,7 +968,7 @@ export default function AgentChat() {
             disabled={!convoId || streaming}
             title="Continue this chat in Code"
             aria-label="Continue this chat in Code"
-            className="text-[var(--muted)] hover:text-[var(--accent-ai)] p-1.5 border border-[var(--border)] rounded-[var(--r-sm)] disabled:opacity-40"
+            className="hidden sm:inline-grid w-9 h-9 shrink-0 place-items-center text-[var(--muted)] hover:text-[var(--accent-ai)] border border-[var(--border)] rounded-[var(--r-md)] disabled:opacity-40"
           >
             <TerminalSquare size={15} />
           </button>
@@ -971,14 +976,14 @@ export default function AgentChat() {
             onClick={stopAllAgents}
             title="Stop every active agent run"
             aria-label="Stop every active agent run"
-            className="text-[var(--accent-danger)] hover:border-[var(--accent-danger)] p-1.5 border border-[var(--border)] rounded-[var(--r-sm)]"
+            className="hidden sm:inline-grid w-9 h-9 shrink-0 place-items-center text-[var(--accent-danger)] hover:border-[var(--accent-danger)] border border-[var(--border)] rounded-[var(--r-md)]"
           >
             <CircleStop size={15} />
           </button>
           <button
             onClick={newChat}
             disabled={streaming}
-            className="text-xs text-[var(--muted)] hover:text-white px-2 py-1 disabled:opacity-40"
+            className="h-9 shrink-0 text-xs text-[var(--accent-ai)] hover:text-white px-2.5 rounded-[var(--r-md)] disabled:opacity-40"
             title="New chat"
           >
             New
@@ -1041,8 +1046,8 @@ export default function AgentChat() {
           {empty ? (
             <div className="pt-[12vh] flex flex-col items-center text-center animate-fade-in">
               <span className="w-10 h-10 rounded-full bg-[var(--accent-ai)]/15 text-[var(--accent-ai)] flex items-center justify-center mb-4"><Sparkles size={18} /></span>
-              <p className="text-base font-medium">How can I help?</p>
-              <p className="text-sm text-[var(--muted)] mt-1 mb-6">Your own local model. Toggle web or document grounding in the header.</p>
+              <p className="text-2xl font-semibold tracking-[-0.03em]">What are we working on?</p>
+              <p className="text-sm text-[var(--muted)] mt-2 mb-7 max-w-lg">A private local conversation, with web and document grounding when you need evidence.</p>
               <div className="w-full max-w-md grid gap-2">
                 {SUGGESTIONS.map((s) => (
                   <button
@@ -1285,6 +1290,7 @@ export default function AgentChat() {
               onChange={(e) => { setInput(e.target.value); autoGrow(); }}
               onKeyDown={onKey}
               placeholder="Message…"
+              aria-label="Message"
               rows={1}
               disabled={streaming}
               className="flex-1 resize-none bg-[var(--surface-1)] border border-[var(--border)] rounded-[var(--r-lg)] px-3.5 py-2.5 text-sm outline-none focus:border-[var(--border-loud)] disabled:opacity-50 leading-relaxed"
@@ -1314,6 +1320,6 @@ export default function AgentChat() {
           Enter to send · Shift+Enter for new line.
         </p>
       </div>
-    </div>
+    </main>
   );
 }

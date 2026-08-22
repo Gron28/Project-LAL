@@ -1767,8 +1767,8 @@ export class Config {
   private teamContext: TeamContext | null = null;
   private readonly agentsSettings: AgentsCollabSettings;
   private readonly worktreeSettings: WorktreeSettings;
-  private readonly skipLoopDetection: boolean;
-  private readonly maxToolCallsPerTurn: number;
+  private skipLoopDetection: boolean;
+  private maxToolCallsPerTurn: number;
   private readonly skipStartupContext: boolean;
   private readonly bareMode: boolean;
   private readonly safeMode: boolean;
@@ -1786,7 +1786,7 @@ export class Config {
   private readonly truncateToolOutputThreshold: number;
   private readonly truncateToolOutputLines: number;
   private readonly toolOutputBatchBudget: number;
-  private readonly shellDefaultTimeoutMs: number | undefined;
+  private shellDefaultTimeoutMs: number | undefined;
   private readonly eventEmitter?: EventEmitter;
   private readonly channel: string | undefined;
   private readonly jsonFd: number | undefined;
@@ -2008,7 +2008,10 @@ export class Config {
     this.autoCompactThreshold = params.autoCompactThreshold;
     this.interactive = params.interactive ?? false;
     this.trustedFolder = params.trustedFolder;
-    this.skipLoopDetection = params.skipLoopDetection ?? false;
+    // Broad heuristics are opt-in because legitimate file exploration and
+    // chunked reads often resemble a loop. Exact repeats and the per-turn cap
+    // remain separate safeguards.
+    this.skipLoopDetection = params.skipLoopDetection ?? true;
     this.maxToolCallsPerTurn =
       params.maxToolCallsPerTurn ?? DEFAULT_MAX_TOOL_CALLS_PER_TURN;
     this.skipStartupContext = params.skipStartupContext ?? false;
@@ -3569,6 +3572,24 @@ export class Config {
    */
   setMaxSessionTurns(turns: number): void {
     this.maxSessionTurns = turns;
+  }
+
+  setSkipLoopDetection(skip: boolean): void {
+    this.skipLoopDetection = skip;
+  }
+
+  setMaxToolCallsPerTurn(maxToolCalls: number): void {
+    this.maxToolCallsPerTurn = maxToolCalls;
+  }
+
+  setShellDefaultTimeoutMs(timeoutMs: number | undefined): void {
+    this.shellDefaultTimeoutMs =
+      timeoutMs !== undefined &&
+      Number.isInteger(timeoutMs) &&
+      timeoutMs >= 0 &&
+      timeoutMs <= 2_147_483_647
+        ? timeoutMs
+        : undefined;
   }
 
   /**
@@ -5546,14 +5567,12 @@ export class Config {
     return this.skipWorkflowUsageWarning;
   }
 
-
   /**
    * Configured screenshot longest-edge cap for Computer Use, or `undefined`
    * to leave cua-driver's built-in default (1568) in place. Resolved together
    * with the `QWEN_COMPUTER_USE_MAX_IMAGE_DIMENSION` env override at the point
    * the driver connects (see `resolveMaxImageDimension`).
    */
-
 
   /**
    * Whether the turn loop should fire a fast-model call after each tool batch
@@ -6678,6 +6697,12 @@ export class Config {
     await registerLazy(ToolNames.WEB_SEARCH, async () => {
       const { WebSearchTool } = await import('../tools/web-search.js');
       return new WebSearchTool();
+    });
+    await registerLazy(ToolNames.BROWSER_SCREENSHOT, async () => {
+      const { BrowserScreenshotTool } = await import(
+        '../tools/browser-screenshot.js'
+      );
+      return new BrowserScreenshotTool(this);
     });
     if (this.isArtifactEnabled()) {
       await registerLazy(ToolNames.ARTIFACT, async () => {

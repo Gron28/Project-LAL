@@ -208,6 +208,10 @@ export const LAL_TERMINAL_TOOLS: readonly string[] = [
   "task_stop",
   "web_search",
   "web_fetch",
+  // Read-only localhost rendering. The tool owns URL/path validation; admitting
+  // its schema here keeps the gateway from silently dropping the browser
+  // capability the managed client and prompt both advertise.
+  "browser_screenshot",
 ];
 
 const TERMINAL_TOOL_SET = new Set(LAL_TERMINAL_TOOLS);

@@ -1,24 +1,21 @@
 import fs from "node:fs";
-import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { allModels, ensureServing, stopServing, saveConvo, newId, SERVE_PORT, rememberProject, modelRuntimeSettings } from "@/lib/lab";
 import { makeAgentExecutor } from "@/lib/agent-tools";
 import { runDeliberation } from "@/lib/deliberate";
 import { startRun, requestApproval } from "@/lib/runs";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
+import { DEFAULT_WORKSPACE, workspaceGrantRepository } from "@/lib/workspace-grants";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600; // hard route ceiling — a cycle-boxed run (no minutes budget) must stay under this
 
-const DEFAULT_WORKSPACE = path.join(path.resolve(process.cwd(), ".."), "workspace");
 const DEFAULT_MODEL = "gemma4:12b"; // user's call 2026-07-07: one strong model for every role, no swap cost
 
 function resolveProject(raw: unknown): { root: string } | { error: string } {
-  if (!raw) { fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true }); return { root: DEFAULT_WORKSPACE }; }
-  const p = path.resolve(String(raw));
-  try {
-    if (!fs.statSync(p).isDirectory()) return { error: "not a directory: " + p };
-  } catch { return { error: "directory not found: " + p }; }
-  return { root: p };
+  if (!raw) fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true });
+  const root = workspaceGrantRepository.resolveGrantedDirectory(raw ? String(raw) : DEFAULT_WORKSPACE);
+  return root ? { root } : { error: "project is not owner-granted or no longer exists" };
 }
 
 export async function GET() {
@@ -32,6 +29,8 @@ export async function GET() {
 // orchestration with its own cycle budget and on-disk artifacts, not a single
 // tool-loop call.
 export async function POST(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const b = await req.json().catch(() => ({}));
   const query = String(b.query || "").trim();
   if (!query) return new Response("no query", { status: 400 });

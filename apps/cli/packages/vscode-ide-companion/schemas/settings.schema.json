@@ -637,9 +637,9 @@
           "default": false
         },
         "skipLoopDetection": {
-          "description": "Skip headless loop heuristics (content/thought repetition, read/action/shell stagnation, global duplicates, and alternating calls). Interactive sessions always skip these broad heuristics. Headless runs default to false. Exact consecutive calls and the per-turn cap remain active in every mode.",
+          "description": "Skip broad loop heuristics (content/thought repetition, read/action/shell stagnation, global duplicates, and alternating calls). This defaults to true because legitimate file exploration often resembles a loop. Set to false to opt into the heuristics. Exact consecutive calls and the per-turn cap remain active in every mode.",
           "type": "boolean",
-          "default": false
+          "default": true
         },
         "maxToolCallsPerTurn": {
           "description": "Hard cap on tool calls within a single turn (one model turn plus its tool-result continuations; blocking Stop-hook continuations such as /goal iterations start a fresh budget). An always-on circuit breaker against runaway turns, independent of model.skipLoopDetection. Set to 0 or a negative value to disable the cap.",

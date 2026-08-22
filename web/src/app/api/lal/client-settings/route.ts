@@ -1,5 +1,7 @@
 import { publicModels, servingModel, servingRuntimeStatus, contextProfileForModel, modelRuntimeSettings, modelSettingsRevision, readSettings } from "@/lib/lab";
 import { cliAuthorized, cliDeviceCustomHeaders, recordCliAccess, unauthorizedResponse } from "@/lib/lal-cli";
+import { LAL_MANAGED_MODEL_POLICY, LAL_MANAGED_SHELL_DEFAULT_TIMEOUT_MS } from "@/lib/lal-client-policy";
+import { isNativeGemma4VisionModel } from "@/lib/lal-model-capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +40,13 @@ export function GET(request: Request) {
   const customHeaders = cliDeviceCustomHeaders(request);
   const resident = servingModel();
   const runtime = servingRuntimeStatus();
+  const cliSettings = readSettings().cliSettings;
+  const configuredModel = cliSettings.model && typeof cliSettings.model === "object" && !Array.isArray(cliSettings.model)
+    ? cliSettings.model as Record<string, unknown>
+    : {};
+  const configuredTools = cliSettings.tools && typeof cliSettings.tools === "object" && !Array.isArray(cliSettings.tools)
+    ? cliSettings.tools as Record<string, unknown>
+    : {};
   // Both GGUF models served directly ("local") and Ollama-served models
   // (Gemma, etc.) belong in the CLI's catalog — excluding Ollama entirely
   // here hid every Gemma model from the picker even though they're legitimate,
@@ -51,6 +60,7 @@ export function GET(request: Request) {
       const activeContext = loaded ? runtime.context : null;
       const contextProfile = contextProfileForModel(model.name);
       const runtimeSettings = modelRuntimeSettings(model.name);
+      const nativeVision = isNativeGemma4VisionModel(model.name);
       const contextWindowSize = contextProfile.activeTokens ?? contextProfile.requestedTokens;
       const contextLabel = activeContext
         ? `${Math.round(activeContext / 1024)}k active context`
@@ -72,11 +82,17 @@ export function GET(request: Request) {
         description: descriptionParts.join(" · "),
         envKey: "LAL_API_KEY",
         baseUrl: `${origin}/api/llm/v1`,
+        // The stock Ollama Gemma 4 artifacts include their multimodal
+        // projector. Text-only community GGUF fine-tunes borrow this exact
+        // same-provider model through the CLI's vision bridge instead of
+        // receiving an image payload they cannot decode.
+        isVision: nativeVision,
         generationConfig: {
           timeout: 600000,
           maxRetries: 1,
           contextWindowSize,
           contextProfile,
+          modalities: nativeVision ? { image: true } : {},
           ...(Object.keys(customHeaders).length ? { customHeaders } : {}),
           // The owner-selected per-model ceiling is shared by Web and CLI.
           // Session `/tokens` choices can still be lower; the gateway also
@@ -112,7 +128,17 @@ export function GET(request: Request) {
       // (agents, teams, workflows, cron, MCP, browser, worktrees, etc.) before
       // every turn. Keep the complete daily coding loop and make every omitted
       // capability an explicit future product decision.
+      ...Object.fromEntries(Object.entries(cliSettings).filter(([key]) => !["model", "tools", "modelProviders"].includes(key))),
       tools: {
+        ...configuredTools,
+        shell: {
+          ...(configuredTools.shell && typeof configuredTools.shell === "object" && !Array.isArray(configuredTools.shell) ? configuredTools.shell : {}),
+          defaultTimeoutMs: typeof cliSettings.shellDefaultTimeoutMs === "number"
+            ? cliSettings.shellDefaultTimeoutMs
+            : typeof (configuredTools.shell as Record<string, unknown> | undefined)?.defaultTimeoutMs === "number"
+              ? (configuredTools.shell as Record<string, unknown>).defaultTimeoutMs
+              : LAL_MANAGED_SHELL_DEFAULT_TIMEOUT_MS,
+        },
         // Desktop automation contributes 35 schemas and exhausted Gemma's
         // effective request window before it could emit a useful token. A
         // coding project run does not need OS-level mouse/keyboard control.
@@ -137,6 +163,7 @@ export function GET(request: Request) {
           "tool_search",
           "web_search",
           "web_fetch",
+          "browser_screenshot",
           "agent",
           "task_stop",
         ],
@@ -159,9 +186,17 @@ export function GET(request: Request) {
       },
       context: { fileName: ["LAL.md", "AGENTS.md", "QWEN.md"] },
       security: { auth: { selectedType: "openai" } },
-      // Broad project prompts need room for research -> plan -> implement ->
-      // judge -> repair. Simple prompts still stop as soon as they are done.
-      model: { name: preferred, maxSessionTurns: 120 },
+      // Managed local runs are owner-controlled and may legitimately span
+      // hundreds of tool-result continuations. Keep only the CLI's exact
+      // identical-call guard; do not add synthetic session, heuristic-loop,
+      // or per-turn tool ceilings on top of the model/runtime limits.
+      model: {
+        ...configuredModel,
+        name: preferred,
+        maxSessionTurns: typeof cliSettings.maxSessionTurns === "number" ? cliSettings.maxSessionTurns : configuredModel.maxSessionTurns ?? LAL_MANAGED_MODEL_POLICY.maxSessionTurns,
+        skipLoopDetection: typeof cliSettings.skipLoopDetection === "boolean" ? cliSettings.skipLoopDetection : configuredModel.skipLoopDetection ?? LAL_MANAGED_MODEL_POLICY.skipLoopDetection,
+        maxToolCallsPerTurn: typeof cliSettings.maxToolCallsPerTurn === "number" ? cliSettings.maxToolCallsPerTurn : configuredModel.maxToolCallsPerTurn ?? LAL_MANAGED_MODEL_POLICY.maxToolCallsPerTurn,
+      },
       modelProviders: { openai: models },
     },
     { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", etag: `"${revision}"`, "x-lal-settings-revision": revision } },

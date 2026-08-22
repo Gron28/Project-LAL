@@ -7,10 +7,11 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveSafe, runGit } from "@/lib/tools";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
+import { DEFAULT_WORKSPACE, workspaceGrantRepository } from "@/lib/workspace-grants";
 
 export const dynamic = "force-dynamic";
 
-const DEFAULT_WORKSPACE = path.join(path.resolve(process.cwd(), ".."), "workspace");
 const OUT_CAP = 16384; // runGit's own cap — used to flag truncation
 
 // Cloning can take much longer than runGit's 30s cap (large repos, slow remotes), so
@@ -46,12 +47,9 @@ const SAFE_CLONE_URL = /^(https?:\/\/|git:\/\/|ssh:\/\/|[\w.-]+@[\w.-]+:)\S+$/;
 const SAFE_NAME = /^[A-Za-z0-9._-]+$/;
 
 function projectRoot(raw: string | null): { root: string } | { error: string } {
-  if (!raw) return { root: path.resolve(DEFAULT_WORKSPACE) };
-  const p = path.resolve(raw);
-  try {
-    if (!fs.statSync(p).isDirectory()) return { error: "not a directory: " + p };
-  } catch { return { error: "directory not found: " + p }; }
-  return { root: p };
+  const requested = raw || DEFAULT_WORKSPACE;
+  const root = workspaceGrantRepository.resolveGrantedDirectory(requested);
+  return root ? { root } : { error: "project is not owner-granted or no longer exists" };
 }
 
 function isRepo(root: string): boolean {
@@ -120,6 +118,8 @@ export async function GET(req: NextRequest) {
 // POST {project, op:"commit"|"clone", ...} — commit: stage the given paths (or -A) and
 // commit. clone: git-clone a remote into a chosen parent directory.
 export async function POST(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const b = await req.json().catch(() => null);
   if (!b || (b.op !== "commit" && b.op !== "clone")) return NextResponse.json({ error: "expected {op:'commit'|'clone', ...}" }, { status: 400 });
   const pr = projectRoot(typeof b.project === "string" && b.project ? b.project : null);

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getConvo, newId, saveConvo } from "@/lib/lab";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
+import { workspaceGrantRepository } from "@/lib/workspace-grants";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +11,8 @@ const MAX_HANDOFF_CHARS = 12_000;
 // transcript into the coding agent. The handoff is visible, editable, persisted,
 // and intentionally bounded so it remains useful inside a local model context.
 export async function POST(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const b = await req.json().catch(() => ({}));
   const sourceId = typeof b.conversationId === "string" ? b.conversationId : "";
   const source = sourceId && !sourceId.startsWith("code-") ? getConvo(sourceId) : null;
@@ -20,7 +24,9 @@ export async function POST(req: NextRequest) {
   }).join("\n\n");
   const context = messages.slice(-MAX_HANDOFF_CHARS);
   const id = "code-" + newId();
-  const project = typeof b.project === "string" && b.project.trim() ? b.project.trim() : undefined;
+  const requestedProject = typeof b.project === "string" && b.project.trim() ? b.project.trim() : undefined;
+  const project = requestedProject ? workspaceGrantRepository.resolveGrantedDirectory(requestedProject) : undefined;
+  if (requestedProject && !project) return NextResponse.json({ error: "project is not owner-granted or no longer exists" }, { status: 403 });
   saveConvo({
     id,
     title: "From chat: " + (source.title || "handoff").slice(0, 48),

@@ -26,11 +26,11 @@ export function Button({
   children: React.ReactNode;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   const v = active ? VARIANT_STYLE.primary : VARIANT_STYLE[variant];
-  const padding = size === "sm" ? "px-2 py-1 text-xs" : "px-3 py-2 text-sm";
+  const padding = size === "sm" ? "px-3 min-h-9 text-xs" : "px-4 min-h-10 text-sm";
   return (
     <button
       className={cn(
-        "inline-flex items-center gap-2 rounded-[var(--r-md)] transition-colors",
+        "inline-flex items-center justify-center gap-2 rounded-[var(--r-md)] border border-transparent transition-[color,background,border-color,transform] active:translate-y-px disabled:opacity-45",
         padding,
         className
       )}

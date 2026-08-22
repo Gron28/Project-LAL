@@ -3158,12 +3158,21 @@ describe('Server Config (config.ts)', () => {
       expect(config.getReasoningEffort()).toBe('high');
     });
 
-    it('setMaxSessionTurns/setSamplingOverride/setContextWindowOverride/setAppendSystemPrompt round-trip independently of a preset', async () => {
+    it('runtime policy and generation overrides round-trip independently of a preset', async () => {
       const config = new Config(baseParams);
       await config.refreshAuth(AuthType.USE_GEMINI);
 
       config.setMaxSessionTurns(42);
       expect(config.getMaxSessionTurns()).toBe(42);
+
+      config.setSkipLoopDetection(true);
+      expect(config.getSkipLoopDetection()).toBe(true);
+
+      config.setMaxToolCallsPerTurn(-1);
+      expect(config.getMaxToolCallsPerTurn()).toBe(Number.POSITIVE_INFINITY);
+
+      config.setShellDefaultTimeoutMs(600_000);
+      expect(config.getShellDefaultTimeoutMs()).toBe(600_000);
 
       config.setSamplingOverride({ temperature: 0.7 });
       expect(

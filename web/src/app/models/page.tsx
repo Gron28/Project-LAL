@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Cpu, Download, FolderSearch, RefreshCw, Search, Square, Trash2 } from "lucide-react";
 import { Panel } from "@/components/ui/panel";
 import { ICON_SIZE } from "@/components/ui/icon";
+import { LabNav } from "@/components/lab-nav";
 
 type ContextProfile = {
   requestedTokens: number;
@@ -45,12 +46,13 @@ type Inventory = {
   backend?: { serving: string | null; llamaServer: string; ollamaStore: string };
   server?: { origin: string; buildId: string };
 };
-type InventoryEnvelope = { inventory?: Inventory; contextProfiles?: Record<string, ContextProfile | null>; modelSettings?: Record<string, ModelRuntimeSettings>; options?: GlobalOptions; settingsRevision?: string; error?: string };
+type InventoryEnvelope = { inventory?: Inventory; contextProfiles?: Record<string, ContextProfile | null>; modelSettings?: Record<string, ModelRuntimeSettings>; options?: GlobalOptions; runtimeProfiles?: RuntimeProfile[]; settingsRevision?: string; error?: string };
+type RuntimeProfile = { id: string; name: string; settings: { contextTokens: number; maxOutputTokens: number }; description: string; tradeoff: string };
 type SearchResult = { id: string; revision: string; licenseName?: string };
 type CandidateFile = { path: string; sizeBytes: number; sha256: string };
 type DownloadJob = { id: string; state: string; progress: { phase: string; completed: number; total?: number }; error?: { message: string }; checkpoint?: { modelName?: string } };
 
-const button = "inline-flex items-center justify-center gap-1.5 text-[11px] tracking-wide border border-[var(--border)] text-[var(--text-2)] rounded-[var(--r-md)] px-2.5 py-1.5 hover:border-[var(--border-loud)] hover:text-[var(--text)] disabled:opacity-40 disabled:cursor-not-allowed";
+const button = "min-h-10 inline-flex items-center justify-center gap-1.5 text-[11px] tracking-wide border border-[var(--border)] text-[var(--text-2)] rounded-[var(--r-md)] px-3 py-2 hover:border-[var(--border-loud)] hover:text-[var(--text)] disabled:opacity-40 disabled:cursor-not-allowed";
 const input = "w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-3 py-2 text-xs text-[var(--text)] outline-none focus:border-[var(--border-loud)]";
 const heading = "px-4 py-3 border-b border-[var(--border-soft)] text-[11px] tracking-widest uppercase text-[var(--text-2)] flex items-center gap-2";
 
@@ -70,6 +72,7 @@ export default function ModelsPage() {
   const [profiles, setProfiles] = useState<Record<string, ContextProfile | null>>({});
   const [modelSettings, setModelSettings] = useState<Record<string, ModelRuntimeSettings>>({});
   const [globalOptions, setGlobalOptions] = useState<GlobalOptions | null>(null);
+  const [runtimeProfiles, setRuntimeProfiles] = useState<RuntimeProfile[]>([]);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState("");
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
@@ -81,6 +84,8 @@ export default function ModelsPage() {
   const [localName, setLocalName] = useState("");
   const [license, setLicense] = useState("");
   const [accepted, setAccepted] = useState(false);
+  const [modelFilter, setModelFilter] = useState("");
+  const [visibleModelCount, setVisibleModelCount] = useState(10);
   const observedSucceededJobs = useRef(new Set<string>());
 
   const load = useCallback(async (rescan = false) => {
@@ -93,6 +98,7 @@ export default function ModelsPage() {
       setProfiles(body.contextProfiles || {});
       setModelSettings(body.modelSettings || {});
       setGlobalOptions(body.options || null);
+      setRuntimeProfiles(body.runtimeProfiles || []);
       setStatus(rescan ? `Scan complete: ${body.inventory.models.length} model${body.inventory.models.length === 1 ? "" : "s"} found.` : "");
     } catch (error) {
       setInventory((value) => ({ ...value, state: "failed", models: [], diagnostics: [error instanceof Error ? error.message : String(error)] }));
@@ -218,12 +224,13 @@ export default function ModelsPage() {
     catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }
   }
 
-  return <main className="min-h-dvh bg-[var(--bg)] text-[var(--text)] px-3 py-4 pb-20">
-    <div className="max-w-6xl mx-auto flex flex-col gap-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div><h1 className="text-xl font-semibold">Models</h1><p className="mt-1 text-xs text-[var(--muted)]">Discover, download, verify, activate, and inspect local model runtimes.</p></div>
-        <button className={button} onClick={() => void load(true)} disabled={inventory.state === "loading"}><RefreshCw size={ICON_SIZE.sm} className={inventory.state === "loading" ? "animate-spin" : ""} /> Rescan</button>
-      </header>
+  const filteredModels = inventory.models.filter((model) => model.name.toLowerCase().includes(modelFilter.trim().toLowerCase()));
+
+  return <main id="main-content" className="page-shell text-[var(--text)]">
+    <div className="page-frame max-w-6xl flex flex-col gap-4">
+      <LabNav />
+      <div className="flex justify-end"><button className={button} onClick={() => void load(true)} disabled={inventory.state === "loading"}><RefreshCw size={ICON_SIZE.sm} className={inventory.state === "loading" ? "animate-spin" : ""} /> Rescan</button></div>
+      <h1 className="sr-only">Models</h1>
 
       {inventory.state === "failed" && <Panel><div className="flex gap-3"><AlertTriangle className="text-[var(--accent-danger)] shrink-0" size={20} /><div><div className="text-sm font-medium">Model inventory failed</div>{inventory.diagnostics.map((item) => <p key={item} className="mt-1 text-xs text-[var(--muted)] break-all">{item}</p>)}<button className={`${button} mt-3`} onClick={() => void load(true)}>Try again</button></div></div></Panel>}
       {inventory.state === "empty" && <Panel><div className="text-center py-6"><FolderSearch className="mx-auto text-[var(--accent-ai)]" size={32} /><h2 className="mt-3 text-base font-medium">No usable models found yet</h2><p className="mt-2 text-xs text-[var(--muted)]">Search below to download a verified GGUF, or place a <code>*-q4.gguf</code> / <code>*-f16.gguf</code> file in one of the scanned folders.</p></div></Panel>}
@@ -244,7 +251,8 @@ export default function ModelsPage() {
 
       {inventory.state !== "failed" && <Panel padding="none">
         <div className={heading}><Cpu size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> INSTALLED MODELS <span className="ml-auto normal-case tracking-normal text-[var(--muted)]">{inventory.models.length} found</span></div>
-        {inventory.state === "loading" ? <div className="p-6 text-xs text-[var(--muted)]">Scanning model roots…</div> : inventory.models.map((model) => {
+        {inventory.state === "ready" && inventory.models.length > 6 && <div className="p-3 border-b border-[var(--border-soft)]"><input aria-label="Filter installed models" value={modelFilter} onChange={(event) => { setModelFilter(event.target.value); setVisibleModelCount(10); }} className={input} placeholder="Filter installed models…" /></div>}
+        {inventory.state === "loading" ? <div className="p-6 text-xs text-[var(--muted)]">Scanning model roots…</div> : filteredModels.slice(0, visibleModelCount).map((model) => {
           const profile = profiles[model.name];
           const settings = modelSettings[model.name];
           const isDefault = model.name === inventory.current;
@@ -256,13 +264,18 @@ export default function ModelsPage() {
                 <div className="mt-1 text-[10px] text-[var(--muted)]">{model.source} · {model.gb} GB · requested {tokens(profile?.requestedTokens)}, active {tokens(profile?.activeTokens)}, verified {tokens(profile?.verifiedTokens)}, native max {tokens(profile?.modelMaxTokens)}</div>
                 {profile?.reason && <div className="mt-1 text-[10px] text-[var(--muted)]">{profile.reason}</div>}
               </div>
-              <div className="flex flex-wrap gap-1.5">{!isDefault && <button className={button} disabled={!!busy} onClick={() => void mutateModel("default", model)}>Set default</button>}<button className={button} disabled={!!busy} onClick={() => void mutateModel("use", model)}>Load now</button><button className={button} disabled={!!busy} title="Probe 32K, 64K, and 128K context allocations with real inference" onClick={() => void mutateModel("probe", model)}>{busy === `probe:${model.name}` ? "Optimizing…" : "Optimize context"}</button>{model.source === "local" && <a className={button} href={`/api/download?model=${encodeURIComponent(model.name)}`}><Download size={12} /> Export</a>}<button className={button} disabled={!!busy} onClick={() => void mutateModel("delete", model)}><Trash2 size={12} /></button></div>
+              <div className="flex flex-wrap gap-1.5">{!isDefault && <button className={button} disabled={!!busy} onClick={() => void mutateModel("default", model)}>Set default</button>}<button className={button} disabled={!!busy} onClick={() => void mutateModel("use", model)}>Load now</button><button className={button} disabled={!!busy} title="Probe 32K, 64K, and 128K context allocations with real inference" onClick={() => void mutateModel("probe", model)}>{busy === `probe:${model.name}` ? "Optimizing…" : "Optimize context"}</button>{model.source === "local" && <a className={button} href={`/api/download?model=${encodeURIComponent(model.name)}`}><Download size={12} /> Export</a>}<button className={button} aria-label={`Delete ${model.name}`} title={`Delete ${model.name}`} disabled={!!busy} onClick={() => void mutateModel("delete", model)}><Trash2 size={12} /></button></div>
             </div>
-            {settings && <div className="grid gap-3 rounded-[var(--r-md)] border border-[var(--border-soft)] bg-[var(--surface-2)] p-3 md:grid-cols-2 xl:grid-cols-4">
+            {settings && <details className="group rounded-[var(--r-md)] border border-[var(--border-soft)] bg-[var(--surface-2)]">
+              <summary className="min-h-10 cursor-pointer list-none flex items-center gap-2 px-3 text-xs text-[var(--text-2)] hover:text-[var(--text)]"><span className="text-[var(--accent-ai)] transition-transform group-open:rotate-90">›</span> Runtime settings <span className="ml-auto text-[10px] text-[var(--muted)]">{tokens(settings.contextTokens)} context · temp {settings.temperature}</span></summary>
+              <div className="grid gap-3 border-t border-[var(--border-soft)] p-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="text-[10px] text-[var(--muted)] md:col-span-2 xl:col-span-4">Serving profile
+                <div className="mt-1 grid gap-1 sm:grid-cols-3">{runtimeProfiles.map((runtimeProfile) => <button type="button" key={runtimeProfile.id} className={`${button} h-auto min-h-0 items-start justify-start p-2 text-left ${settings.contextTokens === runtimeProfile.settings.contextTokens && settings.maxOutputTokens === runtimeProfile.settings.maxOutputTokens ? "border-[var(--accent-ai)] text-[var(--accent-ai)]" : ""}`} disabled={!!busy} onClick={() => void saveModelSettings(model, runtimeProfile.settings)}><span><span className="block font-medium">{runtimeProfile.name}</span><span className="mt-0.5 block text-[10px] text-[var(--muted)]">{runtimeProfile.description} {runtimeProfile.tradeoff}</span></span></button>)}</div>
+              </div>
               <label className="text-[10px] text-[var(--muted)]">Maximum context
                 <input className={`${input} mt-1`} type="number" min={2048} max={profile?.modelMaxTokens ?? 1048576} step={1024} value={settings.contextTokens} onChange={(event) => editModelSettings(model.name, { contextTokens: Number(event.target.value) })} />
                 <span className="mt-1 block">Tokens requested on the next load. Tested shortcuts:</span>
-                <span className="mt-1 flex flex-wrap gap-1">{[32768, 65536, 100000, 131072].filter((value) => !profile?.modelMaxTokens || value <= profile.modelMaxTokens).map((value) => <button type="button" key={value} className={button} onClick={() => editModelSettings(model.name, { contextTokens: value })}>{tokens(value)}</button>)}</span>
+                <span className="mt-1 flex flex-wrap gap-1">{[32768, 65536, 102400, 131072, 262144].filter((value) => !profile?.modelMaxTokens || value <= profile.modelMaxTokens).map((value) => <button type="button" key={value} className={button} onClick={() => editModelSettings(model.name, { contextTokens: value })}>{tokens(value)}</button>)}</span>
               </label>
               <label className="text-[10px] text-[var(--muted)]">Temperature
                 <input className={`${input} mt-1`} type="number" min={0} max={2} step={0.05} value={settings.temperature} onChange={(event) => editModelSettings(model.name, { temperature: Number(event.target.value) })} />
@@ -276,16 +289,19 @@ export default function ModelsPage() {
                 <div className="grid grid-cols-2 gap-2 text-[10px] text-[var(--muted)]"><label>Top P<input className={`${input} mt-1`} type="number" min={0} max={1} step={0.05} value={settings.topP} onChange={(event) => editModelSettings(model.name, { topP: Number(event.target.value) })} /></label><label>Max output<input className={`${input} mt-1`} type="number" min={512} max={262144} step={1024} value={settings.maxOutputTokens} onChange={(event) => editModelSettings(model.name, { maxOutputTokens: Number(event.target.value) })} /></label></div>
                 <div className="flex gap-1.5"><button className={button} disabled={!!busy} onClick={() => void resetModelSettings(model)}>Use global</button><button className={button} disabled={!!busy} onClick={() => void saveModelSettings(model)}>{busy === `settings:${model.name}` ? "Saving…" : "Save override"}</button></div>
               </div>
-            </div>}
+              </div>
+            </details>}
           </div>;
         })}
+        {filteredModels.length > visibleModelCount && <div className="p-3 border-t border-[var(--border-soft)]"><button onClick={() => setVisibleModelCount((count) => count + 10)} className="w-full min-h-10 rounded-[var(--r-md)] border border-[var(--border)] text-xs text-[var(--text-2)] hover:border-[var(--border-loud)]">Show 10 more · {filteredModels.length - visibleModelCount} remaining</button></div>}
+        {inventory.state === "ready" && !filteredModels.length && <div className="p-6 text-center text-xs text-[var(--muted)]">No installed models match “{modelFilter}”.</div>}
       </Panel>}
 
       <Panel padding="none">
         <div className={heading}><Search size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> FIND AND DOWNLOAD A GGUF</div>
         <div className="p-4 grid gap-3 text-xs">
           <p className="text-[var(--muted)]">Search reads Hugging Face metadata only. A transfer starts only after you select a pinned commit and exact SHA-256-addressed file, then accept its license.</p>
-          <div className="flex gap-2"><input className={input} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void search(); }} placeholder="Try: Qwen 3 GGUF, Gemma GGUF, coding GGUF…" /><button className={button} disabled={query.trim().length < 2 || !!busy} onClick={() => void search()}><Search size={12} /> Search</button></div>
+          <div className="flex gap-2"><input aria-label="Search model repositories" className={input} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void search(); }} placeholder="Try: Qwen 3 GGUF, Gemma GGUF, coding GGUF…" /><button className={button} disabled={query.trim().length < 2 || !!busy} onClick={() => void search()}><Search size={12} /> Search</button></div>
           {results.length > 0 && <div className="grid gap-1 sm:grid-cols-2">{results.map((candidate) => <button key={`${candidate.id}:${candidate.revision}`} className="text-left p-2 rounded border border-[var(--border)] hover:border-[var(--border-loud)]" onClick={() => void inspect(candidate)}><div>{candidate.id}</div><div className="mt-1 text-[10px] text-[var(--muted)]">commit {candidate.revision.slice(0, 12)} · {candidate.licenseName || "license inspect required"}</div></button>)}</div>}
           {selected && files.length > 0 && <div className="grid gap-2 border-t border-[var(--border-soft)] pt-3">
             <div className="grid gap-2 sm:grid-cols-2"><label>Local name<input className={`${input} mt-1`} value={localName} onChange={(event) => setLocalName(event.target.value)} /></label><label>Exact GGUF<select className={`${input} mt-1`} value={filePath} onChange={(event) => setFilePath(event.target.value)}>{files.map((file) => <option key={file.path} value={file.path}>{file.path} · {bytes(file.sizeBytes)}</option>)}</select></label></div>

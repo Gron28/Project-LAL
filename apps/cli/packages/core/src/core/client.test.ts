@@ -5830,7 +5830,7 @@ Other open files:
           `checkNextSpeaker called ${callCount} times - infinite loop protection worked`,
         );
         // If called multiple times, we expect it to be stopped before MAX_TURNS
-        expect(callCount).toBeLessThanOrEqual(100); // Should not exceed MAX_TURNS
+        expect(callCount).toBeLessThanOrEqual(1000); // Should not exceed MAX_TURNS
       }
 
       // The stream should produce events and eventually terminate
@@ -6038,8 +6038,8 @@ Other open files:
       const callCount = mockCheckNextSpeaker.mock.calls.length;
 
       // With the fix: even when turns is set to a very high value,
-      // the loop should stop at MAX_TURNS (100)
-      expect(callCount).toBeLessThanOrEqual(100); // Should not exceed MAX_TURNS
+      // the loop should stop at MAX_TURNS (1000)
+      expect(callCount).toBeLessThanOrEqual(1000); // Should not exceed MAX_TURNS
       expect(eventCount).toBeLessThanOrEqual(200); // Should have reasonable number of events
 
       console.log(

@@ -22,6 +22,7 @@ import {
   FatalInputError,
   ApprovalMode,
   SendMessageType,
+  ToolNames,
   SYSTEM_REMINDER_OPEN,
   LoopType,
   CronScheduler,
@@ -32,6 +33,7 @@ import {
 } from '@lal/core';
 import type { Part } from '@google/genai';
 import {
+  isMechanicalAcceptanceCommand,
   runNonInteractive,
   skipHeadlessLoopSentinel,
 } from './nonInteractiveCli.js';
@@ -52,8 +54,7 @@ import {
 // Mock core modules
 vi.mock('./ui/hooks/atCommandProcessor.js');
 vi.mock('@lal/core', async (importOriginal) => {
-  const original =
-    await importOriginal<typeof import('@lal/core')>();
+  const original = await importOriginal<typeof import('@lal/core')>();
 
   class MockChatRecordingService {
     initialize = vi.fn();
@@ -170,6 +171,45 @@ describe('skipHeadlessLoopSentinel', () => {
 
     expect(deleteSpy).not.toHaveBeenCalled();
   });
+});
+
+describe('isMechanicalAcceptanceCommand', () => {
+  it.each([
+    'npm test',
+    'npm run build',
+    'npm run test:runtime',
+    'pnpm lint:ci',
+    'pnpm run typecheck',
+    'cargo test',
+    'go test ./...',
+    'python3 -m pytest',
+    'tsc --noEmit',
+    'git diff --check',
+    'node --test src/example.test.ts',
+    'npx vitest run src/example.test.ts',
+    'eslint src',
+    'prettier --check src',
+    'npm exec tsc -- --noEmit',
+    "node -e \"const fs=require('fs'); process.exit(fs.existsSync('x')?0:1)\"",
+    './scripts/smoke-project-lal.sh',
+  ])('recognizes verification command %s', (command) => {
+    expect(isMechanicalAcceptanceCommand(command)).toBe(true);
+  });
+
+  it.each([
+    'pwd',
+    'ls -la',
+    'cat package.json',
+    'curl -I http://localhost:3000',
+    'node server.js',
+    'npm install',
+    'node latest-server.js',
+  ])(
+    'does not mistake inspection/work command %s for acceptance',
+    (command) => {
+      expect(isMechanicalAcceptanceCommand(command)).toBe(false);
+    },
+  );
 });
 
 describe('runNonInteractive', () => {
@@ -998,7 +1038,10 @@ describe('runNonInteractive', () => {
         'prompt-background-memory',
       ),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('background memory blocked exit')), 100),
+        setTimeout(
+          () => reject(new Error('background memory blocked exit')),
+          100,
+        ),
       ),
     ]);
 
@@ -1129,14 +1172,83 @@ describe('runNonInteractive', () => {
       3,
       [
         expect.objectContaining({
-          text: expect.stringContaining('agent exit is not completion'),
+          text: expect.stringContaining(
+            'workspace changed after the last successful verification',
+          ),
         }),
       ],
       expect.any(AbortSignal),
       'prompt-acceptance',
-      { type: SendMessageType.Retry },
+      expect.objectContaining({ type: SendMessageType.Retry }),
     );
     expect(processStdoutSpy).toHaveBeenCalledWith('Acceptance passed.\n');
+  });
+
+  it('does not inject acceptance after the last mutation was mechanically verified', async () => {
+    setupMetricsMock();
+    const editCall: ServerGeminiStreamEvent = {
+      type: GeminiEventType.ToolCallRequest,
+      value: {
+        callId: 'edit-verified-1',
+        name: 'edit',
+        args: {
+          file_path: '/tmp/game.js',
+          old_string: 'broken',
+          new_string: 'fixed',
+        },
+        isClientInitiated: false,
+        prompt_id: 'prompt-verified-acceptance',
+      },
+    };
+    const verifyCall: ServerGeminiStreamEvent = {
+      type: GeminiEventType.ToolCallRequest,
+      value: {
+        callId: 'verify-1',
+        name: ToolNames.SHELL,
+        args: { command: 'npm test' },
+        isClientInitiated: false,
+        prompt_id: 'prompt-verified-acceptance',
+      },
+    };
+    mockCoreExecuteToolCall
+      .mockResolvedValueOnce({ responseParts: [{ text: 'edit applied' }] })
+      .mockResolvedValueOnce({ responseParts: [{ text: 'tests passed' }] });
+    mockGeminiClient.sendMessageStream
+      .mockReturnValueOnce(createStreamFromEvents([editCall]))
+      .mockReturnValueOnce(createStreamFromEvents([verifyCall]))
+      .mockReturnValueOnce(
+        createStreamFromEvents([
+          { type: GeminiEventType.Content, value: 'TINY_PASS' },
+          {
+            type: GeminiEventType.Finished,
+            value: {
+              reason: undefined,
+              usageMetadata: { totalTokenCount: 12 },
+            },
+          },
+        ]),
+      );
+
+    const exitCode = await runNonInteractive(
+      mockConfig,
+      mockSettings,
+      'Fix and test the game',
+      'prompt-verified-acceptance',
+    );
+
+    expect(exitCode).toBe(0);
+    expect(mockGeminiClient.sendMessageStream).toHaveBeenCalledTimes(3);
+    expect(mockGeminiClient.sendMessageStream).not.toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          text: expect.stringContaining('Automatic acceptance'),
+        }),
+      ],
+      expect.any(AbortSignal),
+      'prompt-verified-acceptance',
+      { type: SendMessageType.Retry },
+    );
+    expect(processStdoutSpy).toHaveBeenCalledWith('TINY_PASS\n');
   });
 
   it('should ignore duplicate provider tool-call ids across rounds', async () => {

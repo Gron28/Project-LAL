@@ -1,10 +1,15 @@
 // One shared data connection for every dashboard widget — a single ~2s SSE snapshot
 // instead of N widgets each polling their own endpoint on their own interval.
 import { readSysInfo } from "@/lib/sysinfo";
-import { servingModel, trainStatus, listTrainRuns, listBench, getBattery, allModels } from "@/lib/lab";
+import { servingModel, trainStatus, listTrainRuns, listBench, getBattery, allModels, SERVE_PORT } from "@/lib/lab";
 import { readRuntimeStatus } from "@/lib/runtime-status";
+import { readLlamaRuntimeTelemetry, RuntimeTelemetryJournal } from "@/lib/runtime-telemetry";
+import { readGuardianStatus } from "@/lib/guardian-observer";
+import { readGuardianAdapters } from "@/lib/guardian-adapters";
+import { readGuardianEvidence } from "@/lib/guardian-evidence";
 
 export const dynamic = "force-dynamic";
+const telemetryJournal = new RuntimeTelemetryJournal(`${process.cwd()}/.data/runtime/llama-telemetry.ndjson`);
 
 async function snapshot() {
   const sys = await readSysInfo();
@@ -17,11 +22,18 @@ async function snapshot() {
     tokSec: r.tokSec, latencyMs: r.latencyMs, sizeGb: r.sizeGb, pinned: r.pinned, stale: r.stale,
   }));
   const battery = getBattery();
+  const runtime = readRuntimeStatus();
+  const guardian = readGuardianStatus();
+  const telemetry = await readLlamaRuntimeTelemetry(
+    `http://127.0.0.1:${SERVE_PORT}`,
+    runtime.serving.backend === "llama.cpp" && runtime.serving.alive,
+  );
+  telemetryJournal.append(telemetry);
   return {
     sys, serving: servingModel(),
     train: { running, tail },
     runs, benchSummaries, battery,
-    models: allModels(), runtime: readRuntimeStatus(),
+    models: allModels(), runtime: { ...runtime, telemetry }, guardian, guardianAdapters: readGuardianAdapters(), guardianEvidence: readGuardianEvidence(),
   };
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "@local-ai-lab/lal-cli",
-  "version": "0.1.0-lal.42",
+  "version": "0.1.0-lal.43",
   "engines": {
     "node": ">=22.0.0"
   },
@@ -14,7 +14,7 @@
   ],
   "private": true,
   "config": {
-    "sandboxImageUri": "ghcr.io/qwenlm/qwen-code:0.19.9"
+    "sandboxImageUri": "ghcr.io/qwenlm/qwen-code:0.1.0-lal.43"
   },
   "scripts": {
     "start": "node scripts/start.js",

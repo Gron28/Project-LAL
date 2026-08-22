@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deleteAllRuns, listRuns } from "@/lib/runs";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,8 @@ export function GET(req: NextRequest) {
 
 // DELETE /api/agent/runs — wipe every terminal run record (meta + event ledger).
 // Live runs are never touched; conversations/files/models stay independently owned.
-export function DELETE() {
+export function DELETE(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   return NextResponse.json(deleteAllRuns());
 }

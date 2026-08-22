@@ -1,6 +1,6 @@
 {
   "name": "@lal/audio-capture",
-  "version": "0.19.9",
+  "version": "0.1.0-lal.43",
   "description": "Native microphone capture backend for LAL voice input",
   "type": "module",
   "main": "dist/index.js",

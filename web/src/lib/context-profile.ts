@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ContextProfile } from "@lal/protocol";
 
-export const CONTEXT_CANDIDATES = [32_768, 65_536, 131_072] as const;
+export const CONTEXT_CANDIDATES = [32_768, 65_536, 131_072, 262_144] as const;
 export const CONTEXT_FALLBACKS = [16_384, 8_192] as const;
 
 type PersistedProfiles = { version: 1; profiles: Record<string, ContextProfile> };
@@ -18,6 +18,29 @@ export function contextCandidates(modelMaxTokens: number | null): number[] {
   return [...CONTEXT_CANDIDATES, ...CONTEXT_FALLBACKS]
     .filter((value) => value <= maximum)
     .sort((a, b) => b - a);
+}
+
+export function contextProbeCandidates(
+  modelMaxTokens: number | null,
+  verifiedTokens: number | null,
+): { ascending: number[]; fallbacks: number[] } {
+  const candidates = contextCandidates(modelMaxTokens);
+  if (verifiedTokens && verifiedTokens > 0) {
+    return {
+      ascending: candidates
+        .filter((value) => value > verifiedTokens)
+        .sort((a, b) => a - b),
+      fallbacks: [],
+    };
+  }
+  return {
+    ascending: candidates
+      .filter((value) => value >= 32_768)
+      .sort((a, b) => a - b),
+    fallbacks: candidates
+      .filter((value) => value < 32_768)
+      .sort((a, b) => b - a),
+  };
 }
 
 export function contextHardwareFingerprint(backendIdentity = "unknown"): string {

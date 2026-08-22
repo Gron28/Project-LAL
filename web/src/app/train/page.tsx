@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Stat, LossChart, MetricHistoryChart, SourceLossChart, BlockHeatmap, GradientTerrain3D, LengthHistogramChart, ProbePanel, DeltaHeatmap, DeltaSurface3D, ConceptGalaxy3D, type AdapterDelta, type AdapterEvolution, type GalaxySnapshot } from "@/components/charts";
 import { SignalTrace } from "@/components/ui/signal-trace";
+import { LabNav } from "@/components/lab-nav";
 
 type Row = {
   event: string; step?: number; steps?: number; loss?: number; best?: number;
@@ -174,7 +175,7 @@ export default function TrainPage() {
   const [viewName, setViewName] = useState<string | null>(null);
   const [extracting, setExtracting] = useState("");
   const [datasetOpen, setDatasetOpen] = useState(false);
-  const [configOpen, setConfigOpen] = useState(true);
+  const [configOpen, setConfigOpen] = useState(false);
   // Four sections used to be one long vertical stack — every graph, always
   // rendered, regardless of whether you came here to watch a live run or dig
   // into a past checkpoint's internals. Tabs make each its own focused screen.
@@ -400,9 +401,11 @@ export default function TrainPage() {
   // pb-20 clears the fixed mobile bottom tab bar (h-14 + safe-area inset) — pb-10
   // wasn't enough and the raw log / concept galaxy panels were rendering underneath it
   return (
-    <div className="min-h-dvh bg-[var(--bg)] text-[var(--text)] px-3 py-4 pb-20 md:pb-10">
-      <div className="max-w-[1760px] mx-auto">
-        <div className="flex items-center gap-1 mb-2 overflow-x-auto pb-0.5">
+    <main id="main-content" className="page-shell text-[var(--text)]">
+      <div className="page-frame max-w-[1760px]">
+        <LabNav />
+        <h1 className="sr-only">Training</h1>
+        <div className="flex items-center gap-1 mb-4 overflow-x-auto rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--surface-1)] p-1.5">
           {([["live", "Live"], ["compare", "Model deltas"], ["evolution", "Evolution"], ["galaxy", "Concept space"]] as const).map(([id, label]) => (
             <button key={id} onClick={() => setViewTab(id)} className="h-8 px-3 rounded-[var(--r-md)] border text-[10px] whitespace-nowrap"
               style={{ color: viewTab === id ? "var(--bg)" : "var(--text-2)", background: viewTab === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: viewTab === id ? "var(--accent-ai)" : "var(--border)", fontWeight: viewTab === id ? 700 : 400 }}>
@@ -648,7 +651,16 @@ export default function TrainPage() {
                   a bordered/surfaced frame so an empty one reads as "an empty gauge", not a hole */}
               {/* single column below md: auto-fit/minmax degenerates into a 0px track on
                   narrow phones (measured: "230px 0px 103.5px") rather than just stacking */}
-              <div className="grid gap-3 mt-1" style={{ gridTemplateColumns: isWide ? "repeat(12, minmax(0, 1fr))" : "1fr" }}>
+              {!rows.length && (
+                <div className="min-h-64 grid place-items-center text-center border border-dashed border-[var(--border)] rounded-[var(--r-lg)] bg-[var(--surface-1)] px-6">
+                  <div className="max-w-md">
+                    <div className="text-lg font-semibold">No training signal yet</div>
+                    <p className="mt-2 text-sm text-[var(--muted)]">Open <span className="text-[var(--text)]">New model</span> to configure a run, or select a previous run above to inspect its evidence.</p>
+                    <button onClick={() => setConfigOpen(true)} className="mt-5 h-10 px-4 rounded-[var(--r-md)] bg-[var(--accent-ai)] text-[var(--bg)] text-sm font-semibold">Configure training</button>
+                  </div>
+                </div>
+              )}
+              {!!rows.length && <div className="grid gap-3 mt-1" style={{ gridTemplateColumns: isWide ? "repeat(12, minmax(0, 1fr))" : "1fr" }}>
                 <div className="xl:col-span-12 flex items-end justify-between gap-3 pt-1">
                   <div><div className="text-[9px] uppercase tracking-[0.18em] text-[var(--accent-ai)]">Learning signal</div><div className="text-sm font-semibold mt-1">Is the model learning cleanly?</div></div>
                   <div className="text-[9px] text-[var(--muted)]">train / validation loss · stability · convergence</div>
@@ -715,7 +727,7 @@ export default function TrainPage() {
                   <div className={panelLbl}>Live sample vs. target</div>
                   <div className="min-h-32 max-h-64 overflow-auto"><ProbePanel row={lastProbe} /></div>
                 </div>
-              </div>
+              </div>}
 
               {modelRow && (
                 <div className="text-[10px] text-[var(--muted)] flex flex-wrap gap-x-3">
@@ -731,12 +743,12 @@ export default function TrainPage() {
 
               {/* log tail — always visible, not collapsed; compact height keeps it from
                   pushing the charts off screen */}
-              <div className={panel}>
+              {!!rows.length && <div className={panel}>
                 <div className={panelLbl}>Raw log ({rows.length})</div>
                 <div className="text-[10.5px] text-[var(--text-2)] leading-relaxed overflow-auto h-24 whitespace-pre-wrap font-mono">
                   {rows.length ? rows.slice(-18).map((r, i) => <div key={i}>{r.event === "step" ? `step ${r.step}/${r.steps}  loss ${r.loss}  ema ${r.ema ?? "—"}  gn ${r.grad_norm ?? "—"}  (${r.elapsed}s)` : r.event === "val" ? `◈ val @ ${r.step}: ${r.val_loss}  (best ${r.best_val})` : r.event === "epoch" ? `↻ epoch ${r.n}` : r.event === "bench" ? (r.error ? `✗ bench ${r.suite}: ${r.error}` : `★ bench ${r.suite}: ${r.score}/${r.total}${r.tokSec ? `  ${r.tokSec} tok/s` : ""}`) : r.event === "phase" ? `▸ ${r.phase}` : r.event === "start" ? `▸ start on ${r.device} (${r.dtype})  base ${r.base}` : r.event === "early_stop" ? `■ early stop @ step ${r.step}: ${r.reason}` : r.event === "done" ? (r.ok ? `✓ DONE → ${r.model} (in Chat)` : "✗ failed") : r.event === "error" ? "✗ " + r.msg : r.event === "model" ? `LoRA params: ${((r.trainable_params ?? 0) / 1e6).toFixed(1)}M${r.val_blocks ? `  ·  ${r.blocks} train / ${r.val_blocks} val` : ""}` : JSON.stringify(r)}</div>) : <div className="text-[var(--muted)]">— no run yet —</div>}
                 </div>
-              </div>
+              </div>}
             </div>
           </div>
 
@@ -849,7 +861,7 @@ export default function TrainPage() {
           </div>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
 

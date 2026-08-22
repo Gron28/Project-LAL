@@ -10,8 +10,7 @@ export function SectionHeading({
 }) {
   return (
     <h1
-      className={cn("text-[var(--text-2)] tracking-wide font-semibold text-sm", className)}
-      style={{ fontFamily: "var(--font-display), monospace" }}
+      className={cn("text-[var(--text)] tracking-[-0.02em] font-semibold text-xl", className)}
     >
       {children}
     </h1>

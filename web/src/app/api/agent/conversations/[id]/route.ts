@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getConvo, saveConvo, deleteConvo } from "@/lib/lab";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const { id } = await params;
   const b = await req.json().catch(() => ({}));
   const c = getConvo(id) || { id, title: "", ts: Date.now(), messages: [] };
@@ -18,7 +21,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   return NextResponse.json(saveConvo(c));
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const { id } = await params;
   deleteConvo(id);
   return NextResponse.json({ ok: true });

@@ -30,7 +30,13 @@ if systemctl --user is-active --quiet "$OLD_UNIT"; then
   systemctl --user stop "$OLD_UNIT"
 fi
 
-if ! systemctl --user start project-lal.service; then
+if systemctl --user is-active --quiet project-lal.service; then
+  SERVICE_ACTION="restart"
+else
+  SERVICE_ACTION="start"
+fi
+
+if ! systemctl --user "$SERVICE_ACTION" project-lal.service; then
   echo "Project-LAL service failed to start; restoring $OLD_UNIT." >&2
   systemctl --user start "$OLD_UNIT" || true
   exit 1

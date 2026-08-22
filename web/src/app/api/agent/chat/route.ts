@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { activatePublicModel, allModels, contextProfileForModel, readSettings, resolvedContextTarget, getConvo, saveConvo, newId, webSearch, retrieveDocs, servingModel, modelRuntimeSettings, SERVE_PORT, type Convo } from "@/lib/lab";
 import { startRun, type EmitFn } from "@/lib/runs";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
@@ -30,6 +31,8 @@ function stripDataUrl(s: string): string {
 // via GET /api/agent/runs/<id>/stream; Stop is POST /api/agent/runs/<id>/stop —
 // which actually cancels the upstream decode, unlike the old no-op stop.
 export async function POST(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const b = await req.json().catch(() => ({}));
   const incoming = ((b.messages || []) as { role: string; content: string }[]).map((m) => ({ ...m }));
   const attachments: string[] = Array.isArray(b.attachments) ? b.attachments.filter((x: unknown) => typeof x === "string") : [];

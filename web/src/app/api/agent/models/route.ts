@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { activatePublicModel, allModels, publicModels, readSettings, writeSettings, servingModel, deleteModel, renameModel, contextProfileForModel, probePublicModelContext, modelScanRoots, localRuntimeAvailability, allModelRuntimeSettings, modelSettingsRevision, writeModelRuntimeSettings, resetModelRuntimeSettings } from "@/lib/lab";
 import { stopAllRuns } from "@/lib/runs";
 import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
+import { LAL_RUNTIME_PROFILES } from "@/lib/runtime-profiles";
 import { readOrRefreshLiveCapabilityRegistry, refreshLiveCapabilityRegistry } from "@/lib/capability-registry-live";
 import fs from "node:fs";
 import path from "node:path";
@@ -57,6 +58,7 @@ async function inventoryResponse(req?: NextRequest) {
     groundDocs: s.groundDocs,
     serveIdleMinutes: s.serveIdleMinutes,
     modelSettings: allModelRuntimeSettings(),
+    runtimeProfiles: LAL_RUNTIME_PROFILES,
     settingsRevision: modelSettingsRevision(),
     catalog,
     contextProfiles: Object.fromEntries(infos.map((model) => [model.name, contextProfileForModel(model.name)])),

@@ -2196,12 +2196,10 @@ export async function loadCliConfig(
     preventSystemSleep: settings.general?.preventSystemSleep ?? true,
     skipNextSpeakerCheck: settings.model?.skipNextSpeakerCheck,
     skipWorkflowUsageWarning: settings.model?.skipWorkflowUsageWarning ?? false,
-    // Heuristics stay on in BOTH modes: local models loop with slightly
-    // varied args far below the always-on caps, and detection now recovers
-    // with a nudge + single retry instead of halting, so a false positive on
-    // legitimate long exploration costs one system message, while an
-    // undetected loop costs the whole context window.
-    skipLoopDetection: settings.model?.skipLoopDetection ?? false,
+    // Broad heuristics are opt-in: legitimate file exploration and chunked
+    // reads often resemble a loop. The exact-repeat guard and per-turn cap
+    // remain active independently of this setting.
+    skipLoopDetection: settings.model?.skipLoopDetection ?? true,
     maxToolCallsPerTurn: settings.model?.maxToolCallsPerTurn,
     skipStartupContext: settings.model?.skipStartupContext ?? false,
     truncateToolOutputThreshold: settings.tools?.truncateToolOutputThreshold,

@@ -112,6 +112,50 @@ function suppressedOutputBody(structuredCaptured: boolean): string {
     : SUPPRESSED_OUTPUT_RETRY;
 }
 
+/**
+ * Return true only for commands whose successful exit is useful mechanical
+ * evidence about the current workspace. A generic successful shell call (for
+ * example `pwd`, `ls`, or `curl`) must not suppress the post-mutation
+ * acceptance pass: it proves execution, not correctness.
+ *
+ * This is deliberately conservative. False negatives cost one acceptance
+ * turn; false positives can let an unverified edit escape.
+ */
+export function isMechanicalAcceptanceCommand(command: unknown): boolean {
+  if (typeof command !== 'string') return false;
+  const normalized = command.trim().toLowerCase();
+  if (!normalized) return false;
+
+  return (
+    /(?:^|[;&|]\s*)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|build|check|typecheck|verify|validate|smoke)(?::[\w:.-]+)?(?:\s|$)/.test(
+      normalized,
+    ) ||
+    /(?:^|[;&|]\s*)(?:cargo\s+(?:test|check|clippy)|go\s+(?:test|vet)|pytest|python(?:3)?\s+-m\s+(?:pytest|unittest)|make\s+(?:test|check|lint|verify|validate|build))(?:\s|$)/.test(
+      normalized,
+    ) ||
+    /(?:^|[;&|]\s*)(?:tsc\b[^;&|]*--noemit|git\s+diff\s+--check)(?:\s|$)/.test(
+      normalized,
+    ) ||
+    /(?:^|[;&|]\s*)(?:(?:node\s+--test|(?:npx\s+)?vitest(?:\s+run)?|(?:npx\s+)?eslint|(?:npx\s+)?prettier\s+--check|npm\s+exec\s+tsc\s+--[^;&|]*--noemit))(?:\s|$)/.test(
+      normalized,
+    ) ||
+    /(?:^|[;&|]\s*)(?:node|python(?:3)?)\s+-e\s+[\s\S]*(?:assert|process\.exit|readfilesync)[\s\S]*/.test(
+      normalized,
+    ) ||
+    /(?:^|[;&|]\s*)(?:\.\/|bash\s+|sh\s+)?(?:[^\s;&|]*\/)?(?:[a-z0-9]+[-_.])*(?:test|check|verify|validate|smoke)(?:[-_.][a-z0-9]+)*(?:\.[a-z0-9]+)?(?:\s|$)/.test(
+      normalized,
+    )
+  );
+}
+
+export function isMechanicalAcceptanceToolCall(
+  request: Pick<ToolCallRequestInfo, 'name' | 'args'>,
+): boolean {
+  if (request.name === ToolNames.BROWSER_SCREENSHOT) return true;
+  if (request.name !== ToolNames.SHELL) return false;
+  return isMechanicalAcceptanceCommand(request.args['command']);
+}
+
 import {
   normalizePartList,
   extractPartsFromUserMessage,
@@ -473,16 +517,11 @@ export async function runNonInteractive(
     // a new manager is installed (or in `finally`). Without
     // this, a reused stream-json session could leave callbacks
     // attached to a stale TeamManager.
-    let boundManager: import('@lal/core').TeamManager | null =
-      null;
+    let boundManager: import('@lal/core').TeamManager | null = null;
     let approvalListener:
-      | ((
-          event: import('@lal/core').TeammateApprovalRequestEvent,
-        ) => void)
+      | ((event: import('@lal/core').TeammateApprovalRequestEvent) => void)
       | null = null;
-    const detachFromManager = (
-      m: import('@lal/core').TeamManager,
-    ) => {
+    const detachFromManager = (m: import('@lal/core').TeamManager) => {
       m.setLeaderMessageCallback(null);
       if (approvalListener) {
         m.getEventEmitter().off(
@@ -892,6 +931,7 @@ export async function runNonInteractive(
       let nextSyntheticSendType: SendMessageType | undefined;
       let mutationGeneration = 0;
       let acceptedMutationGeneration = 0;
+      let mechanicallyVerifiedMutationGeneration = 0;
       let modelOverride: string | undefined = inlineModelOverride;
       // An explicit inline `/model <id> <prompt>` override wins for the whole
       // turn: while active, skill-tool `modelOverride` writes (including the
@@ -1239,6 +1279,12 @@ export async function runNonInteractive(
               requestInfo.name === 'agent'
             ) {
               mutationGeneration++;
+            }
+            if (
+              mutationGeneration > 0 &&
+              isMechanicalAcceptanceToolCall(requestInfo)
+            ) {
+              mechanicallyVerifiedMutationGeneration = mutationGeneration;
             }
           }
           options.agentEventEmitter?.emit(AgentEventType.TOOL_RESULT, {
@@ -1639,17 +1685,18 @@ export async function runNonInteractive(
           // tool-free reply may finish normally.
           if (
             !config.getJsonSchema() &&
-            mutationGeneration > acceptedMutationGeneration
+            mutationGeneration > acceptedMutationGeneration &&
+            mutationGeneration > mechanicallyVerifiedMutationGeneration
           ) {
             acceptedMutationGeneration = mutationGeneration;
             const acceptanceInstruction =
-              'Automatic acceptance continuation: agent exit is not completion. ' +
-              'Inspect the files changed since the last check and run the relevant ' +
-              'mechanical tests now. For browser, UI, or game work, exercise the ' +
-              'actual behavior with available browser/computer tools (discover them ' +
-              'with tool_search if needed); an HTTP status alone is not a browser ' +
-              'test. Use exact failures as feedback, fix them, and rerun acceptance ' +
-              'after the final edit. Finish only when observable checks pass.';
+              'Automatic acceptance continuation: the workspace changed after the ' +
+              'last successful verification. Inspect only the relevant changed files ' +
+              'or diff and run one appropriate mechanical acceptance check now. Do ' +
+              'not reread unchanged files. For browser, UI, or game work, exercise ' +
+              'the actual behavior with a browser/computer tool; an HTTP status alone ' +
+              'is not a browser test. Use exact failures as feedback, fix them, and ' +
+              'recheck after the final edit.';
             adapter.emitSystemMessage('acceptance_required', {
               mutationGeneration,
               instruction: acceptanceInstruction,

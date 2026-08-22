@@ -6,6 +6,7 @@ import { ScatterPlot, PALETTE, pct, shortName, type Res } from "@/components/cha
 import { BenchmarkTimeline, CapabilityProfile, DeltaChart, MetricBars, QuestionDifficultyMatrix } from "@/components/benchmark-visuals";
 import LensWorkbench from "@/components/lens-workbench";
 import { Panel } from "@/components/ui/panel";
+import { LabNav } from "@/components/lab-nav";
 
 const head = "px-4 py-3 border-b border-[var(--border-soft)] text-[11px] tracking-widest uppercase text-[var(--text-2)] flex items-center gap-2";
 
@@ -63,7 +64,7 @@ function TestManager({ suiteId, onClose, onSaved }: { suiteId: string; onClose: 
           <button onClick={newSuite} className="text-xs text-[var(--accent-ai)] hover:underline">+ new suite</button>
           <button onClick={delSuite} className="text-xs text-[var(--accent-danger)] hover:underline">delete suite</button>
           <span className="ml-auto text-[10px] text-[var(--accent-ai)]">{msg}</span>
-          <button onClick={onClose} className="text-[var(--muted)] hover:text-white text-lg leading-none px-1">×</button>
+          <button onClick={onClose} aria-label="Close test manager" className="w-10 h-10 inline-grid place-items-center text-[var(--muted)] hover:text-white text-lg leading-none">×</button>
         </div>
         <div className="p-4 space-y-3">
           <div className="flex items-center gap-2">
@@ -78,7 +79,7 @@ function TestManager({ suiteId, onClose, onSaved }: { suiteId: string; onClose: 
                 <input value={it.cat} onChange={(e) => set(i, { cat: e.target.value })} className={inp + " w-16 shrink-0"} title="category" />
                 <textarea value={it.q} onChange={(e) => set(i, { q: e.target.value })} rows={2} className={inp + " flex-1 resize-y"} placeholder="question" />
                 <input value={it.a.join(" | ")} onChange={(e) => set(i, { a: e.target.value.split("|").map((s) => s.trim()).filter(Boolean) })} className={inp + " w-40 shrink-0"} placeholder="answers (a | b)" title="accepted answers, separated by |" />
-                <button onClick={() => del(i)} className="text-[var(--accent-danger)] hover:opacity-80 text-sm px-1 shrink-0">×</button>
+                <button onClick={() => del(i)} aria-label={`Delete question ${i + 1}`} className="w-10 h-10 inline-grid place-items-center text-[var(--accent-danger)] hover:opacity-80 text-sm shrink-0">×</button>
               </div>
             ))}
             {items.length === 0 && <div className="p-4 text-center text-xs text-[var(--muted)]">No questions. Add one or import below.</div>}
@@ -226,21 +227,23 @@ export default function Benchmark() {
   })();
 
   return (
-    <main className="min-h-dvh bg-[var(--bg)] text-[var(--text)] px-3 py-4 pb-20">
-      <div className="max-w-[1500px] mx-auto flex flex-col gap-4">
+    <main id="main-content" className="page-shell text-[var(--text)]">
+      <div className="page-frame max-w-[1500px] flex flex-col gap-4">
+        <LabNav />
+        <h1 className="sr-only">{view === "lens" ? "Model lens" : "Evaluation"}</h1>
         {view === "lens" ? <LensWorkbench toolbar={<ViewSwitch view={view} onChange={switchView} />} /> : (
           <>
             <Panel className="grid sm:grid-cols-[auto_1fr] lg:grid-cols-[auto_1fr_1fr_auto_auto] gap-3 items-end">
               <ViewSwitch view={view} onChange={switchView} />
               <div>
-                <label className="block text-[9px] tracking-[0.16em] uppercase text-[var(--muted)] mb-1.5">Evaluation suite</label>
-                <select className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-3 py-2.5 text-sm outline-none focus:border-[var(--border-loud)]" value={suite} onChange={(e) => { setSuite(e.target.value); setDetail(null); setPendingDetail(null); }}>
+                <label htmlFor="evaluation-suite" className="block text-[10px] tracking-[0.16em] uppercase text-[var(--muted)] mb-1.5">Evaluation suite</label>
+                <select id="evaluation-suite" className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-3 py-2.5 text-sm outline-none focus:border-[var(--border-loud)]" value={suite} onChange={(e) => { setSuite(e.target.value); setDetail(null); setPendingDetail(null); }}>
                   {(suiteList.length ? suiteList : SUITES.map((item) => ({ ...item, count: 0 }))).map((item) => <option key={item.id} value={item.id}>{item.label || item.id}{item.count ? ` · ${item.count} questions` : ""}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-[9px] tracking-[0.16em] uppercase text-[var(--muted)] mb-1.5">Model under test</label>
-                <select className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-3 py-2.5 text-sm outline-none focus:border-[var(--border-loud)]" value={model} onChange={(e) => setModel(e.target.value)}>{models.map((name) => <option key={name}>{name}</option>)}</select>
+                <label htmlFor="evaluation-model" className="block text-[10px] tracking-[0.16em] uppercase text-[var(--muted)] mb-1.5">Model under test</label>
+                <select id="evaluation-model" className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-3 py-2.5 text-sm outline-none focus:border-[var(--border-loud)]" value={model} onChange={(e) => setModel(e.target.value)}>{models.map((name) => <option key={name}>{name}</option>)}</select>
               </div>
               <button onClick={() => setManageOpen(true)} className="h-[42px] inline-flex items-center justify-center gap-2 border border-[var(--border)] text-[var(--text-2)] rounded-[var(--r-md)] px-4 text-[11px] font-semibold uppercase tracking-[0.12em] hover:border-[var(--border-loud)]"><Settings2 size={14} /> Tests</button>
               <button onClick={run} disabled={running || !model} className="h-[42px] inline-flex items-center justify-center gap-2 bg-[var(--accent-ai)] disabled:bg-[var(--border)] disabled:text-[var(--muted)] text-[var(--bg)] rounded-[var(--r-md)] px-5 text-[11px] font-bold uppercase tracking-[0.12em]"><Play size={14} fill="currentColor" /> {running ? "Running…" : "Run suite"}</button>

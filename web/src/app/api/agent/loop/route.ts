@@ -7,6 +7,8 @@ import { makeAgentExecutor, makeOrchestratorExecutor, makePlannerExecutor, makeI
 import { recordSessionCard, maybeRollupDaily } from "@/lib/memory-pipeline";
 import { startRun, requestApproval, resolveApproval } from "@/lib/runs";
 import { managedPrompt } from "@/lib/lal-prompts";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
+import { DEFAULT_WORKSPACE, workspaceGrantRepository } from "@/lib/workspace-grants";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
@@ -103,17 +105,10 @@ const MODES: Record<string, ModePreset> = {
   },
 };
 
-// Default mini-claude-code workspace. Any directory can be a project: the client
-// passes `project` (absolute path) and the executor confines all file access to it.
-const DEFAULT_WORKSPACE = path.join(path.resolve(process.cwd(), ".."), "workspace");
-
 function resolveProject(raw: unknown): { root: string } | { error: string } {
-  if (!raw) { fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true }); return { root: DEFAULT_WORKSPACE }; }
-  const p = path.resolve(String(raw));
-  try {
-    if (!fs.statSync(p).isDirectory()) return { error: "not a directory: " + p };
-  } catch { return { error: "directory not found: " + p }; }
-  return { root: p };
+  if (!raw) fs.mkdirSync(DEFAULT_WORKSPACE, { recursive: true });
+  const root = workspaceGrantRepository.resolveGrantedDirectory(raw ? String(raw) : DEFAULT_WORKSPACE);
+  return root ? { root } : { error: "project is not owner-granted or no longer exists" };
 }
 
 // Project instruction files, same convention as Claude Code: CLAUDE.md is the
@@ -157,6 +152,8 @@ export function GET() {
 // PATCH {id, allow} -> resolve a pending tool approval (looked up across live runs
 // by tool-call id — the approval banner only carries the call id)
 export async function PATCH(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const b = await req.json().catch(() => ({}));
   const ok = resolveApproval(String(b.id || ""), !!b.allow);
   if (!ok) return NextResponse.json({ ok: false, error: "no pending approval with that id" }, { status: 404 });
@@ -170,6 +167,8 @@ export async function PATCH(req: NextRequest) {
 // then tails live. This is what decouples a run's life from the browser connection
 // that happened to start it.
 export async function POST(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const b = await req.json().catch(() => ({}));
   const incoming = (b.messages || []) as ToolLoopMsg[];
   if (!incoming.length) return new Response("no messages", { status: 400 });

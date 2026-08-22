@@ -1,7 +1,5 @@
 "use client";
-import dynamic from "next/dynamic";
-
-const AgentChat = dynamic(() => import("../agent/agent-chat"), { ssr: false });
+import AgentChat from "../agent/agent-chat";
 
 export default function ChatPage() {
   return <AgentChat />;

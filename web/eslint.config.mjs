@@ -13,6 +13,7 @@ const eslintConfig = defineConfig([
     // bundles are never source and must not become lint input merely because a
     // different distDir is active.
     ".next-*/**",
+    ".data/**",
     "out/**",
     "build/**",
     "next-env.d.ts",

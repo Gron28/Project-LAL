@@ -948,21 +948,22 @@ export default function CodePage() {
   };
 
   const inp = "min-w-0 bg-[var(--surface-2)] border border-[var(--border-soft)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text-2)] outline-none focus:border-[var(--border-loud)]";
-  const iconBtn = "flex items-center justify-center h-8 w-8 rounded-lg border border-[var(--border-soft)] text-[var(--text-2)] hover:border-[var(--border)] hover:text-[var(--text)] transition-colors";
+  const iconBtn = "flex items-center justify-center h-10 w-10 lg:h-9 lg:w-9 rounded-lg border border-[var(--border-soft)] text-[var(--text-2)] hover:border-[var(--border-loud)] hover:text-[var(--text)] transition-colors";
   const modeLabel = modes.find((m) => m.id === mode)?.label ?? mode;
   // Panels reflow the chat via PADDING on this outer wrapper only — the chat column
   // must never gain a nested scroll container (the stick/jump logic is built on
   // window scrolling; see the scroll-effect comment above).
   return (
-    <div style={{ "--tree-w": treeW + "px", "--ed-w": edW ? edW + "px" : "min(52vw,760px)" } as React.CSSProperties}
+    <main id="main-content" style={{ "--tree-w": treeW + "px", "--ed-w": edW ? edW + "px" : "min(52vw,760px)" } as React.CSSProperties}
       className={(!clientOwnedRun && treeOpen ? "xl:pl-[var(--tree-w)] " : "") + (openFile ? "lg:pr-[var(--ed-w)]" : "")}>
+    <h1 className="sr-only">Code agent</h1>
     <div className="max-w-6xl mx-auto px-3 pb-40 flex flex-col min-h-dvh">
       {/* ── Sticky command bar + telemetry ───────────────────────────────── */}
       <div className="sticky top-0 z-30 -mx-3 px-3 bg-[var(--bg)]/92 backdrop-blur-md border-b border-[var(--border-soft)]">
         <header className="flex items-center gap-2 h-14">
           {/* Mobile: menu opens the full control sheet */}
-          <button onClick={() => setMenuOpen(true)} className={iconBtn + " lg:hidden"} title="controls"><Menu size={16} /></button>
-          <span className="hidden md:flex text-[var(--accent-ai)] font-bold tracking-widest text-xs items-center gap-2 shrink-0"><Bot size={17} /> AGENT</span>
+          <button onClick={() => setMenuOpen(true)} className={iconBtn + " lg:hidden"} title="Controls" aria-label="Open code controls"><Menu size={16} /></button>
+          <span className="flex text-[var(--accent-ai)] font-bold tracking-[0.12em] text-xs items-center gap-2 shrink-0"><Bot size={17} /> CODE</span>
 
           {/* Desktop inline controls */}
           <div className="hidden lg:flex items-center gap-1.5 flex-1 min-w-0">
@@ -984,13 +985,13 @@ export default function CodePage() {
           {/* Right cluster (both layouts) */}
           <div className="flex items-center gap-1.5 ml-auto shrink-0">
             <button onClick={() => setThink(!think)} title={think ? "thinking on" : "thinking off"}
-              className={iconBtn} style={{ borderColor: think ? "var(--accent-ai)" : undefined, color: think ? "var(--accent-ai)" : undefined }}><Brain size={15} /></button>
+              className={iconBtn + " hidden lg:flex"} style={{ borderColor: think ? "var(--accent-ai)" : undefined, color: think ? "var(--accent-ai)" : undefined }}><Brain size={15} /></button>
             <button onClick={() => setAuto(!auto)} title={auto ? "tools auto-approved" : "tools ask first"}
-              className={iconBtn} style={{ borderColor: auto ? "var(--accent-warn)" : undefined, color: auto ? "var(--accent-warn)" : undefined }}>{auto ? <Zap size={15} /> : <ShieldCheck size={15} />}</button>
-            <button onClick={stopAllAgents} title="stop every active agent run" className={iconBtn + " text-[var(--accent-danger)] hover:border-[var(--accent-danger)]"}><CircleStop size={15} /></button>
+              className={iconBtn + " hidden lg:flex"} style={{ borderColor: auto ? "var(--accent-warn)" : undefined, color: auto ? "var(--accent-warn)" : undefined }}>{auto ? <Zap size={15} /> : <ShieldCheck size={15} />}</button>
+            <button onClick={stopAllAgents} title="stop every active agent run" className={iconBtn + " hidden sm:flex text-[var(--accent-danger)] hover:border-[var(--accent-danger)]"}><CircleStop size={15} /></button>
             <button disabled={clientOwnedRun} onClick={() => toggleTree(!treeOpen)} title={clientOwnedRun ? "terminal device owns this project's files" : "files · git · run"} className={iconBtn + " disabled:opacity-30"}
               style={{ borderColor: treeOpen ? "var(--accent-ai)" : undefined, color: treeOpen ? "var(--accent-ai)" : undefined }}><PanelLeft size={15} /></button>
-            <div className="relative">
+            <div className="relative hidden sm:block">
               <button onClick={() => setSessionsOpen((o) => !o)} title="past sessions" className={iconBtn}><ChevronDown size={15} /></button>
               {sessionsOpen && (
                 <>
@@ -1055,7 +1056,6 @@ export default function CodePage() {
           <div className="mt-6 text-center">
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-[var(--surface-2)] border border-[var(--border-soft)] mb-4"><Bot size={22} className="text-[var(--accent-ai)]" /></div>
             <p className="text-sm text-[var(--text-2)] max-w-md mx-auto leading-relaxed">
-              files, shell, a Python REPL, web research, image understanding, and helper sub-agents.
               {clientOwnedRun
                 ? "A terminal-linked agent. Its files and tools stay on the terminal device; this view follows the durable run."
                 : <>An agent with real tools over <span className="font-mono text-[var(--text)]">{project ? project.split("/").pop() : (workspace ? "workspace" : "the workspace")}</span>: files, shell, a Python REPL, web research, image understanding, and helper sub-agents.</>}
@@ -1110,7 +1110,7 @@ export default function CodePage() {
         // w-full) — this pill would otherwise render above it (z-40 > editor's z-30)
         // regardless of DOM order, visually leaking into an unrelated full-screen view.
         <div className={(openFile ? "hidden lg:flex " : "flex ") + "fixed bottom-32 left-0 right-0 z-40 justify-center pointer-events-none"
-          + (navCollapsed ? "" : " md:left-12 lg:left-36")
+          + (navCollapsed ? "" : " md:left-[72px] lg:left-[224px]")
           + (openFile ? " lg:right-[var(--ed-w)]" : "") + (treeOpen ? (navCollapsed ? " xl:left-[var(--tree-w)]" : " xl:left-[calc(var(--tree-w)+9rem)]") : "")}>
           <button onClick={jumpToBottom} title="jump to latest"
             className="pointer-events-auto flex items-center gap-1.5 text-xs bg-[var(--surface-1)] border border-[var(--border)] rounded-full shadow-lg px-3 py-1.5 text-[var(--text-2)]">
@@ -1138,7 +1138,7 @@ export default function CodePage() {
       )}
 
       <div className={"fixed bottom-14 md:bottom-0 left-0 right-0 bg-[var(--bg)]/95 backdrop-blur-md border-t border-[var(--border)] px-3 pt-2.5 pb-[calc(env(safe-area-inset-bottom)+0.625rem)]"
-        + (navCollapsed ? "" : " md:left-12 lg:left-36")
+        + (navCollapsed ? "" : " md:left-[72px] lg:left-[224px]")
         + (openFile ? " lg:right-[var(--ed-w)]" : "") + (treeOpen ? (navCollapsed ? " xl:left-[var(--tree-w)]" : " xl:left-[calc(var(--tree-w)+9rem)]") : "")}>
         <div className="max-w-6xl mx-auto">
           {/* Continue affordance: the last reply hit the token ceiling mid-thought. */}
@@ -1163,6 +1163,7 @@ export default function CodePage() {
             <button disabled={clientOwnedRun} onClick={() => fileRef.current?.click()} title="attach image (for describe_image)"
               className="h-9 w-9 flex items-center justify-center rounded-lg text-[var(--muted)] hover:text-[var(--text-2)] shrink-0 disabled:opacity-30"><Paperclip size={16} /></button>
             <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={1}
+              aria-label="Code agent message"
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
               onPaste={(e) => { const files = e.clipboardData?.files; if (files?.length) addFiles(files); }}
               placeholder={clientOwnedRun ? (clientControl?.runId === clientRunId ? "Message the terminal session…" : "Open the /rc link to control this terminal session") : mode === "deliberate" ? "What question should the deliberation settle?" : "Build, fix, research…"}
@@ -1171,7 +1172,7 @@ export default function CodePage() {
               onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; }} />
             {busy
               ? <button onClick={stop} className="h-9 px-3.5 rounded-xl bg-[var(--accent-danger)] text-[#05090c] flex items-center gap-1.5 text-sm font-semibold shrink-0"><CircleStop size={15} /> Stop</button>
-              : <button onClick={send} disabled={!input.trim() && !attached.length} className="h-9 px-3.5 rounded-xl bg-[var(--accent-ai)] text-[#05090c] flex items-center gap-1.5 text-sm font-semibold disabled:opacity-40 shrink-0"><Send size={15} /></button>}
+              : <button onClick={send} aria-label="Send message" title="Send message" disabled={!input.trim() && !attached.length} className="h-9 px-3.5 rounded-xl bg-[var(--accent-ai)] text-[#05090c] flex items-center gap-1.5 text-sm font-semibold disabled:opacity-40 shrink-0"><Send size={15} /></button>}
           </div>
           <div className="flex items-center justify-between mt-1.5 px-1 text-[10px] text-[var(--muted)]">
             <span className="truncate">{servingModel ? <span className="text-[var(--text-3)]">{servingModel}</span> : model} · {modeLabel}{autoContinue ? " · auto-continue" : ""}</span>
@@ -1218,7 +1219,7 @@ export default function CodePage() {
         {/* below xl the sidebar overlays the chat — backdrop click dismisses */}
         <div className="fixed inset-0 z-10 bg-black/40 xl:hidden" onClick={() => toggleTree(false)} />
         <aside style={{ width: "var(--tree-w)" }} className={"fixed top-0 bottom-14 md:bottom-0 left-0 z-20 border-r border-[var(--border)] bg-[var(--bg)] flex flex-col"
-          + (navCollapsed ? "" : " md:left-12 lg:left-36")}>
+          + (navCollapsed ? "" : " md:left-[72px] lg:left-[224px]")}>
           <div onPointerDown={dragPanel("tree")} title="drag to resize"
             className="absolute top-0 bottom-0 -right-1 w-2 cursor-col-resize touch-none z-10 hover:bg-[var(--accent-ai)]/30" />
           <div className="flex items-center gap-1 px-2 pt-2 pb-1 border-b border-[var(--border-soft)] shrink-0">
@@ -1257,6 +1258,6 @@ export default function CodePage() {
       think={think} onThinkChange={setThink}
       auto={auto} onAutoChange={setAuto}
       autoContinue={autoContinue} onAutoContinueChange={changeAutoContinue} />
-    </div>
+    </main>
   );
 }

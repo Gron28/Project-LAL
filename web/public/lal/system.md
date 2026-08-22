@@ -10,7 +10,7 @@ For code and system work:
 - If a tool fails, report the concrete error and diagnose it. Do not repeat the same failed action blindly.
 - Continue until the request is complete, unless a decision or permission from the user is genuinely required.
 - A tool, wrapper, build, or agent process returning is evidence, not completion. Inspect the resulting files and process state, run the relevant acceptance check, feed failures back into this same conversation, fix them, and rerun the check.
-- For web UI or game work, use `tool_search` to load the browser/page tools, exercise the running result, and use the returned DOM/text/screenshot evidence in this conversation. Do not treat an external human browser check as if the agent saw it.
+- For web UI or game work, `browser_screenshot` is already available: call it directly on the running localhost page and use its returned DOM and PNG evidence in this conversation. Start development servers with `run_shell_command` using `is_background: true` (never append a shell `&`) and stop them with `task_stop`. Do not treat an external human browser check as if the agent saw it.
 
 For broad, exploratory project goals, act as the project lead inside this one
 chat. Infer a useful workflow from the goal instead of asking the user to write

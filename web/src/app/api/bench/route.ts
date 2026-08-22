@@ -2,6 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
 import { runBench, SUITES, getSuite, listBench, saveBench, deleteBench, pinBench, HIVE_ADAPTER_DIR, type BenchOpts } from "@/lib/lab";
+import { authorizeBrowserMutation } from "@/lib/browser-mutation-guard";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 1800;
@@ -25,6 +26,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const b = await req.json().catch(() => ({}));
   if (!b.model) return NextResponse.json({ error: "no model" }, { status: 400 });
   const suiteName = (b.suite as string) || "fractal";
@@ -52,6 +55,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const u = new URL(req.url);
   deleteBench(u.searchParams.get("suite") || "", u.searchParams.get("model") || "");
   return NextResponse.json({ ok: true });
@@ -59,6 +64,8 @@ export async function DELETE(req: NextRequest) {
 
 // PATCH {suite, model, pinned} -> pin/unpin a saved result as a champion baseline
 export async function PATCH(req: NextRequest) {
+  const authorization = authorizeBrowserMutation(req);
+  if (!authorization.ok) return NextResponse.json({ error: "browser mutation rejected", code: authorization.code }, { status: authorization.status });
   const b = await req.json().catch(() => ({}));
   if (!b.suite || !b.model) return NextResponse.json({ error: "suite and model required" }, { status: 400 });
   const r = pinBench(b.suite, b.model, !!b.pinned);

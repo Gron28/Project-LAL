@@ -123,22 +123,22 @@ export default function LensWorkbench({ toolbar }: { toolbar?: React.ReactNode }
           </div>
           <div className="grid sm:grid-cols-[1fr_110px] gap-2">
             <div>
-              <label className="block text-[9px] uppercase tracking-[0.16em] text-[var(--muted)] mb-1.5">Checkpoint</label>
-              <select value={model} onChange={(e) => setModel(e.target.value)} className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] p-2.5 text-xs outline-none focus:border-[var(--border-loud)]">
+              <label htmlFor="lens-checkpoint" className="block text-[10px] uppercase tracking-[0.16em] text-[var(--muted)] mb-1.5">Checkpoint</label>
+              <select id="lens-checkpoint" value={model} onChange={(e) => setModel(e.target.value)} className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] p-2.5 text-xs outline-none focus:border-[var(--border-loud)]">
                 {models.map((name) => <option key={name} value={name}>{name}</option>)}
                 {!models.length && <option value="">No retained HF checkpoints found</option>}
               </select>
             </div>
             <div>
-              <label className="block text-[9px] uppercase tracking-[0.16em] text-[var(--muted)] mb-1.5">Candidates</label>
-              <select value={topK} onChange={(e) => setTopK(Number(e.target.value))} className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] p-2.5 text-xs outline-none focus:border-[var(--border-loud)]">
+              <label htmlFor="lens-candidates" className="block text-[10px] uppercase tracking-[0.16em] text-[var(--muted)] mb-1.5">Candidates</label>
+              <select id="lens-candidates" value={topK} onChange={(e) => setTopK(Number(e.target.value))} className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] p-2.5 text-xs outline-none focus:border-[var(--border-loud)]">
                 {[3, 5, 8, 10].map((k) => <option key={k} value={k}>top-{k}</option>)}
               </select>
             </div>
           </div>
           <div>
-            <label className="block text-[9px] uppercase tracking-[0.16em] text-[var(--muted)] mb-1.5">Prompt</label>
-            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Enter a prompt whose internal token evolution you want to inspect…" className="w-full min-h-28 bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] p-3 text-xs leading-relaxed resize-y outline-none focus:border-[var(--border-loud)]" />
+            <label htmlFor="lens-prompt" className="block text-[10px] uppercase tracking-[0.16em] text-[var(--muted)] mb-1.5">Prompt</label>
+            <textarea id="lens-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Enter a prompt whose internal token evolution you want to inspect…" className="w-full min-h-28 bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] p-3 text-xs leading-relaxed resize-y outline-none focus:border-[var(--border-loud)]" />
           </div>
           <Button active disabled={busy || !model || !prompt.trim()} onClick={run} className="justify-center font-bold text-xs disabled:opacity-40">
             {busy ? "RUNNING LAYER PROJECTION…" : "RUN LOGIT LENS"}

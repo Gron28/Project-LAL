@@ -59,7 +59,7 @@ describe('modeCommand', () => {
     const res = await modeCommand.action!(context, 'quick-edit');
     expect(applyCodeModePreset).toHaveBeenCalledWith(
       'quick-edit',
-      expect.objectContaining({ think: false, maxRounds: 8 }),
+      expect.objectContaining({ think: false, maxRounds: -1 }),
     );
     expect(refreshSystemInstruction).toHaveBeenCalled();
     expect(res).toMatchObject({ messageType: 'info' });
@@ -70,7 +70,7 @@ describe('modeCommand', () => {
     await modeCommand.action!(context, 'Deep-Research');
     expect(applyCodeModePreset).toHaveBeenCalledWith(
       'deep-research',
-      expect.objectContaining({ maxRounds: 64 }),
+      expect.objectContaining({ maxRounds: -1 }),
     );
     const res = await modeCommand.action!(context, '');
     expect((res as { content: string }).content).toContain('deep-research');

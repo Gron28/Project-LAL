@@ -2,6 +2,10 @@
 // Module-level EventSource singleton so N dashboard widgets share one SSE
 // connection instead of each opening/polling their own.
 import { useEffect, useState } from "react";
+import type { GuardianStatus } from "@/lib/guardian-observer";
+import type { GuardianAdapter } from "@/lib/guardian-adapters";
+import type { GuardianFinding } from "@/lib/guardian-evidence";
+import type { RuntimeTelemetry } from "@/lib/runtime-telemetry";
 
 export type Snapshot = {
   sys: { cpu: number; ramUsedGb: number; ramTotalGb: number; ramPct: number; gpu: number | null; vramUsedGb: number | null; vramTotalGb: number | null; vramPct: number | null; cpuTemp: number | null; gpuTemp: number | null; nvmeTemp: number | null; ollamaLoaded: string | null };
@@ -15,6 +19,18 @@ export type Snapshot = {
   }[];
   battery: { suites: string[]; champion: string; challenger?: string };
   models: { name: string; source: "local" | "ollama"; path: string; gb: number }[];
+  runtime: {
+    serving: { pid: number | null; alive: boolean; model: string | null; context: number | null; backend: "llama.cpp" | "ollama" | null; gpuOffload: string | null; loras: string[]; lastUsedAt: number | null; logPath: string };
+    training: unknown;
+    lens: unknown;
+    activeRuns: unknown[];
+    processes: unknown[];
+    processEvents: unknown[];
+    telemetry: RuntimeTelemetry;
+  };
+  guardian: GuardianStatus;
+  guardianAdapters: GuardianAdapter[];
+  guardianEvidence: { findings: GuardianFinding[]; integrity: boolean };
 };
 
 const HISTORY_LEN = 60; // ~2min at 2s ticks — enough for a sparkline

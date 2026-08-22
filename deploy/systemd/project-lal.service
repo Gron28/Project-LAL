@@ -6,16 +6,30 @@ After=network-online.target
 [Service]
 Type=exec
 WorkingDirectory=%h/Desktop/local-ai-lab/web
+Environment=LAL_BIND_HOST=127.0.0.1
 ExecStart=%h/Desktop/local-ai-lab/web/run_web.sh
 # Ask the live owner to terminate its model children before systemd signals the
 # web process. The leading "-" keeps shutdown available if the HTTP listener is
 # already gone (for example after a crash).
-ExecStop=-/usr/bin/curl --fail --silent --show-error --max-time 15 -X DELETE http://127.0.0.1:8770/api/sysinfo
+ExecStop=-/usr/bin/curl --fail --silent --show-error --max-time 15 -H "Origin: http://127.0.0.1:8770" -X DELETE http://127.0.0.1:8770/api/sysinfo
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=30
 SuccessExitStatus=0 143
 KillMode=control-group
+# LAL is a user-owned local service, not a privilege boundary for the whole OS,
+# but it should never gain new privileges or use privileged process features.
+# AF_NETLINK remains allowed only because the passive Guardian socket observer
+# invokes `ss`; all other non-IP address families stay unavailable.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+UMask=0077
 
 [Install]
 WantedBy=default.target

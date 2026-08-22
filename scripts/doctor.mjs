@@ -143,6 +143,12 @@ check(
 );
 check(
   "platform-linux",
+  "production WebUI loopback default",
+  isWindows ? "n/a on Windows" : "project-lal.service sets LAL_BIND_HOST=127.0.0.1",
+  "Remote exposure is an explicit service override and should sit behind an owner-controlled authenticated transport.",
+);
+check(
+  "platform-linux",
   "AMD ROCm / HSA override",
   isWindows
     ? "n/a on Windows"

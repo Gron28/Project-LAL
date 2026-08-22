@@ -6,6 +6,7 @@ import EditorPane from "@/components/code/editor-pane";
 import DirPicker from "@/components/code/dir-picker";
 import { Panel } from "@/components/ui/panel";
 import { ICON_SIZE } from "@/components/ui/icon";
+import { LabNav } from "@/components/lab-nav";
 
 type M = { name: string; source: "local" | "ollama"; gb: number };
 type ModelDownloadJob = { id: string; state: string; progress: { phase: string; completed: number; total?: number }; error?: { message: string } };
@@ -344,6 +345,7 @@ function Chats() {
 
 function Runs() {
   const [runs, setRuns] = useState<RunRow[]>([]);
+  const [visibleCount, setVisibleCount] = useState(20);
   const [status, setStatus] = useState("");
   const [selected, setSelected] = useState<RunRow | null>(null);
   const [trace, setTrace] = useState<RunTrace | null>(null);
@@ -423,7 +425,7 @@ function Runs() {
         </div>
         {status && <div className="px-4 py-2 text-[10px] text-[var(--muted)] border-b border-[var(--border-soft)]">{status}</div>}
         {!runs.length && <div className="p-6 text-center text-[var(--muted)] text-xs">No agent or chat runs yet.</div>}
-        {runs.map((run) => (
+        {runs.slice(0, visibleCount).map((run) => (
           <div key={run.id} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
             <Terminal size={ICON_SIZE.sm} className="text-[var(--accent-ai)] shrink-0" />
             <div className="flex-1 min-w-0">
@@ -436,6 +438,7 @@ function Runs() {
             <button onClick={() => remove(run)} title="Delete run record" className={btn}><Trash2 size={ICON_SIZE.sm} /></button>
           </div>
         ))}
+        {runs.length > visibleCount && <div className="p-3 border-t border-[var(--border-soft)]"><button onClick={() => setVisibleCount((count) => count + 20)} className="w-full min-h-10 rounded-[var(--r-md)] border border-[var(--border)] text-xs text-[var(--text-2)] hover:border-[var(--border-loud)]">Show 20 more · {runs.length - visibleCount} remaining</button></div>}
       </Panel>
       {selected && (
         <Panel padding="none" className="overflow-hidden">
@@ -640,17 +643,19 @@ function Prompts() {
 }
 
 export default function Library() {
-  const [tab, setTab] = useState<"models" | "docs" | "chats" | "runs" | "experiments" | "projects" | "prompts">("models");
+  const [tab, setTab] = useState<"docs" | "chats" | "runs" | "experiments" | "projects" | "prompts">("runs");
   const tabBtn = (id: typeof tab, label: string) => (
     <button onClick={() => setTab(id)} className="px-4 py-2 text-[11px] tracking-widest uppercase rounded-[var(--r-md)] border"
       style={{ color: tab === id ? "#05090c" : "var(--text-2)", background: tab === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)", fontWeight: tab === id ? 700 : 400 }}>{label}</button>
   );
   return (
-    <div className="min-h-dvh bg-[var(--bg)] text-[var(--text)] px-3 py-4 pb-16">
-      <div className="max-w-7xl mx-auto flex flex-col gap-4">
-        <div className="flex gap-2 flex-wrap">{tabBtn("models", "▤ Models")}{tabBtn("docs", "▦ Documents")}{tabBtn("chats", "▥ Chats")}{tabBtn("runs", "Runs")}{tabBtn("experiments", "Experiments")}{tabBtn("projects", "▧ Projects")}{tabBtn("prompts", "Prompts")}</div>
-        {tab === "models" ? <Models /> : tab === "docs" ? <Documents /> : tab === "chats" ? <Chats /> : tab === "runs" ? <Runs /> : tab === "experiments" ? <Experiments /> : tab === "projects" ? <Projects /> : <Prompts />}
+    <main id="main-content" className="page-shell text-[var(--text)]">
+      <div className="page-frame max-w-7xl flex flex-col gap-4">
+        <LabNav />
+        <h1 className="sr-only">History</h1>
+        <div className="flex gap-1 overflow-x-auto rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--surface-1)] p-1.5">{tabBtn("runs", "Runs")}{tabBtn("chats", "Chats")}{tabBtn("experiments", "Experiments")}{tabBtn("projects", "Projects")}{tabBtn("docs", "Documents")}{tabBtn("prompts", "Prompts")}</div>
+        {tab === "docs" ? <Documents /> : tab === "chats" ? <Chats /> : tab === "runs" ? <Runs /> : tab === "experiments" ? <Experiments /> : tab === "projects" ? <Projects /> : <Prompts />}
       </div>
-    </div>
+    </main>
   );
 }

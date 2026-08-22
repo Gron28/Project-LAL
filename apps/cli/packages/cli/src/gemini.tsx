@@ -637,7 +637,13 @@ export async function main() {
     }
 
     if (!isBareMode(argv.bare)) {
-      const managedSettingsSync = startManagedSettingsSync(config, settings);
+      const managedSettingsSync = startManagedSettingsSync(config, settings, {
+        // The host supplies the provider catalog and persistent default, but a
+        // one-shot `lal --model X` is an explicit session override. Losing it
+        // here made benchmarks and automation silently run the wrong model.
+        preserveInitialModel:
+          typeof argv.model === 'string' && argv.model.trim().length > 0,
+      });
       if (config.isInteractive()) {
         registerCleanup(managedSettingsSync);
       } else {
