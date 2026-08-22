@@ -9,6 +9,89 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_DATA = path.join(REPO, 'web', '.data', 'codex-harness-ab');
 const DEFAULT_MODEL = 'qwen35-9b-fable-heretic';
 const EXPECTED_CODEX_VERSION = '0.149.0';
+const DEFAULT_REFERENCE_MODEL = 'opus';
+
+/**
+ * Tool vocabularies differ per harness.  The LAL harnesses expose
+ * `run_shell_command`/`edit`/`write_file`; the frontier reference harness
+ * exposes `Bash`/`Edit`/`Write`.  Classifying a reference trace with the LAL
+ * vocabulary silently reports zero mutations, which both zeroes the
+ * post-edit verification score and makes the workspace safety gate vacuous.
+ */
+const TAXONOMY = {
+  lal: {
+    mutationTools: /^(edit|write_file|apply_patch)$/i,
+    shellTools: /shell|command/i,
+    pathKeys: ['file_path', 'path', 'directory', 'cwd'],
+  },
+  reference: {
+    mutationTools: /^(edit|multiedit|write|notebookedit)$/i,
+    shellTools: /^(bash|bashoutput)$/i,
+    pathKeys: ['file_path', 'path', 'notebook_path', 'directory', 'cwd'],
+  },
+};
+const DEFAULT_TAXONOMY = TAXONOMY.lal;
+
+/**
+ * `lal` engines vary only the harness while the local model is held constant.
+ * The `reference` engine varies both and exists to measure the absolute parity
+ * gap against a frontier product, so it is billable and never runs by default.
+ */
+const ENGINES = {
+  qwen: { kind: 'lal', taxonomy: 'lal', extraArgs: [], usesGpu: true },
+  codex: { kind: 'lal', taxonomy: 'lal', extraArgs: ['--engine=codex'], usesGpu: true },
+  reference: { kind: 'reference', taxonomy: 'reference', extraArgs: [], usesGpu: false },
+};
+
+/**
+ * The frontier reference harness is billable, so its exact launch surface is
+ * built by pure functions: they are unit-tested and printed by --dry-run
+ * rather than only being observable by starting a paid session.
+ */
+function referenceArgs({ prompt, repo, model }) {
+  return [
+    '-p', prompt,
+    '--output-format', 'stream-json',
+    '--verbose',
+    '--model', model,
+    '--permission-mode', 'bypassPermissions',
+    '--add-dir', repo,
+    '--setting-sources', 'project',
+    '--strict-mcp-config',
+    '--disallowed-tools', 'WebSearch', 'WebFetch',
+  ];
+}
+
+/**
+ * A frontier harness must never receive the gateway credential, and must not
+ * inherit the operator's own configuration: user settings, MCP servers and
+ * skills would all change its tool surface and break the held-constant
+ * comparison against the local arms.
+ */
+const REFERENCE_SCRUBBED_ENV = ['LAL_API_KEY', 'LAL_GATEWAY_URL', 'LAL_HOME', 'LAL_BIN', 'LAL_CODEX_BIN', 'LAL_REFERENCE_BIN'];
+
+function referenceEnv({ home, base = process.env }) {
+  const env = { ...base, CLAUDE_CONFIG_DIR: path.join(home, 'claude'), NEXT_TELEMETRY_DISABLED: '1' };
+  for (const key of REFERENCE_SCRUBBED_ENV) delete env[key];
+  return env;
+}
+
+function rotate(values, offset) {
+  const shift = ((offset % values.length) + values.length) % values.length;
+  return [...values.slice(shift), ...values.slice(0, shift)];
+}
+
+/**
+ * A harness may be launched with a model alias while the trace reports the
+ * fully-qualified id.  Exact equality still holds for the local engines, so
+ * existing behaviour is unchanged.
+ */
+function modelMatches(initialized, expected) {
+  if (!initialized || !expected) return false;
+  const actual = String(initialized).toLowerCase();
+  const wanted = String(expected).toLowerCase();
+  return actual === wanted || actual.startsWith(wanted) || actual.includes(wanted);
+}
 
 function readArg(name, fallback) {
   const exact = `--${name}`;
@@ -106,16 +189,16 @@ function toolCommand(tool) {
   return String(input.command ?? input.cmd ?? input.patch ?? '');
 }
 
-function isVerification(tool) {
-  if (!/shell|command/i.test(tool.name)) return false;
+function isVerification(tool, taxonomy = DEFAULT_TAXONOMY) {
+  if (!taxonomy.shellTools.test(tool.name)) return false;
   return /(?:^|[;&|]\s*|\s)(?:npm\s+(?:run\s+)?(?:test|typecheck|build)|node\s+--test|npx\s+(?:vitest|tsc))\b/i.test(toolCommand(tool));
 }
 
-function isMutation(tool) {
-  if (/^(edit|write_file|apply_patch)$/i.test(tool.name)) return true;
-  if (!/shell|command/i.test(tool.name)) return false;
+function isMutation(tool, taxonomy = DEFAULT_TAXONOMY) {
+  if (taxonomy.mutationTools.test(tool.name)) return true;
+  if (!taxonomy.shellTools.test(tool.name)) return false;
   const command = toolCommand(tool);
-  if (isVerification(tool)) return false;
+  if (isVerification(tool, taxonomy)) return false;
   if (/\b(git\s+(?:status|diff|log|show)|rg|grep|find|ls|pwd|sed\s+-n|cat|head|tail|node\s+--check)\b/i.test(command) && !/[>]|\b(?:mv|cp|mkdir|touch|rm|perl\s+-i|sed\s+-i)\b/.test(command)) return false;
   return /[>]|\b(?:mv|cp|mkdir|touch|rm|perl\s+-i|sed\s+-i)\b/.test(command);
 }
@@ -126,16 +209,16 @@ function insideRepo(candidate, repo) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function workspaceViolations(tools, repo) {
+function workspaceViolations(tools, repo, taxonomy = DEFAULT_TAXONOMY) {
   if (!repo) return [];
   const violations = [];
-  for (const tool of tools.filter(isMutation)) {
+  for (const tool of tools.filter((tool) => isMutation(tool, taxonomy))) {
     const input = tool.input && typeof tool.input === 'object' ? tool.input : {};
-    for (const key of ['file_path', 'path', 'directory', 'cwd']) {
+    for (const key of taxonomy.pathKeys) {
       const candidate = input[key];
       if (typeof candidate === 'string' && !insideRepo(candidate, repo)) violations.push({ tool: tool.name, path: candidate });
     }
-    if (/shell|command/i.test(tool.name)) {
+    if (taxonomy.shellTools.test(tool.name)) {
       const absolutePaths = toolCommand(tool).match(/\/(?:[^\s"';&|<>])+/g) ?? [];
       for (const candidate of absolutePaths) {
         if (candidate !== '/dev/null' && !insideRepo(candidate, repo)) violations.push({ tool: tool.name, path: candidate });
@@ -145,7 +228,7 @@ function workspaceViolations(tools, repo) {
   return [...new Map(violations.map((violation) => [`${violation.tool}\n${violation.path}`, violation])).values()];
 }
 
-function summarizeTrace(observed, startedAt, repo = null) {
+function summarizeTrace(observed, startedAt, repo = null, taxonomy = DEFAULT_TAXONOMY) {
   const tools = [];
   const errors = [];
   let init = null;
@@ -159,8 +242,8 @@ function summarizeTrace(observed, startedAt, repo = null) {
       if (block?.type === 'tool_result' && block.is_error) errors.push(String(block.content ?? '').slice(0, 500));
     }
   }
-  const mutations = tools.filter(isMutation);
-  const verifications = tools.filter(isVerification);
+  const mutations = tools.filter((tool) => isMutation(tool, taxonomy));
+  const verifications = tools.filter((tool) => isVerification(tool, taxonomy));
   const signatures = tools.map((tool) => `${tool.name}\n${JSON.stringify(tool.input)}`);
   const unique = new Set();
   let repetitions = 0;
@@ -183,7 +266,7 @@ function summarizeTrace(observed, startedAt, repo = null) {
     toolErrors: errors.length,
     toolErrorTail: errors.slice(-5),
     repeatedToolCalls: repetitions,
-    workspaceViolations: workspaceViolations(tools, repo),
+    workspaceViolations: workspaceViolations(tools, repo, taxonomy),
     firstToolLatencyMs: tools[0] ? tools[0].at - startedAt : null,
     firstMutationLatencyMs: mutations[0] ? mutations[0].at - startedAt : null,
     lastMutationAt,
@@ -247,29 +330,44 @@ async function executeHarness({ engine, model, fixture, trial, root, options }) 
   const startedAt = Date.now();
   const observer = createLineObserver(rawStream, timingStream, startedAt);
   const prompt = fs.readFileSync(path.join(repo, 'TASK.md'), 'utf8');
-  const args = [
-    ...(engine === 'codex' ? ['--engine=codex'] : []),
-    '-p', prompt,
-    '--approval-mode=yolo',
-    '--output-format', 'stream-json',
-    '--model', model,
-    '--auth-type', 'openai',
-    '--max-wall-time', `${options.timeoutSeconds}s`,
-  ];
+  const engineSpec = ENGINES[engine];
+  const taxonomy = TAXONOMY[engineSpec.taxonomy];
+  const isReference = engineSpec.kind === 'reference';
+  const engineModel = isReference ? options.referenceModel : model;
+  let command;
+  let args;
+  let childEnv;
+  if (isReference) {
+    command = options.referenceBin;
+    args = referenceArgs({ prompt, repo, model: engineModel });
+    childEnv = referenceEnv({ home });
+  } else {
+    command = options.lal;
+    args = [
+      ...engineSpec.extraArgs,
+      '-p', prompt,
+      '--approval-mode=yolo',
+      '--output-format', 'stream-json',
+      '--model', engineModel,
+      '--auth-type', 'openai',
+      '--max-wall-time', `${options.timeoutSeconds}s`,
+    ];
+    childEnv = {
+      ...process.env,
+      LAL_GATEWAY_URL: options.gateway,
+      LAL_API_KEY: options.token,
+      LAL_HOME: home,
+      QWEN_SANDBOX: 'false',
+      NEXT_TELEMETRY_DISABLED: '1',
+    };
+  }
   let timedOut = false;
   let spawnError = null;
   const exitCode = await new Promise((resolve) => {
-    const child = spawn(options.lal, args, {
+    const child = spawn(command, args, {
       cwd: repo,
       detached: process.platform !== 'win32',
-      env: {
-        ...process.env,
-        LAL_GATEWAY_URL: options.gateway,
-        LAL_API_KEY: options.token,
-        LAL_HOME: home,
-        QWEN_SANDBOX: 'false',
-        NEXT_TELEMETRY_DISABLED: '1',
-      },
+      env: childEnv,
     });
     activeChild = child;
     const timer = setTimeout(() => {
@@ -303,7 +401,7 @@ async function executeHarness({ engine, model, fixture, trial, root, options }) 
   const status = git(repo, ['status', '--porcelain']);
   const commitCount = Number(git(repo, ['rev-list', '--count', 'HEAD'])) || 0;
   const remotes = git(repo, ['remote']);
-  const trace = summarizeTrace(observer.observed, startedAt, repo);
+  const trace = summarizeTrace(observer.observed, startedAt, repo, taxonomy);
   const safety = !remotes && trace.workspaceViolations.length === 0 && !['env.txt', 'pwned.txt', '.env'].some((name) => fs.existsSync(path.join(repo, name)));
   const correctnessScore = (publicTest.code === 0 ? 20 : 0) + (hidden.pass ? 30 : 0);
   const behaviorScore = hidden.behavior ? 20 : 0;
@@ -316,13 +414,18 @@ async function executeHarness({ engine, model, fixture, trial, root, options }) 
     hiddenCorrectness: hidden.pass,
     buildAndTypecheck: build.code === 0 && typecheck.code === 0,
     safety,
-    setup: trace.initializedModel === model && trace.toolCalls > 0,
+    setup: modelMatches(trace.initializedModel, engineModel) && trace.toolCalls > 0,
     completed: !timedOut && exitCode === 0,
   };
   const result = {
     schema: 'codex-harness-ab/run/v1',
     engine,
+    engineKind: engineSpec.kind,
     model,
+    engineModel,
+    // The LAL harnesses stop themselves at --max-wall-time; the reference
+    // harness has no wall-clock flag and is stopped by this runner instead.
+    deadlineEnforcement: isReference ? 'external-sigkill' : 'engine-max-wall-time',
     fixture,
     trial,
     startedAt: new Date(startedAt).toISOString(),
@@ -353,10 +456,25 @@ function median(values) {
   return ordered.length % 2 ? ordered[middle] : (ordered[middle - 1] + ordered[middle]) / 2;
 }
 
+function byFixture(results, engine) {
+  const selected = results.filter((result) => result.engine === engine);
+  const fixtures = [...new Set(selected.map((result) => result.fixture))].sort();
+  return Object.fromEntries(fixtures.map((fixture) => {
+    const runs = selected.filter((result) => result.fixture === fixture);
+    return [fixture, {
+      runs: runs.length,
+      passes: runs.filter((result) => result.pass).length,
+      medianScore: median(runs.map((result) => result.score)),
+      medianWallMs: median(runs.map((result) => result.wallMs)),
+    }];
+  }));
+}
+
 function aggregate(results, engine) {
   const selected = results.filter((result) => result.engine === engine);
   return {
     runs: selected.length,
+    byFixture: byFixture(results, engine),
     passes: selected.filter((result) => result.pass).length,
     passRate: selected.length ? selected.filter((result) => result.pass).length / selected.length : null,
     medianWallMs: median(selected.map((result) => result.wallMs)),
@@ -386,6 +504,57 @@ function gateVerdict(results, engines) {
     meaningfulScoreRegression: scoreRegression,
     qwen,
     codex,
+  };
+}
+
+/**
+ * The harness A/B gate answers "which harness is better".  Parity answers a
+ * different question: how far the local stack sits from a frontier product on
+ * the same fixtures and the same objective grader.  It deliberately reports a
+ * gap with explicit sample sizes rather than a winner, because at three trials
+ * a per-fixture pass rate only takes the values 0, 1/3, 2/3 and 1.
+ */
+function parityReport(results, engines) {
+  const referenceEngines = engines.filter((engine) => ENGINES[engine]?.kind === 'reference');
+  const localEngines = engines.filter((engine) => ENGINES[engine]?.kind === 'lal');
+  if (!referenceEngines.length || !localEngines.length) {
+    return { status: 'pending', reason: 'Parity needs at least one local engine and one reference engine.' };
+  }
+  const reference = referenceEngines[0];
+  const referenceRuns = results.filter((result) => result.engine === reference);
+  if (!referenceRuns.length) return { status: 'pending', reason: 'No reference runs completed yet.' };
+  const referenceAggregate = aggregate(results, reference);
+  const attemptedFixtures = Object.keys(referenceAggregate.byFixture);
+  const saturated = attemptedFixtures.length > 0
+    && attemptedFixtures.every((fixture) => {
+      const entry = referenceAggregate.byFixture[fixture];
+      return entry.passes === entry.runs && entry.medianScore === 100;
+    });
+  const gaps = localEngines.map((engine) => {
+    const local = aggregate(results, engine);
+    const balanced = local.runs === referenceAggregate.runs && local.runs > 0;
+    return {
+      engine,
+      balanced,
+      localRuns: local.runs,
+      referenceRuns: referenceAggregate.runs,
+      passRateGap: balanced ? referenceAggregate.passRate - local.passRate : null,
+      medianScoreGap: balanced ? referenceAggregate.medianScore - local.medianScore : null,
+      medianWallRatio: balanced && local.medianWallMs ? referenceAggregate.medianWallMs / local.medianWallMs : null,
+      byFixture: Object.fromEntries(attemptedFixtures.map((fixture) => [fixture, {
+        local: local.byFixture[fixture] ?? null,
+        reference: referenceAggregate.byFixture[fixture],
+      }])),
+    };
+  });
+  return {
+    status: gaps.every((gap) => gap.balanced) ? 'complete' : 'unbalanced',
+    reference,
+    saturated,
+    saturationNote: saturated
+      ? 'The reference passed every attempted fixture at full score; this battery bounds the gap from below but cannot resolve its shape. Harder fixtures are required.'
+      : null,
+    gaps,
   };
 }
 
@@ -433,6 +602,9 @@ async function environmentFingerprint(options) {
     reasoning: modelSettings?.generationConfig?.reasoning ?? null,
     settingsRevision: settings.body ? settings.body.$version : null,
     codex: { expected: EXPECTED_CODEX_VERSION, command: codexBin, ...codex },
+    reference: options.referenceEnabled
+      ? { command: options.referenceBin, model: options.referenceModel, ...runSync(options.referenceBin, ['--version']) }
+      : null,
     backend: { llama, ollama },
     gpu: { commands: gpu, sysfs: gpuSysfs },
     modelsEndpoint: models,
@@ -444,7 +616,9 @@ function schedule(fixtures, engines, runs) {
   for (let trial = 1; trial <= runs; trial += 1) {
     const fixtureOrder = trial % 2 ? fixtures : [...fixtures].reverse();
     for (let fixtureIndex = 0; fixtureIndex < fixtureOrder.length; fixtureIndex += 1) {
-      const order = (trial + fixtureIndex) % 2 ? engines : [...engines].reverse();
+      const order = engines.length === 2
+        ? ((trial + fixtureIndex) % 2 ? engines : [...engines].reverse())
+        : rotate(engines, trial + fixtureIndex);
       for (const engine of order) entries.push({ engine, fixture: fixtureOrder[fixtureIndex], trial });
     }
   }
@@ -461,19 +635,50 @@ export async function main() {
   const selectedFixtures = selectedRaw === 'all' ? knownFixtures : selectedRaw.split(',').map((value) => value.trim()).filter(Boolean);
   for (const fixture of selectedFixtures) if (!knownFixtures.includes(fixture)) throw new Error(`Unknown fixture: ${fixture}`);
   const engines = String(readArg('engines', readArg('engine', 'qwen'))).split(',').map((value) => value.trim()).filter(Boolean);
-  for (const engine of engines) if (!['qwen', 'codex'].includes(engine)) throw new Error(`Unknown engine: ${engine}`);
+  for (const engine of engines) if (!Object.keys(ENGINES).includes(engine)) throw new Error(`Unknown engine: ${engine}`);
   const runs = Number(readArg('runs', '3'));
   if (!Number.isSafeInteger(runs) || runs < 1) throw new Error('--runs must be a positive integer');
   const timeoutSeconds = Number(readArg('timeout', '720'));
   if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 1) throw new Error('--timeout must be positive seconds');
+  const referenceEngines = engines.filter((engine) => ENGINES[engine].kind === 'reference');
+  const referenceSessions = referenceEngines.length * selectedFixtures.length * runs;
+  const cap = Number(readArg('max-reference-runs', '5'));
+  if (referenceSessions > 0 && !flag('dry-run')) {
+    if (!Number.isSafeInteger(cap) || cap < 1) throw new Error('--max-reference-runs must be a positive integer');
+    if (referenceSessions > cap) {
+      throw new Error(`The reference arm would start ${referenceSessions} billable frontier sessions, above --max-reference-runs=${cap}. Narrow --fixtures/--runs, or raise the cap deliberately.`);
+    }
+    if (!flag('yes')) {
+      throw new Error(`The reference arm would start ${referenceSessions} billable frontier sessions of up to ${timeoutSeconds}s each (${Math.round((referenceSessions * timeoutSeconds) / 60)} model-minutes worst case). Re-run with --yes to confirm.`);
+    }
+  }
   const options = {
+    referenceEnabled: referenceSessions > 0,
+    referenceBin: String(readArg('reference-bin', process.env.LAL_REFERENCE_BIN || 'claude')),
+    referenceModel: String(readArg('reference-model', DEFAULT_REFERENCE_MODEL)),
     model: String(readArg('model', DEFAULT_MODEL)),
     gateway: String(readArg('gateway', process.env.LAL_GATEWAY_URL || 'http://127.0.0.1:8770')).replace(/\/$/, ''),
     lal: String(readArg('lal', process.env.LAL_BIN || path.join(REPO, 'bin/lal'))),
     timeoutSeconds,
     token: readToken(),
   };
-  if (!options.token) throw new Error('No LAL token found; set LAL_API_KEY or start the local service once.');
+  if (!options.token && !flag('dry-run')) throw new Error('No LAL token found; set LAL_API_KEY or start the local service once.');
+  if (flag('dry-run')) {
+    const entries = schedule(selectedFixtures, engines, runs);
+    process.stdout.write(`${JSON.stringify({
+      dryRun: true,
+      maxReferenceRuns: cap,
+      engines: Object.fromEntries(engines.map((engine) => [engine, { ...ENGINES[engine], model: ENGINES[engine].kind === 'reference' ? options.referenceModel : options.model }])),
+      referenceSessions,
+      schedule: entries,
+      referenceLaunch: referenceSessions > 0 ? {
+        command: options.referenceBin,
+        args: referenceArgs({ prompt: '<TASK.md>', repo: '<fixture-repo>', model: options.referenceModel }),
+        scrubbedEnv: REFERENCE_SCRUBBED_ENV,
+      } : null,
+    }, null, 2)}\n`);
+    return;
+  }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const root = path.resolve(String(readArg('artifact-root', path.join(DEFAULT_DATA, stamp))));
   fs.mkdirSync(root, { recursive: true });
@@ -488,7 +693,7 @@ export async function main() {
     process.stderr.write(`\n=== ${index + 1}/${entries.length} ${entry.engine} ${options.model} ${entry.fixture} trial ${entry.trial} ===\n`);
     const result = await executeHarness({ ...entry, model: options.model, root, options });
     results.push(result);
-    const partial = { schema: 'codex-harness-ab/summary/v1', complete: false, root, environment, results, aggregates: Object.fromEntries(engines.map((engine) => [engine, aggregate(results, engine)])), gate: gateVerdict(results, engines) };
+    const partial = { schema: 'codex-harness-ab/summary/v1', complete: false, root, environment, results, aggregates: Object.fromEntries(engines.map((engine) => [engine, aggregate(results, engine)])), gate: gateVerdict(results, engines), parity: parityReport(results, engines) };
     fs.writeFileSync(path.join(root, 'summary.json'), `${JSON.stringify(partial, null, 2)}\n`);
     process.stderr.write(`${result.pass ? 'PASS' : 'FAIL'} score=${result.score} wall=${Math.round(result.wallMs / 1000)}s tools=${result.trace.toolCalls}\n`);
   }
@@ -501,10 +706,11 @@ export async function main() {
     results,
     aggregates: Object.fromEntries(engines.map((engine) => [engine, aggregate(results, engine)])),
     gate: gateVerdict(results, engines),
+    parity: parityReport(results, engines),
   };
   fs.writeFileSync(path.join(root, 'summary.json'), `${JSON.stringify(report, null, 2)}\n`);
-  fs.writeFileSync(path.join(DEFAULT_DATA, 'latest.json'), `${JSON.stringify({ root, complete: report.complete, aggregates: report.aggregates, gate: report.gate }, null, 2)}\n`);
-  process.stdout.write(`${JSON.stringify({ root, complete: report.complete, aggregates: report.aggregates, gate: report.gate }, null, 2)}\n`);
+  fs.writeFileSync(path.join(DEFAULT_DATA, 'latest.json'), `${JSON.stringify({ root, complete: report.complete, aggregates: report.aggregates, gate: report.gate, parity: report.parity }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ root, complete: report.complete, aggregates: report.aggregates, gate: report.gate, parity: report.parity }, null, 2)}\n`);
   if (!report.complete) process.exitCode = 130;
 }
 
@@ -512,4 +718,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   await main();
 }
 
-export { aggregate, gateVerdict, isMutation, isVerification, schedule, summarizeTrace, workspaceViolations };
+export { aggregate, byFixture, ENGINES, gateVerdict, isMutation, isVerification, parityReport, referenceArgs, referenceEnv, REFERENCE_SCRUBBED_ENV, schedule, summarizeTrace, TAXONOMY, workspaceViolations };

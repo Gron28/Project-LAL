@@ -146,7 +146,11 @@ export function writeFixture(id, repo) {
   fs.mkdirSync(repo, { recursive: true });
   for (const [relative, content] of Object.entries({
     '.gitignore': 'node_modules/\ndist/\ncoverage/\n',
+    // The same repository instructions under both conventions: the LAL
+    // harnesses read AGENTS.md and the frontier reference harness reads
+    // CLAUDE.md, so shipping only one silently starves an arm of the brief.
     'AGENTS.md': commonAgents,
+    'CLAUDE.md': commonAgents,
     ...fixture.files,
   })) {
     const target = path.join(repo, relative);
