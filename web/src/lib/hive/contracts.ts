@@ -2,7 +2,9 @@ export const HIVE_CONTRACT_VERSION = 1 as const;
 
 export type HiveWorkflowKind = "research" | "coding";
 export type BudgetName = "normal" | "thorough" | "extra";
-export type HiveSpecialistRole = "coordinator_planner" | "coder_repairer" | "verifier";
+// Role identity is defined by versioned role packs. Legacy ids remain readable
+// aliases, but the HIVE schema no longer needs a release for each new pack.
+export type HiveSpecialistRole = string;
 export type SpecialistPromotionStatus = "candidate" | "promoted" | "rejected";
 export type HiveFailureCode =
   | "failed_decomposition"
@@ -95,6 +97,7 @@ export type SpecialistAdapter = {
   trainingRunId: string;
   datasetManifestHash: string;
   promotionStatus: SpecialistPromotionStatus;
+  contentAddressed?: boolean;
   evaluation: {
     heldOutRoleImprovementPoints: number;
     coreRegressionPoints: number;

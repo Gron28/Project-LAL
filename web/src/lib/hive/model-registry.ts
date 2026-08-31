@@ -6,11 +6,14 @@ import { recoverTextToolCalls } from "../toolloop";
 import type { HiveSpecialistRole, ModelCapability, ModelProfile, SpecialistAdapter } from "./contracts";
 import { evaluateSpecialistAdapterPromotion } from "./evaluation";
 import { listModelProfiles, upsertModelProfile } from "./store";
+import { getImprovementRepository } from "../improvement/store";
+import { CORE_TOOL_USE_V1, listRolePacks, resolveRoleId } from "../improvement/role-packs";
 
 export const SPECIALIST_MANIFEST_SUFFIX = ".hive-adapter.json";
 
 function isSpecialistRole(value: unknown): value is HiveSpecialistRole {
-  return ["coordinator_planner", "coder_repairer", "verifier"].includes(String(value));
+  const role=String(value);
+  return listRolePacks().some((pack)=>pack.roles.some((definition)=>definition.id===role||definition.aliases?.includes(role)));
 }
 
 function readSpecialistManifests(): SpecialistAdapter[] {
@@ -19,7 +22,15 @@ function readSpecialistManifests(): SpecialistAdapter[] {
   try { files = fs.readdirSync(MODELS_DIR).filter((file) => file.endsWith(SPECIALIST_MANIFEST_SUFFIX)); } catch { return out; }
   for (const file of files) {
     try {
-      const raw = JSON.parse(fs.readFileSync(path.join(MODELS_DIR, file), "utf8")) as Partial<SpecialistAdapter>;
+      const value = JSON.parse(fs.readFileSync(path.join(MODELS_DIR, file), "utf8")) as Record<string, unknown>;
+      if(value.schemaVersion===2){
+        const base=value.base as Record<string,unknown>|undefined,adapter=value.adapter as Record<string,unknown>|undefined,adapterPath=path.resolve(String(adapter?.path??""));
+        if(!value.id||!value.roleId||!base?.runtimeId||!base?.runtimeSha256||!adapter?.sha256||!fs.existsSync(adapterPath))continue;
+        const stat=fs.statSync(adapterPath);
+        out.push({id:String(value.id),role:String(value.roleId),baseModel:String(base.runtimeId),baseVersionHash:String(base.runtimeSha256),adapterHash:String(adapter.sha256),adapterPath,adapterSize:Number(adapter.bytes),adapterMtimeMs:stat.mtimeMs,trainingRunId:String(value.candidateId),datasetManifestHash:String(value.manifestSha256),promotionStatus:"candidate",contentAddressed:true,evaluation:{heldOutRoleImprovementPoints:0,coreRegressionPoints:0,schemaTestsPassed:false,toolTestsPassed:false,heldOutTasks:0,seeds:0,unauthorizedActions:0,falseCompletionRate:1,adapterCompatible:false}});
+        continue;
+      }
+      const raw = value as Partial<SpecialistAdapter>;
       if (!raw.id || !isSpecialistRole(raw.role) || !raw.baseModel || !raw.baseVersionHash || !raw.adapterHash || !raw.adapterPath || !raw.adapterSize || !raw.adapterMtimeMs || !raw.trainingRunId || !raw.datasetManifestHash) continue;
       if (!["candidate", "promoted", "rejected"].includes(String(raw.promotionStatus)) || !raw.evaluation) continue;
       const adapterPath = path.resolve(raw.adapterPath);
@@ -58,6 +69,8 @@ function modelVersionHash(modelPath: string): string {
     return crypto.createHash("sha256").update(`${modelPath}:${stat.size}:${stat.mtimeMs}`).digest("hex");
   } catch { return crypto.createHash("sha256").update(modelPath).digest("hex"); }
 }
+const contentHashes=new Map<string,string>();
+function fileContentHash(file:string):string{const stat=fs.statSync(file),key=`${file}:${stat.size}:${stat.mtimeMs}`,cached=contentHashes.get(key);if(cached)return cached;const hash=crypto.createHash("sha256"),descriptor=fs.openSync(file,"r"),buffer=Buffer.allocUnsafe(8*1024*1024);try{let read=0;do{read=fs.readSync(descriptor,buffer,0,buffer.length,null);if(read)hash.update(buffer.subarray(0,read));}while(read);}finally{fs.closeSync(descriptor);}const value=hash.digest("hex");contentHashes.set(key,value);return value;}
 
 function contentHash(file: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -85,15 +98,22 @@ export function discoverModelProfiles(): ModelProfile[] {
     upsertModelProfile(profile);
     stored.set(id, profile);
   }
-  for (const specialist of readSpecialistManifests()) {
+  const activeSet = getImprovementRepository().activeSet();
+  for (const recordedSpecialist of readSpecialistManifests()) {
+    const namespacedRole=resolveRoleId(CORE_TOOL_USE_V1,recordedSpecialist.role);
+    const activeAdapter=namespacedRole ? activeSet?.roleAdapters[namespacedRole] : undefined;
+    const isCampaignActive=!!activeAdapter&&activeAdapter.adapterId===recordedSpecialist.id&&activeAdapter.adapterSha256===recordedSpecialist.adapterHash;
+    const specialist:SpecialistAdapter=activeSet
+      ? {...recordedSpecialist,promotionStatus:isCampaignActive?"promoted":recordedSpecialist.promotionStatus==="rejected"?"rejected":"candidate"}
+      : recordedSpecialist;
     const base = models.find((model) => model.source === "local" && model.name === specialist.baseModel);
     if (!base) continue;
     const id = `adapter:${specialist.id}`;
     const old = stored.get(id);
-    const compatibleBase = modelVersionHash(base.path) === specialist.baseVersionHash;
+    const compatibleBase = (specialist.contentAddressed ? fileContentHash(base.path) : modelVersionHash(base.path)) === specialist.baseVersionHash;
     const adapterExists = fs.existsSync(specialist.adapterPath);
     const adapterStat = adapterExists ? fs.statSync(specialist.adapterPath) : null;
-    const adapterUnchanged = !!adapterStat && adapterStat.size === specialist.adapterSize && adapterStat.mtimeMs === specialist.adapterMtimeMs;
+    const adapterUnchanged = !!adapterStat && (specialist.contentAddressed ? fileContentHash(specialist.adapterPath)===specialist.adapterHash : adapterStat.size === specialist.adapterSize && adapterStat.mtimeMs === specialist.adapterMtimeMs);
     const unchanged = old?.versionHash === specialist.adapterHash && old.specialist?.baseVersionHash === specialist.baseVersionHash;
     const profile: ModelProfile = unchanged ? { ...old, specialist } : {
       id, provider: "llama.cpp", model: specialist.baseModel, checkpoint: specialist.trainingRunId,
@@ -209,9 +229,7 @@ function nameAffinity(profile: ModelProfile, roleId?: string): number {
 }
 
 function specialistRole(roleId?: string): HiveSpecialistRole | null {
-  if (["coordinator", "coordinator_planner", "planner", "comprehension"].includes(String(roleId))) return "coordinator_planner";
-  if (["coder", "coder_repairer"].includes(String(roleId))) return "coder_repairer";
-  if (roleId === "verifier") return "verifier";
+  for(const pack of listRolePacks()){const resolved=resolveRoleId(pack,String(roleId));if(resolved)return resolved;}
   return null;
 }
 
@@ -224,7 +242,7 @@ function specialistRole(roleId?: string): HiveSpecialistRole | null {
 export function rankEligibleModels(profiles: ModelProfile[], requirements: ModelCapability[], preferred?: string, roleId?: string, loadedModel?: string): ModelProfile[] {
   const wantedSpecialist = specialistRole(roleId);
   const eligible = profiles.filter((p) => p.probeStatus === "verified" && p.backendCompatible && requirements.every((c) => p.capabilities.includes(c)))
-    .filter((profile) => !profile.specialist || (!!preferred || (profile.specialist.promotionStatus === "promoted" && profile.specialist.role === wantedSpecialist)));
+    .filter((profile) => !profile.specialist || (!!preferred || (profile.specialist.promotionStatus === "promoted" && resolveRoleId(CORE_TOOL_USE_V1,profile.specialist.role) === (wantedSpecialist ? resolveRoleId(CORE_TOOL_USE_V1,wantedSpecialist) : null))));
   if (preferred) {
     const exact = eligible.find((p) => p.id === preferred || p.model === preferred);
     return exact ? [exact, ...eligible.filter((profile) => profile !== exact)] : [];
