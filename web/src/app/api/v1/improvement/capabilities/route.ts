@@ -1,0 +1,5 @@
+import { NextResponse } from "next/server";
+import { allModels, TRAIN_BASES } from "@/lib/lab";
+import { MANAGED_TRAINING_CAPABILITIES } from "@/lib/improvement/training-backends";
+export const dynamic="force-dynamic";
+export function GET(){const installed=allModels().map((model)=>({id:model.name,source:model.source,sizeGb:model.gb,file:model.path.split(/[\\/]/).pop(),exactHashStatus:"must be pinned in a campaign compatibility manifest"}));return NextResponse.json({backends:MANAGED_TRAINING_CAPABILITIES.map((backend)=>({...backend,targets:["attention","attention_mlp"],probeRequired:backend.availability==="probe_required"})),researchers:[{id:"local",remote:false,disclosure:"development aggregates and failure categories"}],trainableBases:TRAIN_BASES,installed,searchSpace:{rank:[8,16],alpha:"2 × rank",dropout:[.05],targets:["attention","attention_mlp"],learningRate:[.00005,.0001,.0002],warmupRatio:[0,.05],schedule:["constant","cosine"],retentionPercent:[10,20,30],klCoefficient:[.02,.05,.1]}},{headers:{"cache-control":"no-store"}});}
