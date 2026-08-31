@@ -1591,6 +1591,7 @@ export const TRAIN_BASES = [
   "Qwen/Qwen3-1.7B",
   "Qwen/Qwen3-4B",
   "Qwen/Qwen3-8B",
+  "Qwen/Qwen3.5-4B",
   // Qwen3.5-9B is the largest plausible HQQ training target on the 8GB card;
   // require a smoke run before committing to a full fine-tune.
   "Qwen/Qwen3.5-9B",
@@ -2005,6 +2006,7 @@ const SPECIALIST_ROLES = new Set<SpecialistTrainingRole>(["coordinator_planner",
 // it needs a full model swap until the other roles are retrained on the same base too.
 const SPECIALIST_BASES: Record<string, string> = {
   "Qwen/Qwen3-4B": "qwen3-4b-stock",
+  "Qwen/Qwen3.5-4B": "qwen3.5-4b-stock",
   // NOT "mistralai/Ministral-3-8B-Instruct-2512" — that repo ships natively FP8-quantized
   // (quant_method: fp8, per-layer weight_scale/activation_scale tensors); HQQ training needs
   // real float weights to quantize from. This -BF16 repo is the same architecture, unquantized.
@@ -2036,7 +2038,7 @@ function fileSha256(file: string): Promise<string> {
   });
 }
 
-export async function startTrain(o: { name: string; base: string; steps: number; lr: number; text?: string; targetLoss?: number; patience?: number; mode?: "raw" | "sft" | "hqq"; dataFile?: string; valFrac?: number; block?: number; autoBench?: string[]; snapshotEvery?: number; noProbeEmbed?: boolean; noProbe?: boolean; noEmbed?: boolean; gradAccum?: number; warmup?: number; cosine?: boolean; balanceSources?: boolean; resume?: boolean; stageWeightsCpu?: boolean; quantizeCpu?: boolean; lastFullBlockOnly?: boolean; adapterOnly?: boolean; valEvery?: number; specialistRole?: SpecialistTrainingRole; datasetManifest?: string; runtimeBaseModel?: string }) {
+export async function startTrain(o: { name: string; base: string; steps: number; lr: number; text?: string; targetLoss?: number; patience?: number; mode?: "raw" | "sft" | "hqq"; dataFile?: string; valFrac?: number; block?: number; autoBench?: string[]; snapshotEvery?: number; noProbeEmbed?: boolean; noProbe?: boolean; noEmbed?: boolean; gradAccum?: number; warmup?: number; warmupRatio?: 0 | 0.05; cosine?: boolean; balanceSources?: boolean; resume?: boolean; stageWeightsCpu?: boolean; quantizeCpu?: boolean; lastFullBlockOnly?: boolean; adapterOnly?: boolean; valEvery?: number; specialistRole?: SpecialistTrainingRole; datasetManifest?: string; runtimeBaseModel?: string; objective?: "sft" | "sft_replay" | "sft_kl"; retentionDataFile?: string; retentionPercent?: 10 | 20 | 30; klCoefficient?: 0.02 | 0.05 | 0.1; loraRank?: 8 | 16; loraTargets?: "attention" | "attention_mlp"; preflightOnly?: boolean }) {
   if (train.running) return { error: "already training: " + train.running };
   if (o.resume && !fs.existsSync(path.join(OUT_DIR, (o.name || "").replace(/[^a-zA-Z0-9_-]/g, "") + "_ckpt", "last"))) {
     return { error: "no checkpoint to resume: " + o.name };
@@ -2062,6 +2064,7 @@ export async function startTrain(o: { name: string; base: string; steps: number;
     o.block = o.block || 1024;
   }
   let dataPath: string;
+  let retentionPath: string | undefined;
   if (mode === "sft" || mode === "hqq") {
     // SFT / HQQ train on an EXISTING .jsonl (instruction/thought_process/output)
     const safe = path.basename(o.dataFile || "").replace(/[^a-zA-Z0-9_.-]/g, "");
@@ -2071,6 +2074,12 @@ export async function startTrain(o: { name: string; base: string; steps: number;
     dataPath = path.join(DATA_DIR, name + ".txt");
     fs.writeFileSync(dataPath, o.text || "");
   }
+  if (o.retentionDataFile) {
+    const retentionName = path.basename(o.retentionDataFile).replace(/[^a-zA-Z0-9_.-]/g, "");
+    retentionPath = path.join(DATA_DIR, retentionName);
+    if (!retentionName.endsWith(".jsonl") || !fs.existsSync(retentionPath)) return { error: "retention data file not found: " + retentionName };
+  }
+  if ((o.objective === "sft_replay" || o.objective === "sft_kl") && !retentionPath) return { error: `${o.objective} requires an immutable general-retention dataset` };
   const data = datasetInfo(path.basename(dataPath));
   if (specialistManifest && data?.sha256 !== specialistManifest.dataset_hash) return { error: "dataset bytes do not match the immutable specialist manifest" };
   saveExperiment({
@@ -2121,6 +2130,7 @@ export async function startTrain(o: { name: string; base: string; steps: number;
   if (mode === "hqq" && !o.noProbeEmbed && o.noEmbed) args.push("--no_embed");
   if (mode === "hqq" && o.gradAccum && o.gradAccum > 1) args.push("--grad_accum", String(o.gradAccum));
   if (mode === "hqq" && o.warmup) args.push("--warmup", String(o.warmup));
+  if (mode === "hqq" && o.warmupRatio !== undefined) args.push("--warmup_ratio", String(o.warmupRatio));
   if (mode === "hqq" && o.resume) args.push("--resume");
   if (mode === "hqq" && o.cosine) args.push("--cosine");
   if (mode === "hqq" && o.balanceSources) args.push("--balance_sources");
@@ -2129,6 +2139,13 @@ export async function startTrain(o: { name: string; base: string; steps: number;
   if (mode === "hqq" && o.stageWeightsCpu) args.push("--stage_weights_cpu");
   if (mode === "hqq" && o.quantizeCpu) args.push("--quantize_cpu");
   if (mode === "hqq" && o.lastFullBlockOnly) args.push("--last_full_block_only");
+  if (mode === "hqq" && o.objective) args.push("--objective", o.objective);
+  if (mode === "hqq" && retentionPath) args.push("--retention_data", retentionPath);
+  if (mode === "hqq" && o.retentionPercent) args.push("--retention_percent", String(o.retentionPercent));
+  if (mode === "hqq" && o.klCoefficient) args.push("--kl_coefficient", String(o.klCoefficient));
+  if (mode === "hqq" && o.loraRank) args.push("--lora_rank", String(o.loraRank));
+  if (mode === "hqq" && o.loraTargets) args.push("--lora_targets", o.loraTargets);
+  if (mode === "hqq" && o.preflightOnly) args.push("--preflight_only");
 
   const runFinetune = (cpu: boolean, done: (code: number | null, errTail: string) => void) => {
     ws.write(JSON.stringify({ event: "phase", phase: cpu ? "fine-tuning (CPU)" : "fine-tuning (GPU)" }) + "\n");

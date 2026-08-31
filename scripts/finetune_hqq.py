@@ -43,6 +43,7 @@ HQQLinear.set_backend(HQQBackend.PYTORCH)   # pure-torch dequant — ROCm-safe
 from finetune_sft import load_rows, encode_conversation, is_val, save_adapter
 
 LORA_TARGETS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+ATTENTION_TARGETS = ("q_proj", "k_proj", "v_proj", "o_proj")
 LORA_R, LORA_ALPHA = 16, 32
 
 
@@ -226,6 +227,34 @@ def chunked_ce_loss(model, x, m, y, chunk=256):
         part = torch.utils.checkpoint.checkpoint(chunk_loss, h[:, i:i + chunk, :], tc, use_reentrant=False)
         total = part if total is None else total + part
     return total / n_valid
+
+
+def chunked_kl_loss(model, x, m, y, chunk=128):
+    """KL anchor against the identical frozen base with adapters disabled.
+
+    Teacher logits are produced a chunk at a time and detached before the
+    student chunk, so the full vocabulary tensor is never resident twice.
+    """
+    lm = model.base_model.model if hasattr(model, "base_model") else model
+    with torch.no_grad(), model.disable_adapter():
+        teacher_hidden = lm.model(input_ids=x, attention_mask=m).last_hidden_state[:, :-1, :]
+    student_hidden = lm.model(input_ids=x, attention_mask=m).last_hidden_state[:, :-1, :]
+    targets = y[:, 1:]
+    valid = targets != -100
+    count = valid.sum().clamp(min=1)
+    total = None
+    for i in range(0, student_hidden.shape[1], chunk):
+        mask = valid[:, i:i + chunk]
+        if not mask.any():
+            continue
+        with torch.no_grad():
+            teacher = torch.softmax(lm.lm_head(teacher_hidden[:, i:i + chunk, :]).float(), dim=-1)
+        student = torch.log_softmax(lm.lm_head(student_hidden[:, i:i + chunk, :]).float(), dim=-1)
+        token_kl = torch.nn.functional.kl_div(student, teacher, reduction="none").sum(dim=-1)
+        part = (token_kl * mask).sum()
+        total = part if total is None else total + part
+        del teacher, student
+    return total / count
 
 
 @torch.no_grad()
@@ -464,7 +493,11 @@ def stream_merge_and_save(base, adapter_dir, out_dir):
     weight_map, shard_files = _shard_files(snap_dir)
 
     adapter_sd = load_peft_weights(adapter_dir)
-    scaling = LORA_ALPHA / LORA_R
+    try:
+        adapter_config = json.load(open(os.path.join(adapter_dir, "adapter_config.json")))
+        scaling = float(adapter_config["lora_alpha"]) / float(adapter_config["r"])
+    except (OSError, KeyError, ValueError, TypeError):
+        scaling = LORA_ALPHA / LORA_R
     lora_map = {}
     for k, v in adapter_sd.items():
         m = re.match(r"base_model\.model\.(.+)\.lora_(A|B)\.weight$", k)
@@ -508,6 +541,13 @@ def main():
     ap.add_argument("--steps", type=int, default=200)
     ap.add_argument("--block", type=int, default=1024)  # webgen/openr1 rows run 900-1600 tokens; 512 truncated most of them
     ap.add_argument("--lr", type=float, default=1e-4)
+    ap.add_argument("--objective", choices=("sft", "sft_replay", "sft_kl"), default="sft")
+    ap.add_argument("--retention_data", help="immutable general-retention JSONL (required for replay/KL)")
+    ap.add_argument("--retention_percent", type=int, choices=(10, 20, 30), default=10)
+    ap.add_argument("--kl_coefficient", type=float, choices=(0.02, 0.05, 0.1), default=0.05)
+    ap.add_argument("--lora_rank", type=int, choices=(8, 16), default=16)
+    ap.add_argument("--lora_targets", choices=("attention", "attention_mlp"), default="attention_mlp")
+    ap.add_argument("--preflight_only", action="store_true", help="run the two-step finite-gradient/VRAM preflight and exit")
     ap.add_argument("--backward_divisor", type=float, default=1.0,
                     help="divide loss only during backward, then restore FP32 LoRA gradients; "
                          "prevents FP16 frozen-backbone gradient overflow on Qwen3.5/RDNA2")
@@ -515,6 +555,7 @@ def main():
                     help="micro-steps accumulated per optimizer step (each micro-step is still one bs=1 row; "
                          "only LoRA grads accumulate, so VRAM cost is negligible)")
     ap.add_argument("--warmup", type=int, default=0, help="linear LR warmup over this many optimizer steps (0 disables)")
+    ap.add_argument("--warmup_ratio", type=float, choices=(0.0, 0.05), help="bounded campaign warmup as a fraction of --steps")
     ap.add_argument("--cosine", action="store_true", help="cosine-decay LR from --lr to 10%% of it by --steps (after warmup)")
     ap.add_argument("--balance_sources", action="store_true",
                     help="draw the source uniformly first, then a row within it — stops one giant source "
@@ -554,8 +595,14 @@ def main():
                          "--no_probe applies. Prefer disabling this one first: the galaxy is a nice-to-"
                          "have, the probe/certitude panel is usually what's actually being watched.")
     args = ap.parse_args()
+    if args.objective in ("sft_replay", "sft_kl") and not args.retention_data:
+        ap.error(f"--objective {args.objective} requires --retention_data")
     if args.no_probe_embed:
         args.no_probe = args.no_embed = True
+    if args.warmup_ratio is not None:
+        if args.warmup:
+            ap.error("use --warmup or --warmup_ratio, not both")
+        args.warmup = round(args.steps * args.warmup_ratio)
 
     ckpt_dir = args.out.rstrip("/") + "_ckpt"
     print(json.dumps({"event": "start", "device": "cuda-hqq4", "dtype": "hqq-nf4", "base": args.base,
@@ -563,6 +610,10 @@ def main():
                       "mode": "hqq", "patience": args.patience,
                       "val_frac": args.val_frac, "val_every": args.val_every, "resume": args.resume,
                       "grad_accum": args.grad_accum, "warmup": args.warmup, "cosine": args.cosine,
+                      "objective": args.objective, "retention_percent": args.retention_percent,
+                      "kl_coefficient": args.kl_coefficient if args.objective == "sft_kl" else None,
+                      "lora_rank": args.lora_rank, "lora_alpha": 2 * args.lora_rank,
+                      "lora_targets": args.lora_targets,
                       "stage_weights_cpu": args.stage_weights_cpu, "quantize_cpu": args.quantize_cpu,
                       "last_full_block_only": args.last_full_block_only}), flush=True)
     # fix_mistral_regex=True: transformers itself warns Mistral-family tokenizers ship an
@@ -576,8 +627,9 @@ def main():
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
-    lcfg = LoraConfig(r=LORA_R, lora_alpha=LORA_ALPHA, lora_dropout=0.05, task_type="CAUSAL_LM",
-                      target_modules=list(LORA_TARGETS))
+    selected_targets = ATTENTION_TARGETS if args.lora_targets == "attention" else LORA_TARGETS
+    lcfg = LoraConfig(r=args.lora_rank, lora_alpha=2 * args.lora_rank, lora_dropout=0.05, task_type="CAUSAL_LM",
+                      target_modules=list(selected_targets))
     # The fully GPU-resident path needs FP16 adapters to survive its last few MB
     # of headroom. CPU staging frees enough VRAM to keep LoRA in FP32, which is
     # materially more stable on this RDNA2/FP16 stack (the first Qwen3.5 staged
@@ -625,6 +677,16 @@ def main():
     rows = load_rows(args.data)
     train_rows = [r for r in rows if not (args.val_frac > 0 and is_val(r, args.val_frac))]
     val_rows = [r for r in rows if args.val_frac > 0 and is_val(r, args.val_frac)]
+    if args.objective in ("sft_replay", "sft_kl"):
+        retention_rows = load_rows(args.retention_data)
+        retention_count = math.ceil(len(train_rows) * args.retention_percent / (100 - args.retention_percent))
+        replay_rng = random.Random(0x4C414C + args.retention_percent)
+        replay = [retention_rows[replay_rng.randrange(len(retention_rows))].copy() for _ in range(retention_count)] if retention_rows else []
+        if not replay:
+            raise ValueError("general-retention corpus contains no usable rows")
+        for row in replay:
+            row["source"] = "general-retention"
+        train_rows.extend(replay)
     # drop-don't-truncate: encode unbounded, discard rows that exceed --block.
     # A truncated row trains the model to stop mid-answer — the exact webgen
     # failure mode this run is meant to fix. Dropping loses the row; truncating
@@ -662,6 +724,28 @@ def main():
     pad_id = tok.pad_token_id
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
     model.train()
+    if args.objective == "sft_kl":
+        torch.cuda.reset_peak_memory_stats()
+        try:
+            for preflight_step, (ids, lab) in enumerate(examples[:2], 1):
+                x = torch.tensor([ids], device="cuda:0"); y = torch.tensor([lab], device="cuda:0"); m = torch.ones_like(x)
+                preflight_loss = chunked_ce_loss(model, x, m, y) + args.kl_coefficient * chunked_kl_loss(model, x, m, y)
+                preflight_loss.backward()
+                finite = math.isfinite(float(preflight_loss)) and all(
+                    p.grad is None or torch.isfinite(p.grad).all().item() for p in model.parameters() if p.requires_grad)
+                opt.zero_grad(set_to_none=True)
+                print(json.dumps({"event": "preflight", "objective": "sft_kl", "step": preflight_step,
+                                  "finite_gradients": finite, "gpu_mb": round(torch.cuda.max_memory_allocated() / 1e6)}), flush=True)
+                if not finite:
+                    raise FloatingPointError("KL preflight produced non-finite gradients")
+            if len(examples) < 2:
+                raise ValueError("KL preflight requires at least two train examples")
+        except torch.OutOfMemoryError as error:
+            print(json.dumps({"event": "incompatible", "code": "preflight_oom", "objective": "sft_kl"}), flush=True)
+            raise RuntimeError("sft_kl incompatible: two-step VRAM preflight OOM") from error
+        if args.preflight_only:
+            print(json.dumps({"event": "done", "preflight_only": True, "objective": "sft_kl"}), flush=True)
+            return
     detect_anomaly = os.environ.get("HQQ_DETECT_ANOMALY") == "1"
     t0 = time.time(); prev_step, prev_time = 0, t0
     best, best_step, ema = float("inf"), start_step, None
@@ -727,10 +811,10 @@ def main():
             x = torch.tensor([ids], device="cuda:0"); y = torch.tensor([lab], device="cuda:0"); m = torch.ones_like(x)
             if detect_anomaly:
                 with torch.autograd.detect_anomaly(check_nan=True):
-                    loss = chunked_ce_loss(model, x, m, y) / accum
+                    loss = (chunked_ce_loss(model, x, m, y) + (args.kl_coefficient * chunked_kl_loss(model, x, m, y) if args.objective == "sft_kl" else 0)) / accum
                     (loss / backward_divisor).backward()
             else:
-                loss = chunked_ce_loss(model, x, m, y) / accum
+                loss = (chunked_ce_loss(model, x, m, y) + (args.kl_coefficient * chunked_kl_loss(model, x, m, y) if args.objective == "sft_kl" else 0)) / accum
                 (loss / backward_divisor).backward()
             lv += loss.item()  # each term is already /accum, so the sum is the mean raw loss
         if backward_divisor != 1.0:

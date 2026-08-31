@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { startTrain, stopTrain, trainStatus, listTrainRuns, listExperiments, deleteTrainRun, getBattery, TRAIN_BASES } from "@/lib/lab";
+import { stopTrain, trainStatus, listTrainRuns, listExperiments, deleteTrainRun, getBattery, TRAIN_BASES } from "@/lib/lab";
+import { startManagedTraining } from "@/lib/improvement/training-backends";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +12,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
   if (b.action === "stop") return NextResponse.json(stopTrain());
-  return NextResponse.json(await startTrain({
+  return NextResponse.json(await startManagedTraining({
     name: b.name || "model",
     base: b.base || TRAIN_BASES[0],
     steps: +(b.steps || 150),
