@@ -96,6 +96,29 @@ class RoleDatasetTests(unittest.TestCase):
         self.assertEqual(1, len(rows))
         self.assertNotIn("trace_too_long", manifest["drops"])
 
+    def test_versioned_role_pack_accepts_namespaced_role_and_legacy_alias(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "rows.jsonl"
+            source.write_text(json.dumps(row("Design a page without mutating files")) + "\n", encoding="utf-8")
+            spec = {"sources": [{"path": str(source), "source": "unit", "kind": "generated", "license": "project-authored", "checks": ["unit_verified"]}]}
+            pack = {"id": "web-v1", "version": "1.0.0", "roles": [{"id": "web.designer", "aliases": ["designer"], "permittedTools": []}]}
+            rows, manifest = build_dataset("designer", spec, .1, [], role_pack=pack)
+            self.assertEqual("web.designer", rows[0]["_hive"]["role"])
+            self.assertEqual({"id": "web-v1", "version": "1.0.0"}, manifest["role_pack"])
+
+    def test_private_trace_requires_named_consent_and_evaluation_families_do_not_cross(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "rows.jsonl"
+            source.write_text(json.dumps(row("Repair a distinct parser", family="hidden-family")) + "\n", encoding="utf-8")
+            private_source = {"path": str(source), "source": "private", "kind": "verified_local", "license": "private", "checks": ["verified"], "private_trace_group": "owner-approved"}
+            with self.assertRaisesRegex(ValueError, "explicit campaign consent"):
+                build_dataset("coder_repairer", {"sources": [private_source]}, .1, [])
+            private_source["consent_id"] = "consent-1"
+            spec = {"sources": [private_source], "approved_trace_groups": ["owner-approved"], "evaluation_splits": [{"prompt": "unrelated", "task_family": "hidden-family", "source_family": "different"}]}
+            rows, manifest = build_dataset("coder_repairer", spec, .1, [])
+            self.assertEqual([], rows)
+            self.assertEqual(1, manifest["drops"]["evaluation_task_family_overlap"])
+
 
 if __name__ == "__main__":
     unittest.main()

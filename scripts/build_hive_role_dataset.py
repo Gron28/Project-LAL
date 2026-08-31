@@ -128,7 +128,7 @@ def called_tools(row: dict[str, Any]) -> set[str]:
     return names
 
 
-def normalize_production_tools(row: dict[str, Any], role: str) -> bool:
+def normalize_production_tools(row: dict[str, Any], role: str, permitted_tools: set[str] | None = None) -> bool:
     aliases = {
         "path": ["filename", "file", "file_path", "filepath"],
         "content": ["contents", "text", "body", "code", "data"],
@@ -142,7 +142,8 @@ def normalize_production_tools(row: dict[str, Any], role: str) -> bool:
         for call in message.get("tool_calls") or []:
             function = (call or {}).get("function") or {}
             name = str(function.get("name") or "")
-            if name not in ROLE_TOOL_POLICY[role]:
+            allowed_for_role = permitted_tools if permitted_tools is not None else ROLE_TOOL_POLICY[role]
+            if name not in allowed_for_role:
                 continue
             arguments = function.get("arguments") or "{}"
             try:
@@ -159,7 +160,7 @@ def normalize_production_tools(row: dict[str, Any], role: str) -> bool:
                 return False
             function["arguments"] = canonical_json(arguments)
             function["name"] = name
-    allowed = ROLE_TOOL_POLICY[role]
+    allowed = permitted_tools if permitted_tools is not None else ROLE_TOOL_POLICY[role]
     if allowed:
         row["tools"] = [CANONICAL_TOOLS[name] for name in CANONICAL_TOOLS if name in allowed]
     else:
@@ -240,9 +241,18 @@ def build_dataset(
     suite_prompts: list[str],
     tokenizer: Any = None,
     block: int = 0,
+    role_pack: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    if role not in ROLES:
+    role_definition = None
+    if role_pack:
+        for definition in role_pack.get("roles", []):
+            if role == definition.get("id") or role in definition.get("aliases", []):
+                role_definition = definition
+                break
+    if role not in ROLES and role_definition is None:
         raise ValueError(f"unknown role: {role}")
+    canonical_role = str(role_definition.get("id")) if role_definition else role
+    permitted_tools = set(role_definition.get("permittedTools", [])) if role_definition else ROLE_TOOL_POLICY[role]
     if not 0 < val_frac < 0.5:
         raise ValueError("val_frac must be greater than 0 and less than 0.5")
     sources = spec.get("sources")
@@ -253,6 +263,11 @@ def build_dataset(
     seen_prompts: set[str] = set()
     drops: dict[str, int] = {}
     composition: dict[str, int] = {}
+    evaluation_rows = spec.get("evaluation_splits", [])
+    evaluation_prompts = [norm(str(item.get("prompt") or "")) for item in evaluation_rows if isinstance(item, dict)]
+    evaluation_families = {str(item.get("task_family")) for item in evaluation_rows if isinstance(item, dict) and item.get("task_family")}
+    evaluation_sources = {str(item.get("source_family")) for item in evaluation_rows if isinstance(item, dict) and item.get("source_family")}
+    approved_trace_groups = set(str(value) for value in spec.get("approved_trace_groups", []))
 
     def drop(reason: str) -> None:
         drops[reason] = drops.get(reason, 0) + 1
@@ -270,6 +285,9 @@ def build_dataset(
             raise ValueError(f"invalid source declaration: {source}")
         if source_kind == "public" and not license_name:
             raise ValueError(f"public source {source_name} requires an explicit license")
+        trace_group = str(source.get("private_trace_group") or "")
+        if trace_group and (trace_group not in approved_trace_groups or not source.get("consent_id")):
+            raise ValueError(f"private trace group {trace_group} requires explicit campaign consent")
         source_checks_ok, source_checks = checks_pass(source.get("checks"))
 
         for line_no, line in enumerate(source_path.read_text(encoding="utf-8").splitlines(), 1):
@@ -284,7 +302,7 @@ def build_dataset(
             if row is None:
                 drop("invalid_conversation")
                 continue
-            if not normalize_production_tools(row, role):
+            if not normalize_production_tools(row, role, permitted_tools):
                 drop("malformed_tool_call")
                 continue
             if has_think_block(row):
@@ -309,7 +327,10 @@ def build_dataset(
             if any(jaccard(normalized_prompt, suite_prompt) >= 0.5 for suite_prompt in suite_prompts):
                 drop("benchmark_overlap")
                 continue
-            disallowed = called_tools(row) - ROLE_TOOL_POLICY[role]
+            if any(jaccard(normalized_prompt, evaluation_prompt) >= 0.5 for evaluation_prompt in evaluation_prompts):
+                drop("evaluation_ngram_overlap")
+                continue
+            disallowed = called_tools(row) - permitted_tools
             if disallowed:
                 drop("role_tool_violation")
                 continue
@@ -324,10 +345,17 @@ def build_dataset(
 
             parents = [str(value) for value in row_meta.get("parent_ids", []) if str(value)] if isinstance(row_meta.get("parent_ids"), list) else []
             family = str(row_meta.get("task_family") or (parents[0] if parents else f"{source_name}:{' '.join(normalized_prompt.split()[:12])}"))
+            source_family = str(row_meta.get("source_family") or source.get("source_family") or source_name)
+            if family in evaluation_families:
+                drop("evaluation_task_family_overlap")
+                continue
+            if source_family in evaluation_sources:
+                drop("evaluation_source_family_overlap")
+                continue
             bucket = int(sha(family)[:12], 16) / float(0xFFFFFFFFFFFF)
             split = "validation" if bucket < val_frac else "train"
             content_hash = sha(canonical_json(row))
-            example_id = f"hive-{role}-{sha(f'{source_name}:{content_hash}')[:24]}"
+            example_id = f"hive-{canonical_role}-{sha(f'{source_name}:{content_hash}')[:24]}"
             checks = row_checks if row_checks_ok else source_checks
             row["_hive"] = {
                 "id": example_id,
@@ -338,8 +366,9 @@ def build_dataset(
                 "license": license_name or None,
                 "generator": row_meta.get("generator") or source.get("generator"),
                 "parent_ids": parents,
-                "role": role,
+                "role": canonical_role,
                 "task_family": family,
+                "source_family": source_family,
                 "checks": checks,
                 "split": split,
             }
@@ -351,7 +380,8 @@ def build_dataset(
     dataset_hash = sha("\n".join(canonical_json(row) for row in kept) + ("\n" if kept else ""))
     manifest_core = {
         "version": 1,
-        "role": role,
+        "role": canonical_role,
+        "role_pack": {"id": role_pack.get("id"), "version": role_pack.get("version")} if role_pack else None,
         "dataset_hash": dataset_hash,
         "ordered_example_ids": [row["_hive"]["id"] for row in kept],
         "examples": [row["_hive"] for row in kept],
@@ -371,7 +401,8 @@ def build_dataset(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--role", required=True, choices=sorted(ROLES))
+    parser.add_argument("--role", required=True)
+    parser.add_argument("--role-pack", help="versioned role-pack JSON; enables namespaced roles without schema changes")
     parser.add_argument("--spec", required=True, help="JSON source/provenance specification")
     parser.add_argument("--out", required=True, help="output JSONL under data/")
     parser.add_argument("--manifest-out", help="default: <out>.manifest.json")
@@ -386,7 +417,8 @@ def main() -> int:
         if args.block:
             from transformers import AutoTokenizer
             tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
-        rows, manifest = build_dataset(args.role, spec, args.val_frac, load_suite_prompts(), tokenizer, args.block)
+        role_pack = json.loads(Path(args.role_pack).read_text(encoding="utf-8")) if args.role_pack else None
+        rows, manifest = build_dataset(args.role, spec, args.val_frac, load_suite_prompts(), tokenizer, args.block, role_pack)
         if not rows:
             raise ValueError("all examples were rejected; inspect manifest/drop policy inputs")
         if manifest["split"]["validation"] == 0:
