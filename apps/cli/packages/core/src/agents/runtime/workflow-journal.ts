@@ -6,12 +6,18 @@
 
 /**
  * @fileoverview Same-session workflow resume via a JSONL journal. Every
- * `agent()` dispatch in a run appends a `started` then a `result` line to
- * `<projectDir>/workflows/<runId>/journal.jsonl`. Re-running the workflow
- * with `Workflow({resumeFromRunId})` loads the journal and serves cached
- * results for the longest UNCHANGED PREFIX of `agent()` calls — the first
- * call whose (rolling prefix + prompt + opts) hash diverges, or that has no
- * journaled result, runs live, and every call after it runs live too.
+ * `agent()` dispatch in a run appends a `started` entry, then (once its
+ * side effect returns) an `effect_complete` entry, then a `result` entry,
+ * to `<projectDir>/workflows/<runId>/journal.jsonl`. Re-running the
+ * workflow with `Workflow({resumeFromRunId})` loads the journal and serves
+ * cached results for the longest UNCHANGED PREFIX of `agent()` calls — the
+ * first call whose (rolling prefix + prompt + opts) hash diverges, or that
+ * has no journaled result, runs live, and every call after it runs live
+ * too. The exception is a key whose effect is known to have completed
+ * (`effect_complete` with no matching `result`, the "crashed between effect
+ * and result" window): resume refuses to blindly re-run that dispatch's
+ * non-idempotent side effect and surfaces an explicit error instead — see
+ * `ambiguousEffects` below and `WorkflowOrchestrator.run`.
  *
  * Key derivation (matches upstream `v2`): each dispatch's key is
  * `v2:sha256(prefixHash ‖ prompt ‖ canonicalOpts)`, where `prefixHash` is
@@ -33,16 +39,35 @@
 
 import { createHash } from 'node:crypto';
 import { read, writeLine } from '../../utils/jsonl-utils.js';
-import { createDebugLogger } from '../../utils/debugLogger.js';
 import type { WorkflowAgentOpts } from './workflow-sandbox.js';
-
-const debugLogger = createDebugLogger('WORKFLOW_JOURNAL');
 
 /** Journal-format version tag, prefixed onto every key. */
 export const JOURNAL_KEY_VERSION = 'v2';
 
 export interface JournalStartedEntry {
   type: 'started';
+  key: string;
+  agentId: string;
+}
+
+/**
+ * Written immediately after a dispatch's side effect (`this.dispatch(...)`)
+ * resolves, before its `result` entry is persisted. This is the seam
+ * ACCEPTANCE.md names as "crash after effect but before result": the old
+ * two-entry (`started` / `result`) vocabulary could not represent it — a
+ * `started`-without-`result` key was structurally identical whether the
+ * effect never ran or ran to completion, so resume always assumed the
+ * former and blindly re-executed non-idempotent tool calls.
+ *
+ * Presence of `effect_complete` for a key with no matching `result` proves
+ * the effect (arbitrary write_file/shell calls inside `subagent.execute`)
+ * already ran at least once. It does NOT create a bigger backward-compat
+ * surface: journals written before this change never contain this entry
+ * type, so `buildReplay` simply never populates `ambiguousEffects` for them
+ * (see the class doc on `WorkflowJournal` for what that means on resume).
+ */
+export interface JournalEffectCompleteEntry {
+  type: 'effect_complete';
   key: string;
   agentId: string;
 }
@@ -54,7 +79,10 @@ export interface JournalResultEntry {
   result: unknown;
 }
 
-export type JournalEntry = JournalStartedEntry | JournalResultEntry;
+export type JournalEntry =
+  | JournalStartedEntry
+  | JournalEffectCompleteEntry
+  | JournalResultEntry;
 
 /** Parsed journal: completed results + started-but-maybe-incomplete markers. */
 export interface JournalReplay {
@@ -62,6 +90,16 @@ export interface JournalReplay {
   results: Map<string, JournalResultEntry>;
   /** key → all `started` entries seen (length > 1 ⇒ prior respawns). */
   started: Map<string, JournalStartedEntry[]>;
+  /**
+   * Keys whose effect is known (via a durable `effect_complete` entry) to
+   * have run to completion, but which have no matching `result` — the
+   * ambiguous crash window. A key lands here only when a NEWER journal
+   * (written by orchestrator code that persists `effect_complete`) recorded
+   * that entry; older journals can never populate this set, because they
+   * never wrote it. Resume must refuse to silently re-dispatch these keys;
+   * see `WorkflowOrchestrator.run`'s `countedDispatch`.
+   */
+  ambiguousEffects: Set<string>;
 }
 
 /**
@@ -144,44 +182,58 @@ export function deriveArgsSeed(args: unknown): string {
 /**
  * Build the replay maps from a flat list of journal entries. `result`
  * entries win last-write; `started` entries accumulate (so a key started
- * N times surfaces N prior attempts for the respawn telemetry).
+ * N times surfaces N prior attempts for the respawn telemetry). A key with
+ * an `effect_complete` entry and no later `result` lands in
+ * `ambiguousEffects` — the effect ran but its outcome was never committed
+ * (a `result` entry for the same key, if one follows in the log, resolves
+ * the ambiguity: reconciliation is exactly "append the real result").
  */
 export function buildReplay(entries: JournalEntry[]): JournalReplay {
   const results = new Map<string, JournalResultEntry>();
   const started = new Map<string, JournalStartedEntry[]>();
+  const ambiguousEffects = new Set<string>();
   for (const e of entries) {
     if (e.type === 'result') {
       results.set(e.key, e);
+      ambiguousEffects.delete(e.key);
     } else if (e.type === 'started') {
       const list = started.get(e.key);
       if (list) list.push(e);
       else started.set(e.key, [e]);
+    } else if (e.type === 'effect_complete') {
+      ambiguousEffects.add(e.key);
     }
   }
-  return { results, started };
+  return { results, started, ambiguousEffects };
 }
 
 /**
  * Append-only JSONL journal for one workflow run. Reads tolerate a missing
- * file (fresh run); appends are fire-and-forget at the call site (the
- * orchestrator does not await them on the hot path — a journal write
- * failure must not fail the dispatch).
+ * file (fresh run). The orchestrator awaits intent and result appends before
+ * executing or publishing a dispatch, so recovery evidence is not optional.
+ *
+ * Backward compatibility: a journal written before `effect_complete` existed
+ * contains only `started` / `result` entries. `buildReplay` never invents an
+ * `effect_complete` it didn't see, so such a journal always replays with an
+ * empty `ambiguousEffects` set — a `started`-without-`result` key from an old
+ * journal is treated exactly as before this change: an ordinary cache miss
+ * that the orchestrator safely re-dispatches. This is a real, known
+ * limitation, not an oversight: an old journal cannot prove whether its
+ * effect ran, because it was never instrumented to say so. The fix only
+ * protects runs recorded by orchestrator code that writes
+ * `effect_complete` — i.e. resumes of journals produced from this change
+ * onward.
  */
 export class WorkflowJournal {
   constructor(readonly path: string) {}
 
   /** Load + parse all entries into replay maps. Empty maps if no file. */
   async load(): Promise<JournalReplay> {
-    try {
-      const entries = await read<JournalEntry>(this.path);
-      return buildReplay(entries);
-    } catch (e) {
-      debugLogger.warn(`WorkflowJournal.load failed for ${this.path}: ${e}`);
-      return { results: new Map(), started: new Map() };
-    }
+    const entries = await read<JournalEntry>(this.path, { throwOnNonEnoentError: true });
+    return buildReplay(entries);
   }
 
-  /** Append one entry. Rejects only on I/O error (callers `.catch`). */
+  /** Append one entry; serialization and I/O failures reject the operation. */
   append(entry: JournalEntry): Promise<void> {
     return writeLine(this.path, entry);
   }

@@ -18,7 +18,7 @@ import type {
 import { WorkflowBudgetExceededError } from './workflow-budget.js';
 import { resolveStallMs, runStallResilient } from './workflow-stall.js';
 import { deriveAgentKey, deriveArgsSeed } from './workflow-journal.js';
-import type { WorkflowJournal, JournalReplay } from './workflow-journal.js';
+import type { WorkflowJournal, JournalReplay, JournalEntry } from './workflow-journal.js';
 import {
   WORKFLOW_SUBAGENT_SYSTEM_PROMPT,
   WORKFLOW_SUBAGENT_SYSTEM_PROMPT_WITH_SCHEMA,
@@ -198,6 +198,40 @@ export class WorkflowExecutionError extends Error {
     readonly meta: WorkflowMeta | null = null,
   ) {
     super(message);
+  }
+}
+
+/**
+ * Thrown on resume when a journal key's effect is known to have completed
+ * (`effect_complete` persisted, no matching `result`) — the process crashed
+ * in the narrow window between the dispatch's side effect finishing and its
+ * result being committed (ACCEPTANCE.md's "crash after effect but before
+ * result"). The side effect is arbitrary `write_file`/`shell` activity
+ * inside `subagent.execute` with no idempotency key, so re-dispatching would
+ * silently repeat it. Per ACCEPTANCE.md ("do not promise global
+ * exactly-once execution ... a decision when its result cannot be
+ * established"), resume does not guess: it surfaces this truthful
+ * non-complete outcome instead of a false `complete` or a silent duplicate
+ * effect. Recovery requires reconciliation: inspect the workspace (or
+ * whatever the effect touched) to judge whether it already landed, then
+ * either append a `result` entry for this key directly to the journal (so
+ * the next resume replays it) or start a fresh run accepting the risk that
+ * the effect repeats.
+ */
+export class WorkflowAmbiguousEffectError extends Error {
+  override readonly name = 'WorkflowAmbiguousEffectError';
+  constructor(
+    readonly runId: string,
+    readonly journalKey: string,
+  ) {
+    super(
+      `Workflow run ${runId}: a prior attempt's side effect for dispatch ` +
+        `${journalKey} completed but its result was never committed ` +
+        `(crash between effect and result-commit). Refusing to blindly ` +
+        `re-dispatch a non-idempotent effect — reconcile manually (inspect ` +
+        `the workspace, then append a result for this journal key, or ` +
+        `start a fresh run) before resuming.`,
+    );
   }
 }
 
@@ -1354,6 +1388,15 @@ export class WorkflowOrchestrator {
     // trusts the cache). `journalAgentId` numbers journal entries.
     const journal = req.journal;
     const replay = req.resumeReplay;
+    let journalError: Error | undefined;
+    const persist = async (entry: JournalEntry) => {
+      try {
+        await journal!.append(entry);
+      } catch (error) {
+        journalError ??= new Error(`Workflow journal write failed: ${extractErrorMessage(error)}. Inspect the workspace before retrying.`);
+        throw journalError;
+      }
+    };
     // Seed the chain with the run's `args` so a resume with different args
     // produces a disjoint key space (every dispatch misses → re-runs live)
     // rather than silently replaying the prior run's results.
@@ -1376,6 +1419,20 @@ export class WorkflowOrchestrator {
         journalKey = deriveAgentKey(prefixHash, prompt, opts);
         prefixHash = journalKey;
         if (!hadMiss && replay) {
+          // P6b: an ambiguous key (effect durably known to have completed,
+          // no result committed — see WorkflowAmbiguousEffectError) is
+          // checked BEFORE the cache-hit lookup below trivially misses it
+          // (there is no `result` entry, so `results.get` would fall
+          // through) and BEFORE the budget/agent-count gates, so a stale
+          // ambiguous key fails fast without spending either. This must
+          // never silently fall through to a live re-dispatch: that is
+          // exactly the bug this journal entry exists to prevent.
+          if (replay.ambiguousEffects.has(journalKey)) {
+            hadMiss = true;
+            return Promise.reject(
+              new WorkflowAmbiguousEffectError(runId, journalKey),
+            );
+          }
           const cached = replay.results.get(journalKey);
           if (cached !== undefined) {
             // Cache hit: surface dispatch + completion to the registry so
@@ -1404,15 +1461,9 @@ export class WorkflowOrchestrator {
             return Promise.resolve(cached.result as WorkflowAgentResult);
           }
         }
-        // First miss → suffix goes live; append a `started` marker so an
-        // interrupted run leaves a trace for the next resume.
+        // Assign identity in call order; commit intent only after admission.
         hadMiss = true;
         journalEntryId = String((journalAgentId += 1));
-        journal
-          .append({ type: 'started', key: journalKey, agentId: journalEntryId })
-          .catch((e) =>
-            debugLogger.warn(`journal started-append failed: ${e}`),
-          );
       }
 
       // P5 R3 (wenshao #7): budget gate runs BEFORE `agentCount += 1`
@@ -1472,7 +1523,9 @@ export class WorkflowOrchestrator {
         debugLogger.warn('emitter.agentDispatched threw:', e);
       }
       return limiter
-        .run(() => {
+        .run(async () => {
+          if (journalError) throw journalError;
+          signal?.throwIfAborted();
           // P5 R1 (Critical #2): re-check the gate at slot-acquire time so
           // queued thunks see budget updates from already-completed in-
           // flight dispatches. Without this, the entry gate above is
@@ -1492,7 +1545,25 @@ export class WorkflowOrchestrator {
               budget.spent(),
             );
           }
-          return this.dispatch(prompt, opts);
+          if (journal && journalKey !== undefined) {
+            await persist({ type: 'started', key: journalKey, agentId: journalEntryId! });
+          }
+          signal?.throwIfAborted();
+          const result = await this.dispatch(prompt, opts);
+          // P6b: commit "the effect ran" durably and separately from "the
+          // result is known" — this is the entry that lets a future resume
+          // tell "effect never ran" (started-only, safe to re-dispatch)
+          // apart from "effect ran, result lost" (must not re-dispatch).
+          // Deliberately NOT wrapped together with the result persist below:
+          // if the process dies between these two awaits, that is precisely
+          // the window this entry exists to make legible on the next load.
+          if (journal && journalKey !== undefined) {
+            await persist({ type: 'effect_complete', key: journalKey, agentId: journalEntryId! });
+          }
+          if (journal && journalKey !== undefined) {
+            await persist({ type: 'result', key: journalKey, agentId: journalEntryId!, result });
+          }
+          return result;
         })
         .then(
           (result) => {
@@ -1500,23 +1571,6 @@ export class WorkflowOrchestrator {
               emitter?.agentCompleted?.(label);
             } catch (e) {
               debugLogger.warn('emitter.agentCompleted threw:', e);
-            }
-            // P6: append the live result to the journal so a later resume
-            // serves it from cache. Only JSON-serializable results are
-            // resumable; a non-serializable result is skipped (the next
-            // resume re-runs that dispatch live). Fire-and-forget — a
-            // journal write failure must not fail the dispatch.
-            if (journal && journalKey !== undefined) {
-              journal
-                .append({
-                  type: 'result',
-                  key: journalKey,
-                  agentId: journalEntryId ?? '',
-                  result,
-                })
-                .catch((e) =>
-                  debugLogger.warn(`journal result-append failed: ${e}`),
-                );
             }
             // P5: re-snapshot the budget after successful completion so the
             // registry sees the cumulative spent. The dispatch's onTokens
@@ -1610,6 +1664,9 @@ export class WorkflowOrchestrator {
     });
     try {
       const result = await sandbox.run(req.script);
+      // parallel() and user scripts may catch dispatch errors. Lost recovery
+      // evidence still prevents a successful run verdict.
+      if (journalError) throw journalError;
       return {
         runId,
         result,
