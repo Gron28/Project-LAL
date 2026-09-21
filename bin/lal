@@ -47,9 +47,17 @@ elif find "$CLI_ROOT/packages/core/src" "$CLI_ROOT/packages/cli/src" "$CLI_ROOT/
   -type f -newer "$CLI_BUNDLE" -print -quit | grep -q .; then
   bundle_stale=true
 fi
-if [ "$bundle_stale" = true ] && [ "${LAL_SKIP_CLI_BUILD:-0}" != "1" ]; then
-  echo "CLI sources changed; rebuilding the runtime bundle..." >&2
-  (cd "$CLI_ROOT" && npm run build && npm run bundle)
+if [ "$bundle_stale" = true ]; then
+  if [ "${LAL_SKIP_CLI_BUILD:-0}" != "1" ]; then
+    echo "CLI sources changed; rebuilding the runtime bundle..." >&2
+    (cd "$CLI_ROOT" && npm run build && npm run bundle)
+  else
+    # The caller opted out of the rebuild (e.g. a benchmark harness that
+    # launches this many times per batch and already built once). Do not
+    # pretend the bundle is fresh: say so loudly so a stale run is never
+    # mistaken for a clean one.
+    echo "WARNING: CLI runtime bundle is stale (LAL_SKIP_CLI_BUILD=1 set; skipping rebuild). Running $CLI_BUNDLE as-is; results may not reflect current apps/cli sources." >&2
+  fi
 fi
 
 # The development bundle command recreates apps/cli/dist and intentionally
