@@ -13,11 +13,16 @@
  * cached results for the longest UNCHANGED PREFIX of `agent()` calls — the
  * first call whose (rolling prefix + prompt + opts) hash diverges, or that
  * has no journaled result, runs live, and every call after it runs live
- * too. The exception is a key whose effect is known to have completed
- * (`effect_complete` with no matching `result`, the "crashed between effect
- * and result" window): resume refuses to blindly re-run that dispatch's
- * non-idempotent side effect and surfaces an explicit error instead — see
- * `ambiguousEffects` below and `WorkflowOrchestrator.run`.
+ * too. The exception is a key whose effect status cannot be trusted as
+ * "never ran": either it is known to have completed (`effect_complete` with
+ * no matching `result`, the "crashed between effect and result" window), or
+ * it is genuinely unknown whether it ran (`effect_unknown`, written when
+ * the dispatch itself rejected, or when the `effect_complete` write failed
+ * right after the effect resolved — e.g. a dropped backend connection or an
+ * ENOSPC on that one append, no crash required). Resume refuses to blindly
+ * re-run that dispatch's non-idempotent side effect in either case and
+ * surfaces an explicit error instead — see `ambiguousEffects` below and
+ * `WorkflowOrchestrator.run`.
  *
  * Key derivation (matches upstream `v2`): each dispatch's key is
  * `v2:sha256(prefixHash ‖ prompt ‖ canonicalOpts)`, where `prefixHash` is
@@ -72,6 +77,38 @@ export interface JournalEffectCompleteEntry {
   agentId: string;
 }
 
+/**
+ * Written when `this.dispatch(...)` itself REJECTS — i.e. there was no
+ * chance to write `effect_complete` because the orchestrator never observed
+ * a resolution to persist a fact about. This is deliberately NOT the same
+ * claim as `effect_complete` (which asserts the effect is KNOWN to have
+ * run): a rejected dispatch might have failed before touching the
+ * workspace, or it might have failed after an internal side effect (a
+ * write_file/shell tool call inside `subagent.execute`) already landed —
+ * e.g. a dropped backend connection after a tool call executed but before
+ * the model's turn (and hence the dispatch promise) resolved. The
+ * orchestrator cannot tell which happened, so it records the honest,
+ * weaker claim: "this key's effect status is UNKNOWN, not provably safe to
+ * re-run." Resume treats it exactly like `effect_complete` — refuse to
+ * blindly re-dispatch — because "unknown" must fail closed the same way
+ * "known to have run" does; the only difference is which claim is true.
+ *
+ * This is also written as a best-effort fallback when an `effect_complete`
+ * append itself fails (e.g. ENOSPC) right after the effect resolved: the
+ * orchestrator still has a live journal handle at that point and attempts
+ * one more write recording the same "unknown" status rather than recording
+ * nothing. See `WorkflowOrchestrator.run`'s `countedDispatch` for both call
+ * sites and the module doc on `persist` there for what happens when this
+ * write ALSO fails (an irreducible loss of durable evidence — the journal
+ * medium itself is unwritable, so nothing can be recorded, but the run
+ * still fails rather than reporting success).
+ */
+export interface JournalEffectUnknownEntry {
+  type: 'effect_unknown';
+  key: string;
+  agentId: string;
+}
+
 export interface JournalResultEntry {
   type: 'result';
   key: string;
@@ -82,7 +119,20 @@ export interface JournalResultEntry {
 export type JournalEntry =
   | JournalStartedEntry
   | JournalEffectCompleteEntry
+  | JournalEffectUnknownEntry
   | JournalResultEntry;
+
+/**
+ * Why a key lands in `ambiguousEffects` — surfaced only for honest error
+ * messaging (`WorkflowAmbiguousEffectError`); the resume-refusal DECISION
+ * itself never branches on this, both reasons are refused identically.
+ *   'effect-complete' — the effect is DURABLY KNOWN to have run to
+ *                        completion (an `effect_complete` entry landed).
+ *   'effect-unknown'  — the dispatch rejected (or the `effect_complete`
+ *                        write itself failed) and it is genuinely unknown
+ *                        whether the effect ran.
+ */
+export type AmbiguousEffectReason = 'effect-complete' | 'effect-unknown';
 
 /** Parsed journal: completed results + started-but-maybe-incomplete markers. */
 export interface JournalReplay {
@@ -91,15 +141,24 @@ export interface JournalReplay {
   /** key → all `started` entries seen (length > 1 ⇒ prior respawns). */
   started: Map<string, JournalStartedEntry[]>;
   /**
-   * Keys whose effect is known (via a durable `effect_complete` entry) to
-   * have run to completion, but which have no matching `result` — the
-   * ambiguous crash window. A key lands here only when a NEWER journal
-   * (written by orchestrator code that persists `effect_complete`) recorded
-   * that entry; older journals can never populate this set, because they
-   * never wrote it. Resume must refuse to silently re-dispatch these keys;
-   * see `WorkflowOrchestrator.run`'s `countedDispatch`.
+   * Keys whose effect status is NOT safe to treat as "never ran" — either
+   * because it is durably KNOWN to have run to completion
+   * (`effect_complete`, no matching `result`: the "crash after effect but
+   * before result" window), or because it is genuinely UNKNOWN whether it
+   * ran (`effect_unknown`: the dispatch rejected, or the `effect_complete`
+   * write itself failed, before the orchestrator could learn or record
+   * which). A key lands here only when a NEWER journal (written by
+   * orchestrator code that persists `effect_complete` / `effect_unknown`)
+   * recorded one of those entries; older journals can never populate this
+   * set, because they never wrote either. Resume must refuse to silently
+   * re-dispatch these keys; see `WorkflowOrchestrator.run`'s
+   * `countedDispatch`. `ambiguousEffectReasons` (below) carries WHICH of the
+   * two claims is true, for error-message honesty only — the refusal
+   * decision itself does not branch on it.
    */
   ambiguousEffects: Set<string>;
+  /** key → why it is in `ambiguousEffects` (see `AmbiguousEffectReason`). */
+  ambiguousEffectReasons: Map<string, AmbiguousEffectReason>;
 }
 
 /**
@@ -183,28 +242,36 @@ export function deriveArgsSeed(args: unknown): string {
  * Build the replay maps from a flat list of journal entries. `result`
  * entries win last-write; `started` entries accumulate (so a key started
  * N times surfaces N prior attempts for the respawn telemetry). A key with
- * an `effect_complete` entry and no later `result` lands in
- * `ambiguousEffects` — the effect ran but its outcome was never committed
- * (a `result` entry for the same key, if one follows in the log, resolves
- * the ambiguity: reconciliation is exactly "append the real result").
+ * an `effect_complete` OR `effect_unknown` entry and no later `result` lands
+ * in `ambiguousEffects` — the effect's outcome was never committed, whether
+ * because it definitely ran (`effect_complete`) or because that itself could
+ * not be determined (`effect_unknown`) — a `result` entry for the same key,
+ * if one follows in the log, resolves the ambiguity either way
+ * (reconciliation is exactly "append the real result").
  */
 export function buildReplay(entries: JournalEntry[]): JournalReplay {
   const results = new Map<string, JournalResultEntry>();
   const started = new Map<string, JournalStartedEntry[]>();
   const ambiguousEffects = new Set<string>();
+  const ambiguousEffectReasons = new Map<string, AmbiguousEffectReason>();
   for (const e of entries) {
     if (e.type === 'result') {
       results.set(e.key, e);
       ambiguousEffects.delete(e.key);
+      ambiguousEffectReasons.delete(e.key);
     } else if (e.type === 'started') {
       const list = started.get(e.key);
       if (list) list.push(e);
       else started.set(e.key, [e]);
     } else if (e.type === 'effect_complete') {
       ambiguousEffects.add(e.key);
+      ambiguousEffectReasons.set(e.key, 'effect-complete');
+    } else if (e.type === 'effect_unknown') {
+      ambiguousEffects.add(e.key);
+      ambiguousEffectReasons.set(e.key, 'effect-unknown');
     }
   }
-  return { results, started, ambiguousEffects };
+  return { results, started, ambiguousEffects, ambiguousEffectReasons };
 }
 
 /**
@@ -212,17 +279,17 @@ export function buildReplay(entries: JournalEntry[]): JournalReplay {
  * file (fresh run). The orchestrator awaits intent and result appends before
  * executing or publishing a dispatch, so recovery evidence is not optional.
  *
- * Backward compatibility: a journal written before `effect_complete` existed
- * contains only `started` / `result` entries. `buildReplay` never invents an
- * `effect_complete` it didn't see, so such a journal always replays with an
- * empty `ambiguousEffects` set — a `started`-without-`result` key from an old
- * journal is treated exactly as before this change: an ordinary cache miss
- * that the orchestrator safely re-dispatches. This is a real, known
- * limitation, not an oversight: an old journal cannot prove whether its
- * effect ran, because it was never instrumented to say so. The fix only
- * protects runs recorded by orchestrator code that writes
- * `effect_complete` — i.e. resumes of journals produced from this change
- * onward.
+ * Backward compatibility: a journal written before `effect_complete` (or,
+ * later, `effect_unknown`) existed contains only `started` / `result`
+ * entries. `buildReplay` never invents an entry type it didn't see, so such
+ * a journal always replays with an empty `ambiguousEffects` set — a
+ * `started`-without-`result` key from an old journal is treated exactly as
+ * before either change: an ordinary cache miss that the orchestrator safely
+ * re-dispatches. This is a real, known limitation, not an oversight: an old
+ * journal cannot prove whether its effect ran, or whether that was ever
+ * even knowable, because it was never instrumented to say so. Each fix only
+ * protects runs recorded by orchestrator code that writes the corresponding
+ * entry — i.e. resumes of journals produced from that change onward.
  */
 export class WorkflowJournal {
   constructor(readonly path: string) {}

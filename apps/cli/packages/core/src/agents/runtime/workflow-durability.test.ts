@@ -316,4 +316,244 @@ describe('workflow journal boundaries', () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  // ---------------------------------------------------------------------
+  // Gate 2 gap #2 (2026-09-21 incident): `this.dispatch` itself rejects
+  // AFTER an internal side effect already landed (e.g. a dropped backend
+  // connection after a tool call executed but before the turn resolved).
+  // Fixed via the `effect_unknown` journal entry — see workflow-journal.ts
+  // and workflow-orchestrator.ts's `countedDispatch`.
+  // ---------------------------------------------------------------------
+  it('records an honest "effect status unknown" marker and refuses re-dispatch when the dispatch itself rejects after its effect already ran (Gate 2 gap #2 — dirty backend failure)', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'workflow-durable-dirty-'),
+    );
+    try {
+      const counterFile = path.join(root, 'counter.json');
+      await fs.writeFile(counterFile, JSON.stringify({ count: 0 }));
+      // Models the 2026-09-21 incident: the effect (a real, durable,
+      // out-of-band mutation — not a mock call count) really runs, then
+      // the connection drops before the dispatch promise can resolve.
+      const bumpCounterThenDropConnection = async () => {
+        const current = JSON.parse(await fs.readFile(counterFile, 'utf8'));
+        current.count += 1;
+        await fs.writeFile(counterFile, JSON.stringify(current));
+        throw new Error(
+          'ECONNRESET: connection dropped after the effect ran, before the result could be reported',
+        );
+      };
+
+      const journalPath = path.join(root, 'journal.jsonl');
+      const journal = new WorkflowJournal(journalPath);
+      const args = { fixture: 'dirty-backend-failure' };
+
+      await expect(
+        new WorkflowOrchestrator(bumpCounterThenDropConnection).run({
+          script: 'return await agent("edit fixture");',
+          args,
+          journal,
+        }),
+      ).rejects.toThrow(/ECONNRESET/);
+
+      // The effect really ran, exactly once, before the rejection.
+      expect(JSON.parse(await fs.readFile(counterFile, 'utf8')).count).toBe(
+        1,
+      );
+
+      // The journal must hold an honest ambiguity marker for this key —
+      // NOT a bare `started`, which would be structurally identical to
+      // "never ran" (that identity IS the gap this closes). The reason is
+      // 'effect-unknown' (genuinely don't know), distinct from
+      // 'effect-complete' (durably know it ran) — both refuse resume
+      // identically, but the claim each records is different and true.
+      const key = deriveAgentKey(deriveArgsSeed(args), 'edit fixture', {});
+      const replay = await journal.load();
+      expect(replay.ambiguousEffects.has(key)).toBe(true);
+      expect(replay.ambiguousEffectReasons.get(key)).toBe('effect-unknown');
+      expect(replay.results.has(key)).toBe(false);
+
+      // Resume (a fresh journal handle over the same on-disk file, mirroring
+      // a real process restart) must refuse to blindly re-dispatch.
+      const resumeJournal = new WorkflowJournal(journalPath);
+      const resumeReplay = await resumeJournal.load();
+      const resumedDispatch = vi.fn(bumpCounterThenDropConnection);
+      await expect(
+        new WorkflowOrchestrator(resumedDispatch).run({
+          script: 'return await agent("edit fixture");',
+          args,
+          journal: resumeJournal,
+          resumeReplay,
+        }),
+      ).rejects.toThrow(/ambiguous|reconcil/i);
+
+      // The contract this closes: exactly one effect, never two.
+      expect(resumedDispatch).not.toHaveBeenCalled();
+      expect(JSON.parse(await fs.readFile(counterFile, 'utf8')).count).toBe(
+        1,
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // Gate 2 gap #1, transient case: the `effect_complete` append itself
+  // fails right after the effect ran (e.g. one ENOSPC blip), but the
+  // journal medium is still writable for a second, immediately-following
+  // write. The orchestrator's best-effort fallback (persist an
+  // `effect_unknown` marker) closes the gap for this case.
+  // ---------------------------------------------------------------------
+  it('falls back to an "effect status unknown" marker when the effect_complete write itself fails, closing Gate 2 gap #1 for a transient (non-sustained) journal fault', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'workflow-durable-fallback-'),
+    );
+    try {
+      const counterFile = path.join(root, 'counter.json');
+      await fs.writeFile(counterFile, JSON.stringify({ count: 0 }));
+      const bumpCounter = async () => {
+        const current = JSON.parse(await fs.readFile(counterFile, 'utf8'));
+        current.count += 1;
+        await fs.writeFile(counterFile, JSON.stringify(current));
+        return 'effect-done';
+      };
+
+      const journalPath = path.join(root, 'journal.jsonl');
+      const journal = new WorkflowJournal(journalPath);
+      const realAppend = journal.append.bind(journal);
+      // Fail ONLY the `effect_complete` append — a single transient write
+      // error, not a sustained full disk. The fallback `effect_unknown`
+      // write that immediately follows, on the SAME journal handle, must
+      // succeed.
+      let effectCompleteAttempts = 0;
+      vi.spyOn(journal, 'append').mockImplementation(async (entry) => {
+        if (entry.type === 'effect_complete') {
+          effectCompleteAttempts += 1;
+          throw new Error('ENOSPC: no space left on device');
+        }
+        return realAppend(entry);
+      });
+
+      const args = { fixture: 'effect-complete-write-fails' };
+      await expect(
+        new WorkflowOrchestrator(bumpCounter).run({
+          script: 'return await agent("edit fixture");',
+          args,
+          journal,
+        }),
+      ).rejects.toThrow(/journal.*ENOSPC/i);
+
+      expect(effectCompleteAttempts).toBe(1);
+      // The effect ran once, durably, before the journal write failed.
+      expect(JSON.parse(await fs.readFile(counterFile, 'utf8')).count).toBe(
+        1,
+      );
+
+      // The on-disk journal now holds the fallback `effect_unknown` marker
+      // for this key instead of a bare `started` — the gap is closed for
+      // this transient fault.
+      const key = deriveAgentKey(deriveArgsSeed(args), 'edit fixture', {});
+      const resumeJournal = new WorkflowJournal(journalPath);
+      const replay = await resumeJournal.load();
+      expect(replay.ambiguousEffects.has(key)).toBe(true);
+      expect(replay.ambiguousEffectReasons.get(key)).toBe('effect-unknown');
+
+      const resumedDispatch = vi.fn(bumpCounter);
+      await expect(
+        new WorkflowOrchestrator(resumedDispatch).run({
+          script: 'return await agent("edit fixture");',
+          args,
+          journal: resumeJournal,
+          resumeReplay: replay,
+        }),
+      ).rejects.toThrow(/ambiguous|reconcil/i);
+
+      expect(resumedDispatch).not.toHaveBeenCalled();
+      expect(JSON.parse(await fs.readFile(counterFile, 'utf8')).count).toBe(
+        1,
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // Gate 2 gap #1, sustained (irreducible) case: the journal medium itself
+  // is unwritable — every append from `effect_complete` onward fails, not
+  // just one. Nothing can be durably recorded: there is no channel left to
+  // persist the ambiguity through. This test documents that honestly —
+  // it asserts the KNOWN, IRREDUCIBLE limitation (a later resume, once the
+  // disk is healed, duplicates the effect) rather than a false claim of
+  // safety. What the fix still guarantees even here: the run itself never
+  // reports success (it rejects with the journal-write error), so the
+  // failure is never hidden.
+  // ---------------------------------------------------------------------
+  it('documents the irreducible residual of Gate 2 gap #1: a sustained (not transient) journal fault leaves nothing recordable, so a later resume still duplicates the effect — though the original run correctly never reports success', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'workflow-durable-irreducible-'),
+    );
+    try {
+      const counterFile = path.join(root, 'counter.json');
+      await fs.writeFile(counterFile, JSON.stringify({ count: 0 }));
+      const bumpCounter = async () => {
+        const current = JSON.parse(await fs.readFile(counterFile, 'utf8'));
+        current.count += 1;
+        await fs.writeFile(counterFile, JSON.stringify(current));
+        return 'effect-done';
+      };
+
+      const journalPath = path.join(root, 'journal.jsonl');
+      const journal = new WorkflowJournal(journalPath);
+      const realAppend = journal.append.bind(journal);
+      // A SUSTAINED fault — models a disk that is genuinely full, so both
+      // the `effect_complete` write AND the fallback `effect_unknown` write
+      // fail. Only `started` (written before the effect ran) lands.
+      vi.spyOn(journal, 'append').mockImplementation(async (entry) => {
+        if (entry.type === 'started') return realAppend(entry);
+        throw new Error('ENOSPC: no space left on device');
+      });
+
+      const args = { fixture: 'sustained-full-disk' };
+      await expect(
+        new WorkflowOrchestrator(bumpCounter).run({
+          script: 'return await agent("edit fixture");',
+          args,
+          journal,
+        }),
+      ).rejects.toThrow(/journal.*ENOSPC/i);
+
+      // The effect ran once, durably — the run correctly never reports
+      // success despite that (it rejects, above).
+      expect(JSON.parse(await fs.readFile(counterFile, 'utf8')).count).toBe(
+        1,
+      );
+
+      // Nothing could be recorded: on disk this key is `started`-only,
+      // structurally identical to "never ran". This IS the irreducible
+      // residual — no journal-side code can close it, because the journal
+      // itself refused every write attempted after the effect ran.
+      const key = deriveAgentKey(deriveArgsSeed(args), 'edit fixture', {});
+      const healedJournal = new WorkflowJournal(journalPath);
+      const replay = await healedJournal.load();
+      expect(replay.ambiguousEffects.has(key)).toBe(false);
+
+      // Once the disk is healed (a fresh, working journal handle over the
+      // same file — space freed), resume treats the key as an ordinary
+      // miss and duplicates the effect. Documented limitation, not a bug
+      // this worker's fix claims to have closed.
+      const resumedDispatch = vi.fn(bumpCounter);
+      const outcome = await new WorkflowOrchestrator(resumedDispatch).run({
+        script: 'return await agent("edit fixture");',
+        args,
+        journal: healedJournal,
+        resumeReplay: replay,
+      });
+      expect(outcome.result).toBe('effect-done');
+      expect(resumedDispatch).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(await fs.readFile(counterFile, 'utf8')).count).toBe(
+        2,
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });

@@ -18,7 +18,12 @@ import type {
 import { WorkflowBudgetExceededError } from './workflow-budget.js';
 import { resolveStallMs, runStallResilient } from './workflow-stall.js';
 import { deriveAgentKey, deriveArgsSeed } from './workflow-journal.js';
-import type { WorkflowJournal, JournalReplay, JournalEntry } from './workflow-journal.js';
+import type {
+  WorkflowJournal,
+  JournalReplay,
+  JournalEntry,
+  AmbiguousEffectReason,
+} from './workflow-journal.js';
 import {
   WORKFLOW_SUBAGENT_SYSTEM_PROMPT,
   WORKFLOW_SUBAGENT_SYSTEM_PROMPT_WITH_SCHEMA,
@@ -202,18 +207,30 @@ export class WorkflowExecutionError extends Error {
 }
 
 /**
- * Thrown on resume when a journal key's effect is known to have completed
- * (`effect_complete` persisted, no matching `result`) — the process crashed
- * in the narrow window between the dispatch's side effect finishing and its
- * result being committed (ACCEPTANCE.md's "crash after effect but before
- * result"). The side effect is arbitrary `write_file`/`shell` activity
- * inside `subagent.execute` with no idempotency key, so re-dispatching would
- * silently repeat it. Per ACCEPTANCE.md ("do not promise global
+ * Thrown on resume when a journal key's effect status cannot be trusted as
+ * "never ran". Two distinct, honestly-labeled cases both refuse identically
+ * (see `AmbiguousEffectReason` in workflow-journal.ts):
+ *
+ *  - `'effect-complete'`: the effect is KNOWN to have completed
+ *    (`effect_complete` persisted, no matching `result`) — the process
+ *    crashed in the narrow window between the dispatch's side effect
+ *    finishing and its result being committed (ACCEPTANCE.md's "crash after
+ *    effect but before result").
+ *  - `'effect-unknown'`: the dispatch itself rejected (or the
+ *    `effect_complete` write failed right after the effect resolved), so it
+ *    is genuinely UNKNOWN whether the effect ran — e.g. a dropped backend
+ *    connection after an internal tool call already executed but before the
+ *    dispatch promise resolved (the 2026-09-21 incident), or an ENOSPC on
+ *    the `effect_complete` append itself. No crash is required for either.
+ *
+ * The side effect is arbitrary `write_file`/`shell` activity inside
+ * `subagent.execute` with no idempotency key, so re-dispatching would risk
+ * silently repeating it. Per ACCEPTANCE.md ("do not promise global
  * exactly-once execution ... a decision when its result cannot be
- * established"), resume does not guess: it surfaces this truthful
- * non-complete outcome instead of a false `complete` or a silent duplicate
- * effect. Recovery requires reconciliation: inspect the workspace (or
- * whatever the effect touched) to judge whether it already landed, then
+ * established"), resume does not guess in either case: it surfaces this
+ * truthful non-complete outcome instead of a false `complete` or a silent
+ * duplicate effect. Recovery requires reconciliation: inspect the workspace
+ * (or whatever the effect touched) to judge whether it already landed, then
  * either append a `result` entry for this key directly to the journal (so
  * the next resume replays it) or start a fresh run accepting the risk that
  * the effect repeats.
@@ -223,14 +240,23 @@ export class WorkflowAmbiguousEffectError extends Error {
   constructor(
     readonly runId: string,
     readonly journalKey: string,
+    readonly reason: AmbiguousEffectReason = 'effect-complete',
   ) {
     super(
-      `Workflow run ${runId}: a prior attempt's side effect for dispatch ` +
-        `${journalKey} completed but its result was never committed ` +
-        `(crash between effect and result-commit). Refusing to blindly ` +
-        `re-dispatch a non-idempotent effect — reconcile manually (inspect ` +
-        `the workspace, then append a result for this journal key, or ` +
-        `start a fresh run) before resuming.`,
+      reason === 'effect-unknown'
+        ? `Workflow run ${runId}: a prior attempt's dispatch ${journalKey} ` +
+            `failed (or lost its journal write) in a way that makes it ` +
+            `impossible to tell whether its side effect already ran. ` +
+            `Refusing to blindly re-dispatch a possibly-already-run ` +
+            `non-idempotent effect — reconcile manually (inspect the ` +
+            `workspace, then append a result for this journal key, or ` +
+            `start a fresh run) before resuming.`
+        : `Workflow run ${runId}: a prior attempt's side effect for dispatch ` +
+            `${journalKey} completed but its result was never committed ` +
+            `(crash between effect and result-commit). Refusing to blindly ` +
+            `re-dispatch a non-idempotent effect — reconcile manually (inspect ` +
+            `the workspace, then append a result for this journal key, or ` +
+            `start a fresh run) before resuming.`,
     );
   }
 }
@@ -1397,6 +1423,36 @@ export class WorkflowOrchestrator {
         throw journalError;
       }
     };
+    // P6c: best-effort fallback used at two call sites in `countedDispatch`
+    // below — (1) `this.dispatch` itself rejects, and (2) the
+    // `effect_complete` append fails right after `this.dispatch` resolved.
+    // Both leave the orchestrator unable to prove the effect never ran, so
+    // both attempt to persist the honest, weaker `effect_unknown` claim
+    // rather than leaving the on-disk journal `started`-only (structurally
+    // identical to "never ran" — the exact Gate 2 gap this closes). This is
+    // genuinely best-effort: if the journal medium itself is unwritable
+    // (e.g. a disk that is actually full, not just one transient failed
+    // write), this second append fails too and NOTHING can be durably
+    // recorded — that residual window is irreducible, because there is no
+    // channel left to record it through. Either way this never swallows
+    // the failure into an apparent success: the caller's own error (the
+    // dispatch rejection, or the `effect_complete` write failure) still
+    // propagates immediately after this resolves, and `journalError` — set
+    // by `persist` above on ANY append failure, including this one — latches
+    // the run-wide gate (`if (journalError) throw journalError` below) so
+    // no LATER dispatch in this run is allowed to proceed either.
+    const persistEffectUnknownBestEffort = async (
+      key: string,
+      agentId: string,
+    ) => {
+      try {
+        await persist({ type: 'effect_unknown', key, agentId });
+      } catch {
+        // Nothing further can be attempted. `journalError` is already set;
+        // swallow here so the CALLER's original error (not this fallback's)
+        // is what propagates from the call site below.
+      }
+    };
     // Seed the chain with the run's `args` so a resume with different args
     // produces a disjoint key space (every dispatch misses → re-runs live)
     // rather than silently replaying the prior run's results.
@@ -1430,7 +1486,11 @@ export class WorkflowOrchestrator {
           if (replay.ambiguousEffects.has(journalKey)) {
             hadMiss = true;
             return Promise.reject(
-              new WorkflowAmbiguousEffectError(runId, journalKey),
+              new WorkflowAmbiguousEffectError(
+                runId,
+                journalKey,
+                replay.ambiguousEffectReasons.get(journalKey),
+              ),
             );
           }
           const cached = replay.results.get(journalKey);
@@ -1549,7 +1609,31 @@ export class WorkflowOrchestrator {
             await persist({ type: 'started', key: journalKey, agentId: journalEntryId! });
           }
           signal?.throwIfAborted();
-          const result = await this.dispatch(prompt, opts);
+          let result: WorkflowAgentResult;
+          try {
+            result = await this.dispatch(prompt, opts);
+          } catch (dispatchError) {
+            // P6c (Gate 2 gap #2 — 2026-09-21 incident): `this.dispatch`
+            // rejected. There is no way to know whether its internal side
+            // effect (an arbitrary write_file/shell call inside
+            // `subagent.execute`) already landed before the rejection — a
+            // dropped backend connection can fail the dispatch AFTER a tool
+            // call executed but BEFORE the turn (and hence this promise)
+            // resolves. The journal is still writable here (this failure is
+            // in `this.dispatch`, not in `journal.append`), so record the
+            // honest ambiguity rather than leaving `started` as the only
+            // entry — a bare `started` is what makes case (2) collapse to
+            // "never ran" and duplicate the effect on resume. See
+            // `persistEffectUnknownBestEffort` above for what happens if
+            // this write ALSO fails.
+            if (journal && journalKey !== undefined) {
+              await persistEffectUnknownBestEffort(
+                journalKey,
+                journalEntryId!,
+              );
+            }
+            throw dispatchError;
+          }
           // P6b: commit "the effect ran" durably and separately from "the
           // result is known" — this is the entry that lets a future resume
           // tell "effect never ran" (started-only, safe to re-dispatch)
@@ -1558,7 +1642,33 @@ export class WorkflowOrchestrator {
           // if the process dies between these two awaits, that is precisely
           // the window this entry exists to make legible on the next load.
           if (journal && journalKey !== undefined) {
-            await persist({ type: 'effect_complete', key: journalKey, agentId: journalEntryId! });
+            try {
+              await persist({
+                type: 'effect_complete',
+                key: journalKey,
+                agentId: journalEntryId!,
+              });
+            } catch (effectCompleteError) {
+              // P6c (Gate 2 gap #1): the effect ran (`this.dispatch`
+              // resolved) but recording that fact failed — e.g. ENOSPC on
+              // this one append, no crash anywhere. `persist` above has
+              // already latched `journalError` so no later dispatch in this
+              // run proceeds. Attempt ONE more write of the weaker
+              // `effect_unknown` claim on the SAME journal handle: if the
+              // failure was transient (this specific append, not the medium
+              // itself) this still closes the gap; if the medium is truly
+              // unwritable this second attempt fails too and NOTHING can be
+              // durably recorded — that residual case is irreducible (see
+              // `persistEffectUnknownBestEffort`'s comment above and the
+              // module-level accounting of this in the PR description).
+              // Either way this dispatch's own failure — not a false
+              // success — is what propagates next.
+              await persistEffectUnknownBestEffort(
+                journalKey,
+                journalEntryId!,
+              );
+              throw effectCompleteError;
+            }
           }
           if (journal && journalKey !== undefined) {
             await persist({ type: 'result', key: journalKey, agentId: journalEntryId!, result });
