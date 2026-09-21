@@ -145,6 +145,35 @@ function readToken() {
   return null;
 }
 
+/**
+ * The gateway used to default to a hardcoded port (8770) that no longer
+ * matches this host's actual serving port (project-lal.service on 3130).
+ * That mismatch made a plain connection-refused failure look identical to a
+ * model failure in the harness output, because nothing distinguished "could
+ * not reach the gateway" from "the model failed the task".
+ *
+ * Resolve the gateway the same way `bin/lal` does: prefer an explicit
+ * override, then fall back to the locally paired client-host file under
+ * LAL_HOME (default `~/.lal/client-host`, written by the installer/pairing
+ * flow), then a documented last-resort default. Precedence is: CLI
+ * `--gateway` > `LAL_GATEWAY_URL` env > `$LAL_HOME/client-host` file >
+ * hardcoded fallback.
+ */
+const FALLBACK_GATEWAY_URL = 'http://127.0.0.1:3130';
+
+function resolveGatewayUrl() {
+  const cliValue = readArg('gateway', undefined);
+  if (cliValue !== undefined) return { url: String(cliValue).replace(/\/$/, ''), source: 'cli:--gateway' };
+  if (process.env.LAL_GATEWAY_URL) return { url: process.env.LAL_GATEWAY_URL.replace(/\/$/, ''), source: 'env:LAL_GATEWAY_URL' };
+  const lalHome = process.env.LAL_HOME || path.join(os.homedir(), '.lal');
+  const hostFile = path.join(lalHome, 'client-host');
+  try {
+    const value = fs.readFileSync(hostFile, 'utf8').trim();
+    if (value) return { url: value.replace(/\/$/, ''), source: `file:${hostFile}` };
+  } catch {}
+  return { url: FALLBACK_GATEWAY_URL, source: 'fallback:default' };
+}
+
 function runSync(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? REPO,
@@ -757,6 +786,14 @@ async function environmentFingerprint(options) {
       : null,
     backend: { llama, ollama },
     gpu: { commands: gpu, sysfs: gpuSysfs },
+    // Gateway identity and both preflight probes are recorded explicitly so a
+    // connection failure (fetch-level `.error`, e.g. ECONNREFUSED) can never
+    // be confused with a model/task failure further down the report: see the
+    // preflight check in main() that reads these two fields before scheduling
+    // any run.
+    gateway: options.gateway,
+    gatewaySource: options.gatewaySource,
+    settingsEndpoint: settings,
     modelsEndpoint: models,
   };
 }
@@ -984,12 +1021,14 @@ export async function main() {
       throw new Error(`The reference arm would start ${referenceSessions} billable frontier sessions of up to ${timeoutSeconds}s each (${Math.round((referenceSessions * timeoutSeconds) / 60)} model-minutes worst case). Re-run with --yes to confirm.`);
     }
   }
+  const gatewayResolution = resolveGatewayUrl();
   const options = {
     referenceEnabled: referenceSessions > 0,
     referenceBin: String(readArg('reference-bin', process.env.LAL_REFERENCE_BIN || 'claude')),
     referenceModel: String(readArg('reference-model', DEFAULT_REFERENCE_MODEL)),
     model: String(readArg('model', DEFAULT_MODEL)),
-    gateway: String(readArg('gateway', process.env.LAL_GATEWAY_URL || 'http://127.0.0.1:8770')).replace(/\/$/, ''),
+    gateway: gatewayResolution.url,
+    gatewaySource: gatewayResolution.source,
     lal: String(readArg('lal', process.env.LAL_BIN || path.join(REPO, 'bin/lal'))),
     timeoutSeconds,
     token: readToken(),
@@ -1000,6 +1039,8 @@ export async function main() {
     process.stdout.write(`${JSON.stringify({
       dryRun: true,
       maxReferenceRuns: cap,
+      gateway: options.gateway,
+      gatewaySource: options.gatewaySource,
       engines: Object.fromEntries(engines.map((engine) => [engine, { ...ENGINES[engine], model: ENGINES[engine].kind === 'reference' ? options.referenceModel : options.model }])),
       referenceSessions,
       schedule: entries,
@@ -1017,6 +1058,22 @@ export async function main() {
   const floors = loadFloors();
   const environment = await environmentFingerprint(options);
   fs.writeFileSync(path.join(root, 'environment.json'), `${JSON.stringify(environment, null, 2)}\n`);
+  // A refused/unreachable gateway must never be spent as a "model failure":
+  // both preflight probes erroring at the fetch layer (ECONNREFUSED/timeout,
+  // not just a non-200 status) means nothing downstream -- including every
+  // scheduled harness run -- can be trusted, so fail loudly before spending
+  // any run budget instead of letting it surface later as a generic score-0.
+  const settingsFailed = Boolean(environment.settingsEndpoint?.error);
+  const modelsFailed = Boolean(environment.modelsEndpoint?.error);
+  if (settingsFailed && modelsFailed) {
+    throw new Error(
+      `Gateway connection failure, not a model failure: could not reach ${options.gateway} `
+      + `(resolved via ${options.gatewaySource}). settings probe: ${environment.settingsEndpoint.error}; `
+      + `models probe: ${environment.modelsEndpoint.error}. Check that project-lal.service is running `
+      + `(\`systemctl --user status project-lal.service\`) and that --gateway / LAL_GATEWAY_URL / `
+      + `$LAL_HOME/client-host point at the right port.`,
+    );
+  }
   const entries = schedule(selectedFixtures, engines, runs);
   fs.writeFileSync(path.join(root, 'schedule.json'), `${JSON.stringify(entries, null, 2)}\n`);
   const results = [];
