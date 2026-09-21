@@ -47,7 +47,7 @@ remain stable for the historical ledger; they do not dictate delivery order.
 
 | Milestone | User-visible result | Delivery position | Completion evidence |
 |---|---|---|---|
-| M1. One useful task end to end | A requested project change works, is verified, and leaves an inspectable result | **Next**; implementation exists, current acceptance pending | Identified installed build; one independently checked task; one controlled failure/recovery exercise |
+| M1. One useful task end to end | A requested project change works, is verified, and leaves an inspectable result | **Done 2026-09-21** on the installed `0.1.0-lal.43` build; see the ledger | Fixture `04-context-selection` passed all hard gates including the hidden grader; recovery exercised at four fault boundaries with real SIGKILL evidence |
 | M2. Dependable everyday CLI | Several ordinary tasks complete with predictable effort and recoverable failures | After M1; fix one failure class per increment | Execution contract and live task campaign on the named route/platform |
 | M3. Consistent task controls | Ordinary and coordinated work share understandable controls and history | After the affected native path works; integrate alongside M2 where needed | Approval/cancel/resume parity, live replacement checks, history/rollback checks |
 | M4. Installable offline product | A second installation performs the supported work and recovers offline | After the relevant M2 path; discover platform constraints now | Fresh install, offline tasks, recovery, upgrade/rollback, explicit support matrix |
@@ -209,7 +209,14 @@ findings and their limits are retained in the acceptance reference.
 
 ## Immediate work and definition of done
 
-**Next work item: M1, select and reproduce one existing-project task.** Preserve
+**Next work item: M2, build the task set from actual use and observed failures.**
+M1 closed on 2026-09-21 at n=1, which demonstrates the increment without
+qualifying all tasks. Fixture `01-window-boundary-bug` is the first M2 repair
+target: 4 of 4 runs produced a byte-identical defective signature, and a prompt
+intervention was tested and rolled back, so treat it as a code-shape blind spot
+rather than an instruction-following gap. The superseded M1 instruction follows.
+
+**Superseded: M1, select and reproduce one existing-project task.** Preserve
 its build/input, inspect a recent failure if available, then trace the installed
 CLI path within a declared budget. Use the result to choose the first repair.
 The side-effect crash window remains a mandatory recovery check, not an assumed

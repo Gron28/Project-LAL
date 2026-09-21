@@ -395,3 +395,64 @@ Implementer: Codex. Scope: gates 1/4 measurement integrity.
   instead changed so the pre-existing opt-out warns loudly on stderr when it
   skips a stale bundle, closing a silent-stale-run hole on the install/update
   paths where that variable is actually used.
+
+## 2026-09-21 — rejected: stated-requirements verification prompt (M1 blocker)
+
+- Hypothesis: the three M1 failures were a prompting gap. `prompts.ts` already
+  says "Verify (Tests): verify the changes using the project's testing
+  procedures", which the model DID satisfy — public tests, typecheck and build
+  passed in every failing run. Nothing instructed it to independently check
+  behaviour stated in the REQUEST that the project's own tests do not cover.
+- Change tested: one added bullet, "Verify (Stated requirements)", naming no
+  fixture, function, error type or input — deliberately general, and the same
+  principle applied to the hive recipe earlier today (executable evidence per
+  criterion rather than assertion).
+- Result: **no effect.** Fixture `01-window-boundary-bug` failed again with a
+  byte-identical signature `summarizeWindow(samples, { now, windowMs })` and the
+  identical assertion (`RangeError` expected, `TypeError` received from
+  destructuring null). Score 55, wall 736 s, `completed: false`. That is 4 of 4
+  runs producing the same defect, so the failure is near-deterministic and one
+  run suffices to reject the hypothesis.
+- Action: **rolled back**, per the plan's improvement rule that a change without
+  matched held-out benefit is reverted rather than kept on plausibility. The
+  prompt bullet and all 15 regenerated snapshots were restored; the snapshot
+  diff is empty and `prompts.ts` is back to its prior content.
+- Interpretation, offered as reasoning not fact: the model writes the idiomatic
+  JS signature, and the requirement conflicts with that idiom rather than with
+  the model's diligence. Parameter destructuring throws before any validation
+  body can run, so no amount of "remember to validate" reaches the defect —
+  the guard has to move out of the signature. This suggests the blocker is a
+  code-shape blind spot, not an instruction-following gap, and further prompt
+  work on this failure is unlikely to pay.
+- Unchanged: the path itself remains healthy in every run (0 tool errors,
+  0 workspace violations, correct gateway, honest grading).
+
+## 2026-09-21 — M1 satisfied: one useful task end to end, plus recovery
+
+- Build: installed CLI `~/.local/bin/lal` -> `apps/cli/dist/cli.js`, version
+  `0.1.0-lal.43`; model `qwen35-9b-fable-heretic` via the host on 127.0.0.1:3130.
+- Task: fixture `04-context-selection` through the installed CLI in a disposable
+  workspace, graded by a hidden check the model never sees.
+  Artifact: `web/.data/codex-harness-ab/2026-09-21T09-20-24-080Z`.
+- Result: **PASS**, score 90, wall 377 s, 19 tool calls. All six hard gates green
+  including `hiddenCorrectness`. 0 tool errors, 0 workspace violations, 0 scratch
+  writes; exactly one file changed (`src/features/reporting/label.mjs`).
+  Sole scoring deduction: `verificationAfterFinalEdit: 0` — the model did not
+  re-run checks after its final edit, which is a real (if non-blocking) gap.
+- Recovery: `scripts/m1-recovery-exercise.mjs`, all five scenarios pass with real
+  SIGKILL evidence and durable per-key counters — before_intent and after_intent
+  redispatched, the after-effect-before-result window **refused**, after_result
+  reused from cache, baseline replayed from cache; every effect count exactly 1.
+- **Stated limitations.** This is one task on one fixture at n=1. Per the plan,
+  one success demonstrates the increment; it does not qualify all tasks and
+  certifies no platform. Fixture `01-window-boundary-bug` remains a known
+  failing case: 4 of 4 runs produced a byte-identical defective signature, and a
+  prompt intervention was tested and rejected (recorded above). The residual
+  crash window during the `effect_complete` append is undetectable by design.
+  The SIGINT snapshot grace wait is a known open gap (see the shutdown commit).
+- Elapsed GPU for this milestone's live work tonight: roughly 18 minutes across
+  the rejected-prompt run and this one, inside the owner's declared budget while
+  the machine remained in use for other work.
+- Status: **M1 done.** Next per the plan is M2 — build a task set from actual
+  use and observed failures, keeping development fixtures separate from
+  held-out acceptance tasks. `01` is the natural first M2 repair target.
