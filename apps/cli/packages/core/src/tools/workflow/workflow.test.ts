@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +13,8 @@ import type { Config } from '../../config/config.js';
 import { ToolNames, ToolDisplayNames } from '../tool-names.js';
 import { WorkflowRunRegistry } from '../../agents/workflow-run-registry.js';
 import { Storage } from '../../config/storage.js';
+import { evaluatePermissionFlow } from '../../core/permissionFlow.js';
+import type { ToolInfoConfirmationDetails } from '../tools.js';
 
 function fakeConfig(): Config {
   return {} as unknown as Config;
@@ -91,9 +93,11 @@ describe('WorkflowTool', () => {
     const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wf-tool-'));
     try {
       const registry = new WorkflowRunRegistry();
+      const storage = new Storage(projectDir);
+      vi.spyOn(storage, 'getProjectDir').mockReturnValue(path.join(projectDir, 'runtime'));
       const config = {
         getWorkflowRunRegistry: () => registry,
-        storage: new Storage(projectDir),
+        storage,
       } as unknown as Config;
       // The scriptPath MUST live under a saved-workflow dir (the resolver
       // refuses paths outside it — the #2 path-traversal / symlink guard).
@@ -113,6 +117,11 @@ describe('WorkflowTool', () => {
       const entries = registry.list();
       expect(entries).toHaveLength(1);
       expect(entries[0].scriptPath).toBe(scriptPath);
+      const journal = await fs.readFile(storage.getWorkflowRunJournalPath(entries[0].runId), 'utf8');
+      // `effect_complete` is appended after the dispatch's side effect lands
+      // and before its result commits, so a crash in that window is detectable
+      // rather than silently re-run. A clean run records all three in order.
+      expect(journal.trim().split('\n').map((line) => JSON.parse(line).type)).toEqual(['started', 'effect_complete', 'result']);
     } finally {
       await fs.rm(projectDir, { recursive: true, force: true });
     }
@@ -743,5 +752,96 @@ describe('WorkflowTool', () => {
         process.env['QWEN_CODE_MAX_TOKENS_PER_WORKFLOW'] = originalEnv;
       }
     }
+  });
+
+  // ── Gate 2 "Approval allow/deny" authority contract ─────────────────────
+  //
+  // WorkflowTool's `getDefaultPermission()` returns 'ask' unconditionally
+  // (see workflow.ts), which is wired ONCE at the tool boundary through the
+  // shared `evaluatePermissionFlow` — the same mechanism edit.ts/write-
+  // file.ts/shell.ts use. Once that single approval is granted, every
+  // agent()/parallel()/pipeline() dispatch the script makes runs headlessly
+  // through AgentHeadless, which has no confirmation call sites of its own.
+  // That is not automatically an authority violation — a user approving
+  // "run this workflow" can legitimately be authorizing its declared
+  // sub-steps, the same way approving a shell command authorizes every
+  // command it internally runs. What Gate 2 actually requires is that the
+  // single decision be (a) durable and correctly composed with deny rules,
+  // (b) not reusable to authorize an unrelated later call, and (c) shown to
+  // the user truthfully — i.e. the scope the user is agreeing to must
+  // actually be visible in the prompt they are shown, not just a length.
+  describe('approval scope and authority (Gate 2)', () => {
+    it('getDefaultPermission is "ask" per invocation, independently — no cross-call memoization that could let one approval leak into another', async () => {
+      const tool = new WorkflowTool(fakeConfig());
+      const invocationA = tool.build({ script: 'return 1' });
+      const invocationB = tool.build({
+        script: 'return await agent("an unrelated later action")',
+      });
+      // Each is evaluated fresh; neither invocation object carries state
+      // from a prior approval that could downgrade this to 'allow'.
+      expect(await invocationA.getDefaultPermission()).toBe('ask');
+      expect(await invocationB.getDefaultPermission()).toBe('ask');
+    });
+
+    it('a PermissionManager deny rule composes with the tool default to deny — the decision that reaches the scheduler is authoritative', async () => {
+      const tool = new WorkflowTool(fakeConfig());
+      const invocation = tool.build({ script: 'return 1' });
+      const pm = {
+        hasRelevantRules: () => true,
+        evaluate: async () => 'deny' as const,
+        hasMatchingAskRule: () => false,
+        findMatchingDenyRule: () => 'deny workflow',
+      };
+      const config = {
+        getPermissionManager: () => pm,
+        getTargetDir: () => '/proj',
+      } as unknown as Config;
+      const result = await evaluatePermissionFlow(
+        config,
+        invocation,
+        ToolNames.WORKFLOW,
+        invocation.params as unknown as Record<string, unknown>,
+      );
+      expect(result.finalPermission).toBe('deny');
+      expect(result.denyMessage).toMatch(/denied/i);
+    });
+
+    // This is the part of Worker C's claim that IS a genuine, fixable gap:
+    // the base ToolInvocation's generic 'info' confirmation (which
+    // WorkflowToolInvocation inherited, unmodified) falls back to
+    // `getDescription()` — "Run a workflow script (523 chars)" — which
+    // tells the user nothing about what they are actually authorizing.
+    // A single scoped decision cannot be meaningfully "scoped" if the scope
+    // was never shown. This pins the truthful-disclosure fix: the prompt
+    // must name the declared steps and state plainly that no further
+    // per-step confirmation follows.
+    it('getConfirmationDetails discloses the declared agent() steps and the no-further-confirmation scope, not just a length', async () => {
+      const tool = new WorkflowTool(fakeConfig());
+      const invocation = tool.build({
+        script: `
+          const a = await agent("first step");
+          const b = await agent("second step");
+          return { a, b };
+        `,
+      });
+      const details = (await invocation.getConfirmationDetails(
+        new AbortController().signal,
+      )) as ToolInfoConfirmationDetails;
+      expect(details.type).toBe('info');
+      expect(details.prompt).toContain('first step');
+      expect(details.prompt).toContain('second step');
+      expect(details.prompt).toMatch(/2 declared agent\(\) call/);
+      expect(details.prompt).toMatch(/no further per-step confirmation/i);
+    });
+
+    it('getConfirmationDetails names the saved-workflow file for scriptPath runs (content is read fresh at execute time, so the file name — not a stale preview — is the truthful disclosure)', async () => {
+      const tool = new WorkflowTool(fakeConfig());
+      const invocation = tool.build({ scriptPath: '/abs/deep-research.js' });
+      const details = (await invocation.getConfirmationDetails(
+        new AbortController().signal,
+      )) as ToolInfoConfirmationDetails;
+      expect(details.prompt).toContain('deep-research.js');
+      expect(details.prompt).toMatch(/no further per-step confirmation/i);
+    });
   });
 });

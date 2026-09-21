@@ -18,6 +18,8 @@ import {
   type ToolResult,
   type ToolResultDisplay,
   type ToolLocation,
+  type ToolCallConfirmationDetails,
+  type ToolInfoConfirmationDetails,
 } from '../tools.js';
 import type { ShellExecutionConfig } from '../../services/shellExecutionService.js';
 import { ToolNames, ToolDisplayNames } from '../tool-names.js';
@@ -187,6 +189,39 @@ class WorkflowToolInvocation extends BaseToolInvocation<
 
   override getDefaultPermission(): Promise<'ask'> {
     return Promise.resolve('ask');
+  }
+
+  /**
+   * ACCEPTANCE Gate 2 ("Approval allow/deny"): approval is wired ONCE at
+   * this tool boundary — `getDefaultPermission()` above returns 'ask',
+   * which flows through the shared `evaluatePermissionFlow`. Once granted,
+   * every `agent()` / `parallel()` / `pipeline()` dispatch the script makes
+   * runs headlessly (AgentHeadless has no confirmation call sites of its
+   * own) with no further per-step prompt. That is an intentional design —
+   * a script tool, like shell.ts, legitimately authorizes its whole
+   * declared body with one decision — PROVIDED the scope of that one
+   * decision is actually shown to the user. Without this override, the
+   * base class's generic 'info' fallback uses `getDescription()`, which is
+   * only "Run a workflow script (523 chars)" — that discloses nothing
+   * about what is being authorized. This override makes the one decision
+   * truthfully scoped: it names the declared `agent()` steps (or the saved
+   * file, whose contents are read fresh at execute time) and states
+   * plainly that no further per-step confirmation follows, so the user's
+   * single "yes" is an informed one.
+   */
+  override getConfirmationDetails(
+    _abortSignal: AbortSignal,
+  ): Promise<ToolCallConfirmationDetails> {
+    const details: ToolInfoConfirmationDetails = {
+      type: 'info',
+      title: 'Confirm Workflow',
+      prompt: buildWorkflowConfirmationPrompt(this.params),
+      onConfirm: async () => {
+        // No-op: persistence is handled by coreToolScheduler via PM rules,
+        // matching BaseToolInvocation's default confirmation contract.
+      },
+    };
+    return Promise.resolve(details);
   }
 
   override async execute(
@@ -483,6 +518,48 @@ class WorkflowToolInvocation extends BaseToolInvocation<
       }
     }
   }
+}
+
+/**
+ * Gate 2 authority fix (see `getConfirmationDetails` above): build a
+ * truthful, bounded summary of what a single approval authorizes. Counts
+ * only top-level `agent(` call sites textually — a best-effort disclosure
+ * aid, not a re-implementation of the sandbox parser — so a script that
+ * fans out via `parallel()`/`pipeline()` is called out explicitly rather
+ * than under-reported as "0 steps".
+ */
+function buildWorkflowConfirmationPrompt(params: WorkflowParams): string {
+  const NOTICE =
+    'Approving runs this workflow to completion: every agent() / parallel() / ' +
+    'pipeline() dispatch it makes executes automatically, with no further ' +
+    'per-step confirmation.';
+
+  if (params.scriptPath && params.script === undefined) {
+    const name = path.basename(params.scriptPath);
+    return (
+      `Run saved workflow "${name}". Its file is read fresh at run time, ` +
+      `so review the file directly for its exact steps. ${NOTICE}`
+    );
+  }
+
+  const script = params.script ?? '';
+  const agentCallCount = (script.match(/\bagent\s*\(/g) ?? []).length;
+  const usesFanOut = /\b(parallel|pipeline)\s*\(/.test(script);
+  const stepsPhrase =
+    agentCallCount > 0
+      ? `${agentCallCount} declared agent() call${agentCallCount === 1 ? '' : 's'}` +
+        (usesFanOut ? ' plus parallel()/pipeline() fan-out' : '')
+      : usesFanOut
+        ? 'no direct agent() calls, but parallel()/pipeline() fan-out'
+        : 'no agent() calls';
+  const preview =
+    script.length > 400 ? `${script.slice(0, 400)}\n… (truncated)` : script;
+  return (
+    `Run a workflow script with ${stepsPhrase}. ${NOTICE}\n\n` +
+    '```js\n' +
+    preview +
+    '\n```'
+  );
 }
 
 /**
