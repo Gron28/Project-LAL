@@ -758,6 +758,33 @@ export async function main() {
     // This ensures MCP server subprocesses are properly terminated on exit
     registerCleanup(() => config.shutdown());
 
+    // `Config.shutdown()` above aborts the background-task, monitor, and
+    // shell registries, but NOT the native Workflow tool's run registry —
+    // so a killed process (SIGINT/SIGTERM) never triggers an in-flight
+    // `/hive <objective>` (or any Workflow tool call)'s own AbortSignal.
+    // In-session Esc-to-cancel and the Background Tasks dialog already
+    // reach this same cancellation by calling
+    // `WorkflowRunRegistry.cancel()` / `abortAll()`; mirror that here so a
+    // killed process gives the workflow's own `finally` block — which
+    // writes the resumable run snapshot (`workflow.ts`) — a real chance
+    // to run before exit, instead of never firing at all.
+    registerCleanup(async () => {
+      const workflowRegistry = config.getWorkflowRunRegistry?.();
+      if (!workflowRegistry?.hasRunningEntries()) {
+        return;
+      }
+      workflowRegistry.abortAll();
+      // `abortAll()` flips each entry's status synchronously, but the
+      // workflow's own catch/finally (which writes the snapshot) only
+      // unwinds once its in-flight dispatch actually observes the
+      // aborted signal — on a later microtask/macrotask tick. There is
+      // no handle back to that promise from here, so wait a short
+      // bounded grace window rather than 0ms; `runExitCleanup`'s own
+      // per-function timeout (2s) still caps the worst case if the
+      // dispatch never settles.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+
     startEarlyStartupPrefetches(config);
 
     const wasRaw = process.stdin.isRaw;
