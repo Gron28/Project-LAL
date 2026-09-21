@@ -2,33 +2,48 @@
  * Self-tests for scripts/m1-recovery-exercise.mjs.
  *
  * Runs entirely in-process, with NO subprocess spawning, NO model, and NO
- * GPU: `runEffect` (the "fake dispatch"/side-effect stub) is a plain
- * durable file counter, and `resumeAndReconcile` is exercised against
- * hand-built `replay` objects (the shape `buildReplay` produces) instead of
- * real crashed journals, so these tests are fast and deterministic.
+ * GPU. These tests pin four things independent of build state:
+ *   - the isolation guard (`assertDisposableWorkspace`)
+ *   - the durable, on-disk effect counter (`runEffect`/`readEffectCounts`)
+ *   - the sandboxed-script builder (`buildSequentialScript`)
+ *   - the journal-holding wrapper (`makeHoldingJournal`), exercised against
+ *     a small FAKE in-memory journal (NOT the real dist import) so these
+ *     tests do not depend on `apps/cli/packages/core/dist` being fresh
+ *   - the build-freshness guard itself (`checkBuildFreshness`), exercised
+ *     against synthetic temp source/dist trees with controlled mtimes
+ *
+ * One additional, ADAPTIVE integration test calls the real
+ * `checkBuildFreshness()` (default, real repo paths) and, only if it
+ * reports fresh, does a real `loadRuntimeModules()` + a tiny live smoke run
+ * against the actual compiled orchestrator; if the build is currently
+ * stale, that test SKIPS with an explicit reason instead of failing --
+ * exactly the "stale build, cannot judge" distinction the guard exists to
+ * make, applied to this test suite itself.
  *
  * Run with: node --test scripts/m1-recovery-exercise.test.mjs
  *
- * The real, process-killing exercise (the thing these unit tests do NOT
- * cover) is `node scripts/m1-recovery-exercise.mjs` itself.
+ * The full, real exercise (real SIGKILL, real compiled orchestrator, all
+ * five scenarios) is `node scripts/m1-recovery-exercise.mjs` itself.
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 
 import {
-  canonicalizeAgentOpts,
-  deriveAgentKey,
-  deriveArgsSeed,
-  buildReplay,
-  WorkflowJournalFile,
   assertDisposableWorkspace,
   runEffect,
   readEffectCounts,
-  resumeAndReconcile,
+  buildSequentialScript,
+  makeHoldingJournal,
+  checkBuildFreshness,
+  loadRuntimeModules,
+  StaleBuildError,
+  DISPATCHES,
+  ARGS_SEED,
 } from './m1-recovery-exercise.mjs';
 
 const WORKSPACE_PREFIX = 'lal-m1-recovery-';
@@ -41,120 +56,6 @@ async function withTempDir(fn) {
     await rm(dir, { recursive: true, force: true });
   }
 }
-
-// ---------------------------------------------------------------------------
-// Key derivation
-// ---------------------------------------------------------------------------
-
-test('canonicalizeAgentOpts: cosmetic fields (label) do not affect the projection', () => {
-  const a = canonicalizeAgentOpts({ model: 'm1', isolation: 'none', agentType: 'x', label: 'alpha' });
-  const b = canonicalizeAgentOpts({ model: 'm1', isolation: 'none', agentType: 'x', label: 'beta' });
-  assert.equal(a, b);
-});
-
-test('canonicalizeAgentOpts: dispatch-affecting fields (model) DO affect the projection', () => {
-  const a = canonicalizeAgentOpts({ model: 'm1', isolation: 'none', agentType: 'x' });
-  const b = canonicalizeAgentOpts({ model: 'm2', isolation: 'none', agentType: 'x' });
-  assert.notEqual(a, b);
-});
-
-test('canonicalizeAgentOpts: key order does not matter (sorted deep)', () => {
-  const a = canonicalizeAgentOpts({ model: 'm1', isolation: 'none' });
-  const b = canonicalizeAgentOpts({ isolation: 'none', model: 'm1' });
-  assert.equal(a, b);
-});
-
-test('deriveAgentKey: deterministic for identical inputs', () => {
-  const k1 = deriveAgentKey('seed', 'prompt-1', { model: 'm1' });
-  const k2 = deriveAgentKey('seed', 'prompt-1', { model: 'm1' });
-  assert.equal(k1, k2);
-  assert.match(k1, /^v2:[0-9a-f]{64}$/);
-});
-
-test('deriveAgentKey: different prompt -> different key', () => {
-  const k1 = deriveAgentKey('seed', 'prompt-1', { model: 'm1' });
-  const k2 = deriveAgentKey('seed', 'prompt-2', { model: 'm1' });
-  assert.notEqual(k1, k2);
-});
-
-test('deriveAgentKey: different prefix (upstream edit) -> different key (chain invalidation)', () => {
-  const k1 = deriveAgentKey('seed-a', 'prompt-1', { model: 'm1' });
-  const k2 = deriveAgentKey('seed-b', 'prompt-1', { model: 'm1' });
-  assert.notEqual(k1, k2);
-});
-
-test('deriveAgentKey: label difference alone does not change the key', () => {
-  const k1 = deriveAgentKey('seed', 'prompt-1', { model: 'm1', label: 'a' });
-  const k2 = deriveAgentKey('seed', 'prompt-1', { model: 'm1', label: 'b' });
-  assert.equal(k1, k2);
-});
-
-test('deriveArgsSeed: deterministic and sensitive to args', () => {
-  const s1 = deriveArgsSeed({ a: 1 });
-  const s2 = deriveArgsSeed({ a: 1 });
-  const s3 = deriveArgsSeed({ a: 2 });
-  assert.equal(s1, s2);
-  assert.notEqual(s1, s3);
-});
-
-// ---------------------------------------------------------------------------
-// buildReplay / journal semantics
-// ---------------------------------------------------------------------------
-
-test('buildReplay: started-only key is an ordinary miss (not ambiguous, no result)', () => {
-  const replay = buildReplay([{ type: 'started', key: 'k1', agentId: '1' }]);
-  assert.equal(replay.results.has('k1'), false);
-  assert.equal(replay.ambiguousEffects.has('k1'), false);
-  assert.equal(replay.started.get('k1').length, 1);
-});
-
-test('buildReplay: started + effect_complete + no result => ambiguous', () => {
-  const replay = buildReplay([
-    { type: 'started', key: 'k1', agentId: '1' },
-    { type: 'effect_complete', key: 'k1', agentId: '1' },
-  ]);
-  assert.equal(replay.ambiguousEffects.has('k1'), true);
-  assert.equal(replay.results.has('k1'), false);
-});
-
-test('buildReplay: started + effect_complete + result => fully recovered, NOT ambiguous', () => {
-  const replay = buildReplay([
-    { type: 'started', key: 'k1', agentId: '1' },
-    { type: 'effect_complete', key: 'k1', agentId: '1' },
-    { type: 'result', key: 'k1', agentId: '1', result: { ok: true } },
-  ]);
-  assert.equal(replay.ambiguousEffects.has('k1'), false);
-  assert.deepEqual(replay.results.get('k1').result, { ok: true });
-});
-
-test('buildReplay: an old journal (no effect_complete entries at all) never marks anything ambiguous', () => {
-  const replay = buildReplay([
-    { type: 'started', key: 'k1', agentId: '1' },
-    { type: 'started', key: 'k2', agentId: '2' },
-  ]);
-  assert.equal(replay.ambiguousEffects.size, 0);
-});
-
-test('WorkflowJournalFile: round-trips append -> load -> buildReplay, missing file loads empty', async () => {
-  await withTempDir(async (dir) => {
-    const journal = new WorkflowJournalFile(path.join(dir, 'nested', 'journal.jsonl'));
-    const emptyReplay = await journal.load();
-    assert.equal(emptyReplay.results.size, 0);
-
-    await journal.append({ type: 'started', key: 'k1', agentId: '1' });
-    await journal.append({ type: 'effect_complete', key: 'k1', agentId: '1' });
-    const midReplay = await journal.load();
-    assert.equal(midReplay.ambiguousEffects.has('k1'), true);
-
-    await journal.append({ type: 'result', key: 'k1', agentId: '1', result: 42 });
-    const finalReplay = await journal.load();
-    assert.equal(finalReplay.ambiguousEffects.has('k1'), false);
-    assert.equal(finalReplay.results.get('k1').result, 42);
-
-    const raw = await readFile(journal.path, 'utf8');
-    assert.equal(raw.split('\n').filter(Boolean).length, 3);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Isolation guard
@@ -171,12 +72,12 @@ test('assertDisposableWorkspace: refuses a path inside the repository', () => {
   assert.throws(() => assertDisposableWorkspace(path.join(process.cwd(), 'scripts')));
 });
 
-test('assertDisposableWorkspace: refuses a path under ~/.lal', () => {
+test("assertDisposableWorkspace: refuses a path under ~/.lal", () => {
   assert.throws(() => assertDisposableWorkspace(path.join(os.homedir(), '.lal')));
   assert.throws(() => assertDisposableWorkspace(path.join(os.homedir(), '.lal', 'runtime.db')));
 });
 
-test('assertDisposableWorkspace: refuses a tmp-root path lacking this exercise\'s own prefix', () => {
+test("assertDisposableWorkspace: refuses a tmp-root path lacking this exercise's own prefix", () => {
   assert.throws(() => assertDisposableWorkspace(path.join(os.tmpdir(), 'some-other-tool-dir')));
 });
 
@@ -185,17 +86,17 @@ test('assertDisposableWorkspace: refuses a path outside the OS temp root entirel
 });
 
 // ---------------------------------------------------------------------------
-// runEffect: the durable, on-disk, per-key action counter
+// runEffect: the durable, on-disk, per-dispatch action counter
 // ---------------------------------------------------------------------------
 
-test('runEffect: increments a durable per-key counter; independent keys do not interfere', async () => {
+test('runEffect: increments a durable per-id counter; independent ids do not interfere', async () => {
   await withTempDir(async (dir) => {
     const effectsFile = path.join(dir, 'effects.json');
-    assert.equal(await runEffect(effectsFile, 'k1'), 1);
-    assert.equal(await runEffect(effectsFile, 'k1'), 2);
-    assert.equal(await runEffect(effectsFile, 'k2'), 1);
+    assert.equal(await runEffect(effectsFile, 'alpha'), 1);
+    assert.equal(await runEffect(effectsFile, 'alpha'), 2);
+    assert.equal(await runEffect(effectsFile, 'beta'), 1);
     const counts = await readEffectCounts(effectsFile);
-    assert.deepEqual(counts, { k1: 2, k2: 1 });
+    assert.deepEqual(counts, { alpha: 2, beta: 1 });
   });
 });
 
@@ -207,136 +108,248 @@ test('readEffectCounts: returns {} when the file does not exist yet', async () =
 });
 
 // ---------------------------------------------------------------------------
-// resumeAndReconcile: the Gate-2 contract itself, exercised with a stub
-// dispatch (runEffect) and hand-built replay objects standing in for a
-// crashed journal's parsed state, per boundary.
+// buildSequentialScript: the real sandboxed workflow script text
 // ---------------------------------------------------------------------------
 
-test('resumeAndReconcile: a totally empty journal (crash before any intent) redispatches everything exactly once', async () => {
-  await withTempDir(async (dir) => {
-    const journal = new WorkflowJournalFile(path.join(dir, 'journal.jsonl'));
-    const effectsFile = path.join(dir, 'effects.json');
-    const replay = buildReplay([]);
-    const outcome = await resumeAndReconcile(replay, { journal, effectsFile });
-    assert.equal(outcome.aborted, false);
-    assert.equal(outcome.perIndex.length, 3);
-    for (const entry of outcome.perIndex) assert.equal(entry.outcome, 'redispatched');
-    const counts = await readEffectCounts(effectsFile);
-    for (const entry of outcome.perIndex) assert.equal(counts[entry.key], 1);
+test('buildSequentialScript: emits one `agent()` call per dispatch, in order, JSON-safe', () => {
+  const script = buildSequentialScript(DISPATCHES);
+  assert.equal(script.split('await agent(').length - 1, DISPATCHES.length);
+  const alphaIdx = script.indexOf(DISPATCHES[0].prompt);
+  const betaIdx = script.indexOf(DISPATCHES[1].prompt);
+  const gammaIdx = script.indexOf(DISPATCHES[2].prompt);
+  assert.ok(alphaIdx >= 0 && betaIdx > alphaIdx && gammaIdx > betaIdx, 'dispatches must appear in order');
+  assert.match(script, /return \[r0, r1, r2\];/);
+});
+
+test('buildSequentialScript: opts never include `isolation` (the sandbox rejects any value other than worktree/remote)', () => {
+  for (const d of DISPATCHES) {
+    assert.equal('isolation' in d.opts, false, `dispatch ${d.id} must omit isolation entirely`);
+  }
+});
+
+test('buildSequentialScript: ARGS_SEED is a plain JSON-serializable object (required for deriveArgsSeed)', () => {
+  assert.doesNotThrow(() => JSON.stringify(ARGS_SEED));
+});
+
+// ---------------------------------------------------------------------------
+// makeHoldingJournal: the seam used to pause the REAL orchestrator mid-run,
+// exercised here against a small fake in-memory journal so it needs no
+// build at all.
+// ---------------------------------------------------------------------------
+
+function makeFakeJournal() {
+  const entries = [];
+  return {
+    entries,
+    load: async () => ({ entries: entries.slice() }),
+    append: async (entry) => {
+      entries.push(entry);
+    },
+  };
+}
+
+test('makeHoldingJournal: phase "pre" fires BEFORE the real append for the matching occurrence', async () => {
+  const fake = makeFakeJournal();
+  const holdLog = [];
+  const holding = makeHoldingJournal(fake, 'pre', 'started', 1, async (phase, type, index, key) => {
+    holdLog.push({ phase, type, index, key, entriesAtHoldTime: fake.entries.length });
+  });
+  await holding.append({ type: 'started', key: 'k0', agentId: '1' });
+  await holding.append({ type: 'started', key: 'k1', agentId: '2' });
+  assert.equal(holdLog.length, 1);
+  assert.equal(holdLog[0].index, 1);
+  assert.equal(holdLog[0].key, 'k1');
+  // "pre" must fire before the real append lands -- at hold time only k0's
+  // entry should exist yet.
+  assert.equal(holdLog[0].entriesAtHoldTime, 1);
+  assert.equal(fake.entries.length, 2);
+});
+
+test('makeHoldingJournal: phase "post" fires AFTER the real append for the matching occurrence', async () => {
+  const fake = makeFakeJournal();
+  const holdLog = [];
+  const holding = makeHoldingJournal(fake, 'post', 'effect_complete', 0, async (phase, type, index, key) => {
+    holdLog.push({ phase, type, index, key, entriesAtHoldTime: fake.entries.length });
+  });
+  await holding.append({ type: 'started', key: 'k0', agentId: '1' });
+  await holding.append({ type: 'effect_complete', key: 'k0', agentId: '1' });
+  assert.equal(holdLog.length, 1);
+  // "post" fires after the real write -- both entries must already be durable.
+  assert.equal(holdLog[0].entriesAtHoldTime, 2);
+});
+
+test('makeHoldingJournal: occurrence counting is per-type, not global', async () => {
+  const fake = makeFakeJournal();
+  const holdLog = [];
+  // Hold on the 2nd 'started' (index 1), which is the 4th append overall
+  // (started, effect_complete, result, started).
+  const holding = makeHoldingJournal(fake, 'post', 'started', 1, async (phase, type, index) => {
+    holdLog.push({ phase, type, index });
+  });
+  await holding.append({ type: 'started', key: 'k0', agentId: '1' });
+  await holding.append({ type: 'effect_complete', key: 'k0', agentId: '1' });
+  await holding.append({ type: 'result', key: 'k0', agentId: '1', result: 1 });
+  await holding.append({ type: 'started', key: 'k1', agentId: '2' });
+  assert.equal(holdLog.length, 1, 'must not fire on the first started (occurrence 0) or any other type');
+});
+
+test('makeHoldingJournal: never fires when holdPhase is "none"', async () => {
+  const fake = makeFakeJournal();
+  let fired = false;
+  const holding = makeHoldingJournal(fake, 'none', 'started', 0, async () => {
+    fired = true;
+  });
+  await holding.append({ type: 'started', key: 'k0', agentId: '1' });
+  assert.equal(fired, false);
+});
+
+test('makeHoldingJournal: load() delegates to the wrapped real journal', async () => {
+  const fake = makeFakeJournal();
+  await fake.append({ type: 'started', key: 'k0', agentId: '1' });
+  const holding = makeHoldingJournal(fake, 'none', 'started', 0, async () => {});
+  const replay = await holding.load();
+  assert.equal(replay.entries.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// checkBuildFreshness: the guard itself, against synthetic temp trees so
+// this does not depend on -- or get invalidated by -- the real repo's
+// current build state.
+// ---------------------------------------------------------------------------
+
+async function withSyntheticTrees(fn) {
+  const root = await mkdtemp(path.join(os.tmpdir(), WORKSPACE_PREFIX));
+  try {
+    const srcDir = path.join(root, 'src');
+    const distDir = path.join(root, 'dist');
+    fs.mkdirSync(srcDir, { recursive: true });
+    fs.mkdirSync(distDir, { recursive: true });
+    await fn({ root, srcDir, distDir });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+function writeWithMtime(filePath, contents, mtimeMs) {
+  fs.writeFileSync(filePath, contents);
+  const t = mtimeMs / 1000;
+  fs.utimesSync(filePath, t, t);
+}
+
+test('checkBuildFreshness: reports fresh when every dist file is newer than its src', async () => {
+  await withSyntheticTrees(async ({ srcDir, distDir }) => {
+    const now = Date.now();
+    writeWithMtime(path.join(srcDir, 'a.ts'), 'export const a = 1;', now);
+    writeWithMtime(path.join(distDir, 'a.js'), 'export const a = 1;', now + 60_000);
+    const result = checkBuildFreshness(srcDir, distDir, []);
+    assert.equal(result.fresh, true);
+    assert.deepEqual(result.staleFiles, []);
+    assert.equal(result.filesChecked, 1);
   });
 });
 
-test('resumeAndReconcile: a `started`-only key (after-intent crash) is redispatched exactly once, never twice', async () => {
-  await withTempDir(async (dir) => {
-    const journal = new WorkflowJournalFile(path.join(dir, 'journal.jsonl'));
-    const effectsFile = path.join(dir, 'effects.json');
+test('checkBuildFreshness: reports stale (source-newer-than-build) when src changed after the dist build', async () => {
+  await withSyntheticTrees(async ({ srcDir, distDir }) => {
+    const now = Date.now();
+    writeWithMtime(path.join(distDir, 'a.js'), 'export const a = 1;', now);
+    writeWithMtime(path.join(srcDir, 'a.ts'), 'export const a = 2;', now + 60_000);
+    const result = checkBuildFreshness(srcDir, distDir, []);
+    assert.equal(result.fresh, false);
+    assert.equal(result.staleFiles.length, 1);
+    assert.equal(result.staleFiles[0].reason, 'source-newer-than-build');
+    assert.ok(result.staleFiles[0].staleBySeconds >= 59);
+  });
+});
 
-    // Discover dispatch #2's real key the same way the module does, by
-    // replaying an empty-then-partial resume once to read off the key.
-    const probe = await resumeAndReconcile(buildReplay([]), {
-      journal: new WorkflowJournalFile(path.join(dir, 'probe.jsonl')),
-      effectsFile: path.join(dir, 'probe-effects.json'),
+test('checkBuildFreshness: reports missing-compiled-artifact when the dist file does not exist at all', async () => {
+  await withSyntheticTrees(async ({ srcDir, distDir }) => {
+    writeWithMtime(path.join(srcDir, 'a.ts'), 'export const a = 1;', Date.now());
+    const result = checkBuildFreshness(srcDir, distDir, []);
+    assert.equal(result.fresh, false);
+    assert.equal(result.staleFiles[0].reason, 'missing-compiled-artifact');
+  });
+});
+
+test('checkBuildFreshness: excludes .test.ts and .d.ts files from the scan', async () => {
+  await withSyntheticTrees(async ({ srcDir, distDir }) => {
+    const now = Date.now();
+    writeWithMtime(path.join(srcDir, 'a.ts'), 'export const a = 1;', now);
+    writeWithMtime(path.join(distDir, 'a.js'), 'export const a = 1;', now + 60_000);
+    // A newer .test.ts / .d.ts with NO dist counterpart at all must not
+    // affect freshness -- if it were scanned, it would report
+    // missing-compiled-artifact and this test would fail.
+    writeWithMtime(path.join(srcDir, 'a.test.ts'), 'test', now + 120_000);
+    writeWithMtime(path.join(srcDir, 'a.d.ts'), 'declare', now + 120_000);
+    const result = checkBuildFreshness(srcDir, distDir, []);
+    assert.equal(result.fresh, true);
+    assert.equal(result.filesChecked, 1);
+  });
+});
+
+test('checkBuildFreshness: extraFiles (cross-directory dependencies) are checked the same way', async () => {
+  await withSyntheticTrees(async ({ root, srcDir, distDir }) => {
+    const now = Date.now();
+    writeWithMtime(path.join(srcDir, 'a.ts'), 'export const a = 1;', now);
+    writeWithMtime(path.join(distDir, 'a.js'), 'export const a = 1;', now + 60_000);
+    const otherSrcDir = path.join(root, 'other-src');
+    fs.mkdirSync(otherSrcDir, { recursive: true });
+    const extraFile = path.join(otherSrcDir, 'utils.ts');
+    // No dist counterpart at all under distDir/../other-src for this one --
+    // checkBuildFreshness resolves extraFiles relative to
+    // apps/cli/packages/core/src -> dist, not the synthetic srcDir/distDir
+    // passed in, so instead just confirm it is INCLUDED in the scan (not
+    // silently dropped) by pointing it at a real, known-fresh pair.
+    writeWithMtime(extraFile, 'x', now);
+    const result = checkBuildFreshness(srcDir, distDir, [extraFile]);
+    assert.equal(result.filesChecked, 2, 'extraFiles must be counted alongside the directory scan');
+  });
+});
+
+test('checkBuildFreshness: a missing src directory is reported as a dirError, not a false "fresh"', async () => {
+  const result = checkBuildFreshness('/definitely/does/not/exist/lal-m1', '/also/missing', []);
+  assert.equal(result.fresh, false);
+  assert.ok(result.dirError);
+});
+
+// ---------------------------------------------------------------------------
+// Adaptive integration test: exercises the REAL loadRuntimeModules() against
+// the REAL repo paths, but only asserts behavior when the build is
+// currently fresh -- otherwise it explicitly skips, which is itself the
+// stale-vs-violated distinction under test, applied one level up.
+// ---------------------------------------------------------------------------
+
+test('loadRuntimeModules: against the real repo, either a fresh-build live smoke run or an explicit stale-build skip -- never a silent pass or a false failure', async (t) => {
+  const freshness = checkBuildFreshness();
+  if (!freshness.fresh) {
+    t.skip(
+      `apps/cli/packages/core/dist is currently stale relative to its src ` +
+        `(${freshness.staleFiles.map((f) => path.basename(f.srcPath)).join(', ')}); ` +
+        `loadRuntimeModules() is expected to throw StaleBuildError, which is exactly ` +
+        `what node scripts/m1-recovery-exercise.mjs observes right now (exit code 3). ` +
+        `Skipping the live smoke run rather than failing or silently passing.`,
+    );
+    // Still verify the REFUSAL behavior itself, since that much does not
+    // depend on a fresh build.
+    await assert.rejects(() => loadRuntimeModules(), StaleBuildError);
+    return;
+  }
+  const modules = await loadRuntimeModules();
+  assert.equal(typeof modules.WorkflowJournal, 'function');
+  assert.equal(typeof modules.WorkflowOrchestrator, 'function');
+  assert.equal(typeof modules.deriveAgentKey, 'function');
+  assert.equal(typeof modules.deriveArgsSeed, 'function');
+
+  await withTempDir(async (dir) => {
+    const journalPath = path.join(dir, 'journal.jsonl');
+    const journal = new modules.WorkflowJournal(journalPath);
+    const orchestrator = new modules.WorkflowOrchestrator(async () => 'live-smoke-ok');
+    const outcome = await orchestrator.run({
+      script: 'return await agent("smoke test");',
+      args: { smoke: true },
+      journal,
     });
-    const key1 = probe.perIndex[1].key;
-
-    const replay = buildReplay([{ type: 'started', key: key1, agentId: '2' }]);
-    const outcome = await resumeAndReconcile(replay, { journal, effectsFile });
-    assert.equal(outcome.aborted, false);
-    assert.equal(outcome.perIndex[0].outcome, 'redispatched'); // index0 had nothing journaled either
-    assert.equal(outcome.perIndex[1].outcome, 'redispatched');
-    const counts = await readEffectCounts(effectsFile);
-    assert.equal(counts[key1], 1, 'the effect must run exactly once, not zero and not twice');
-  });
-});
-
-test('resumeAndReconcile: an ambiguous key (effect_complete, no result) is REFUSED and the effect is never re-run', async () => {
-  await withTempDir(async (dir) => {
-    const journal = new WorkflowJournalFile(path.join(dir, 'journal.jsonl'));
-    const effectsFile = path.join(dir, 'effects.json');
-
-    const probe = await resumeAndReconcile(buildReplay([]), {
-      journal: new WorkflowJournalFile(path.join(dir, 'probe.jsonl')),
-      effectsFile: path.join(dir, 'probe-effects.json'),
-    });
-    const key0 = probe.perIndex[0].key;
-    const key1 = probe.perIndex[1].key;
-
-    // Simulate: index0 fully committed pre-crash (its effect already ran
-    // once, durably recorded), index1's effect ran and effect_complete was
-    // durably written, but the process died before `result`.
-    await runEffect(effectsFile, key0);
-    await runEffect(effectsFile, key1);
-    const replay = buildReplay([
-      { type: 'started', key: key0, agentId: '1' },
-      { type: 'effect_complete', key: key0, agentId: '1' },
-      { type: 'result', key: key0, agentId: '1', result: { ok: true } },
-      { type: 'started', key: key1, agentId: '2' },
-      { type: 'effect_complete', key: key1, agentId: '2' },
-    ]);
-
-    const outcome = await resumeAndReconcile(replay, { journal, effectsFile });
-    assert.equal(outcome.aborted, true);
-    assert.equal(outcome.abortedAtIndex, 1);
-    assert.equal(outcome.perIndex[0].outcome, 'recovered-cached');
-    assert.equal(outcome.perIndex[1].outcome, 'refused-ambiguous');
-    assert.equal(outcome.perIndex.length, 2, 'index2 must never be reached once index1 is refused');
-
-    const counts = await readEffectCounts(effectsFile);
-    assert.equal(counts[key0], 1, 'committed work must not be re-executed');
-    assert.equal(counts[key1], 1, 'the ambiguous effect must NOT be re-run — this is the safety contract under test');
-
-    // The journal itself must not have gained a spurious result for the
-    // refused key either.
-    const finalReplay = await journal.load();
-    assert.equal(finalReplay.results.has(key1), false);
-  });
-});
-
-test('resumeAndReconcile: a fully-committed key (crash after result) is reused from cache with zero re-execution', async () => {
-  await withTempDir(async (dir) => {
-    const journal = new WorkflowJournalFile(path.join(dir, 'journal.jsonl'));
-    const effectsFile = path.join(dir, 'effects.json');
-
-    const probe = await resumeAndReconcile(buildReplay([]), {
-      journal: new WorkflowJournalFile(path.join(dir, 'probe.jsonl')),
-      effectsFile: path.join(dir, 'probe-effects.json'),
-    });
-    const key0 = probe.perIndex[0].key;
-
-    await runEffect(effectsFile, key0);
-    const replay = buildReplay([
-      { type: 'started', key: key0, agentId: '1' },
-      { type: 'effect_complete', key: key0, agentId: '1' },
-      { type: 'result', key: key0, agentId: '1', result: { ok: true, prompt: 'x' } },
-    ]);
-
-    const outcome = await resumeAndReconcile(replay, { journal, effectsFile });
-    assert.equal(outcome.perIndex[0].outcome, 'recovered-cached');
-    // The other two dispatches were never journaled, so they are ordinary
-    // unfinished intents and get redispatched.
-    assert.equal(outcome.perIndex[1].outcome, 'redispatched');
-    assert.equal(outcome.perIndex[2].outcome, 'redispatched');
-
-    const counts = await readEffectCounts(effectsFile);
-    assert.equal(counts[key0], 1, 'a cached result must never cause the effect to run again');
-  });
-});
-
-test('resumeAndReconcile: a fully-complete journal for all three dispatches replays entirely from cache (idempotent resume)', async () => {
-  await withTempDir(async (dir) => {
-    const journal = new WorkflowJournalFile(path.join(dir, 'journal.jsonl'));
-    const effectsFile = path.join(dir, 'effects.json');
-
-    const probe = await resumeAndReconcile(buildReplay([]), { journal, effectsFile });
-    assert.equal(probe.perIndex.every((e) => e.outcome === 'redispatched'), true);
-    const counts1 = await readEffectCounts(effectsFile);
-    for (const entry of probe.perIndex) assert.equal(counts1[entry.key], 1);
-
-    const replay = await journal.load();
-    const second = await resumeAndReconcile(replay, { journal, effectsFile });
-    assert.equal(second.aborted, false);
-    for (const entry of second.perIndex) assert.equal(entry.outcome, 'recovered-cached');
-    const counts2 = await readEffectCounts(effectsFile);
-    assert.deepEqual(counts2, counts1, 'resuming an already-complete run must not execute any effect again');
+    assert.equal(outcome.result, 'live-smoke-ok');
+    const raw = await readFile(journalPath, 'utf8');
+    assert.ok(raw.includes('"type":"result"'));
   });
 });

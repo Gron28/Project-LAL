@@ -3,40 +3,48 @@
  *
  * Runs entirely in-process, with NO subprocess spawning, NO model, and NO
  * GPU, and touches no real disk space beyond a few small files under a
- * disposable mkdtemp workspace: `FaultInjectedJournal` manufactures its
- * ENOSPC error at the call boundary and never calls into `fs` when it
- * fires, and the backend-failure stubs are plain async functions.
+ * disposable mkdtemp workspace: `makeFaultInjectedJournal` manufactures its
+ * ENOSPC error at the call boundary and never calls into the real journal
+ * when it fires, and the backend-failure stubs are plain async functions.
+ * These tests pin the fault-injection primitives, the script builders, and
+ * the build-freshness guard against SYNTHETIC state (a fake in-memory
+ * journal, synthetic temp source/dist trees) so they do not depend on
+ * `apps/cli/packages/core/dist` being fresh.
+ *
+ * One additional, ADAPTIVE integration test calls the real
+ * `checkBuildFreshness()` (default, real repo paths) and, only if it
+ * reports fresh, runs one real scenario end to end against the actual
+ * compiled orchestrator; if the build is currently stale, that test SKIPS
+ * with an explicit reason instead of failing.
  *
  * Run with: node --test scripts/m2-fault-recovery.test.mjs
  *
- * The full exercise (all six fault scenarios, with the honest FAIL exit
- * code for the two reproduced Gate 2 gaps) is
- * `node scripts/m2-fault-recovery.mjs` itself — these unit tests instead
- * pin the primitives and `runChain`'s documented behavior in isolation so a
- * regression in the port (not the scenarios) is caught quickly.
+ * The full exercise (all six fault scenarios, against the real compiled
+ * runtime, with the honest exit code for any reproduced Gate 2 gap) is
+ * `node scripts/m2-fault-recovery.mjs` itself.
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import fs from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
 
 import {
-  canonicalizeAgentOpts,
-  deriveAgentKey,
-  deriveArgsSeed,
-  buildReplay,
-  WorkflowJournalFile,
-  FaultInjectedJournal,
   assertDisposableWorkspace,
   runEffect,
   readEffectCounts,
-  withTimeout,
-  runChain,
+  makeFaultInjectedJournal,
   makeCleanDispatch,
   makeCleanBackendFailure,
   makeDirtyBackendFailure,
+  withTimeout,
+  buildSequentialScript,
+  buildTryCatchScript,
+  checkBuildFreshness,
+  loadRuntimeModules,
+  StaleBuildError,
 } from './m2-fault-recovery.mjs';
 
 const WORKSPACE_PREFIX = 'lal-m2-fault-recovery-';
@@ -50,84 +58,27 @@ async function withTempDir(fn) {
   }
 }
 
-const OPTS = { model: 'stub-model-v1', isolation: 'none', agentType: 'exercise' };
-
-// ---------------------------------------------------------------------------
-// Ported primitives (same properties m1-recovery-exercise.test.mjs pins,
-// re-verified here for THIS file's independent port).
-// ---------------------------------------------------------------------------
-
-test('canonicalizeAgentOpts: only schema/model/isolation/agentType are projected', () => {
-  const a = canonicalizeAgentOpts({ ...OPTS, label: 'a', stallMs: 1, phase: 'x' });
-  const b = canonicalizeAgentOpts({ ...OPTS, label: 'b', stallMs: 2, phase: 'y' });
-  assert.equal(a, b, 'cosmetic/operational fields must not affect the projection');
-});
-
-test('canonicalizeAgentOpts: model difference changes the projection', () => {
-  const a = canonicalizeAgentOpts({ ...OPTS, model: 'm1' });
-  const b = canonicalizeAgentOpts({ ...OPTS, model: 'm2' });
-  assert.notEqual(a, b);
-});
-
-test('deriveAgentKey: deterministic; different prompt or prefix changes the key', () => {
-  const k1 = deriveAgentKey('seed', 'p1', OPTS);
-  const k2 = deriveAgentKey('seed', 'p1', OPTS);
-  assert.equal(k1, k2);
-  assert.match(k1, /^v2:[0-9a-f]{64}$/);
-  assert.notEqual(k1, deriveAgentKey('seed', 'p2', OPTS));
-  assert.notEqual(k1, deriveAgentKey('seed-other', 'p1', OPTS));
-});
-
-test('deriveArgsSeed: deterministic and sensitive to args (the changed-inputs mechanism)', () => {
-  const s1 = deriveArgsSeed({ run: 'A' });
-  const s2 = deriveArgsSeed({ run: 'A' });
-  const s3 = deriveArgsSeed({ run: 'B' });
-  assert.equal(s1, s2);
-  assert.notEqual(s1, s3);
-});
-
-test('buildReplay: started + effect_complete + no result => ambiguous; + result => not ambiguous', () => {
-  const ambiguous = buildReplay([
-    { type: 'started', key: 'k1', agentId: '1' },
-    { type: 'effect_complete', key: 'k1', agentId: '1' },
-  ]);
-  assert.equal(ambiguous.ambiguousEffects.has('k1'), true);
-
-  const resolved = buildReplay([
-    { type: 'started', key: 'k1', agentId: '1' },
-    { type: 'effect_complete', key: 'k1', agentId: '1' },
-    { type: 'result', key: 'k1', agentId: '1', result: 42 },
-  ]);
-  assert.equal(resolved.ambiguousEffects.has('k1'), false);
-  assert.equal(resolved.results.get('k1').result, 42);
-});
-
-test('buildReplay: started-only (no effect_complete) is an ordinary miss, never ambiguous', () => {
-  const replay = buildReplay([{ type: 'started', key: 'k1', agentId: '1' }]);
-  assert.equal(replay.ambiguousEffects.has('k1'), false);
-  assert.equal(replay.results.has('k1'), false);
-});
+const OPTS = { model: 'stub-model-v1', agentType: 'exercise' };
 
 // ---------------------------------------------------------------------------
 // Isolation guard
 // ---------------------------------------------------------------------------
 
-test('assertDisposableWorkspace: accepts a real mkdtemp path with our prefix', async () => {
+test('assertDisposableWorkspace: accepts a real mkdtemp path under the OS temp root with our prefix', async () => {
   await withTempDir(async (dir) => {
     assert.doesNotThrow(() => assertDisposableWorkspace(dir));
   });
 });
 
-test('assertDisposableWorkspace: refuses the repository root and subpaths', () => {
+test('assertDisposableWorkspace: refuses a path inside the repository', () => {
   assert.throws(() => assertDisposableWorkspace(process.cwd()));
-  assert.throws(() => assertDisposableWorkspace(path.join(process.cwd(), 'scripts')));
 });
 
-test('assertDisposableWorkspace: refuses ~/.lal', () => {
+test("assertDisposableWorkspace: refuses a path under ~/.lal", () => {
   assert.throws(() => assertDisposableWorkspace(path.join(os.homedir(), '.lal')));
 });
 
-test('assertDisposableWorkspace: refuses a tmp-root path lacking this exercise\'s own prefix', () => {
+test("assertDisposableWorkspace: refuses a tmp-root path lacking this exercise's own prefix", () => {
   assert.throws(() => assertDisposableWorkspace(path.join(os.tmpdir(), 'some-other-tool-dir')));
 });
 
@@ -136,10 +87,10 @@ test('assertDisposableWorkspace: refuses a path outside the OS temp root entirel
 });
 
 // ---------------------------------------------------------------------------
-// runEffect: durable, on-disk, per-key action counter
+// runEffect: the durable, on-disk, per-dispatch action counter
 // ---------------------------------------------------------------------------
 
-test('runEffect: increments a durable per-key counter; independent keys do not interfere', async () => {
+test('runEffect: increments a durable per-id counter; independent ids do not interfere', async () => {
   await withTempDir(async (dir) => {
     const effectsFile = path.join(dir, 'effects.json');
     assert.equal(await runEffect(effectsFile, 'k1'), 1);
@@ -156,241 +107,217 @@ test('readEffectCounts: returns {} when the file does not exist yet', async () =
 });
 
 // ---------------------------------------------------------------------------
-// FaultInjectedJournal: the ENOSPC-simulation boundary. The critical
-// property under test here is that NOTHING is ever written to disk when the
-// fault fires — i.e. the injected fault never touches the real filesystem,
-// which is how this whole exercise avoids consuming any real disk space.
+// makeFaultInjectedJournal: manufactures ENOSPC at the call boundary,
+// against a FAKE in-memory journal so real disk is never touched and no
+// build is required.
 // ---------------------------------------------------------------------------
 
-test('FaultInjectedJournal: passes through when the predicate is false', async () => {
+function makeFakeJournal() {
+  const entries = [];
+  let appendCalls = 0;
+  return {
+    entries,
+    get appendCalls() {
+      return appendCalls;
+    },
+    load: async () => ({ entries: entries.slice() }),
+    append: async (entry) => {
+      appendCalls++;
+      entries.push(entry);
+    },
+  };
+}
+
+test('makeFaultInjectedJournal: predicate firing throws ENOSPC and never calls the real append', async () => {
+  const fake = makeFakeJournal();
+  const journal = makeFaultInjectedJournal(fake, (_entry, idx) => idx === 0);
+  await assert.rejects(
+    () => journal.append({ type: 'started', key: 'k1', agentId: '1' }),
+    (err) => {
+      assert.equal(err.code, 'ENOSPC');
+      assert.match(err.message, /ENOSPC/);
+      return true;
+    },
+  );
+  assert.equal(fake.appendCalls, 0, 'the real append must never be called when the predicate fires');
+});
+
+test('makeFaultInjectedJournal: calls before the predicate fires pass through to the real append', async () => {
+  const fake = makeFakeJournal();
+  const journal = makeFaultInjectedJournal(fake, (_entry, idx) => idx === 1);
+  await journal.append({ type: 'started', key: 'k1', agentId: '1' });
+  assert.equal(fake.appendCalls, 1);
+  await assert.rejects(() => journal.append({ type: 'effect_complete', key: 'k1', agentId: '1' }));
+  assert.equal(fake.appendCalls, 1, 'the failing call itself must not reach the real append either');
+  await journal.append({ type: 'result', key: 'k1', agentId: '1', result: 1 });
+  assert.equal(fake.appendCalls, 2, 'a later, non-failing call index must still pass through');
+});
+
+test('makeFaultInjectedJournal: load() delegates to the wrapped journal', async () => {
+  const fake = makeFakeJournal();
+  await fake.append({ type: 'started', key: 'k1', agentId: '1' });
+  const journal = makeFaultInjectedJournal(fake, () => false);
+  const replay = await journal.load();
+  assert.equal(replay.entries.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Dispatch stub factories
+// ---------------------------------------------------------------------------
+
+test('makeCleanDispatch: runs the durable effect and never throws', async () => {
   await withTempDir(async (dir) => {
-    const journal = new FaultInjectedJournal(path.join(dir, 'journal.jsonl'), () => false);
-    await journal.append({ type: 'started', key: 'k1', agentId: '1' });
-    const replay = await journal.load();
-    assert.equal(replay.started.get('k1').length, 1);
+    const effectsFile = path.join(dir, 'effects.json');
+    const dispatch = makeCleanDispatch(effectsFile);
+    const r1 = await dispatch('prompt-a');
+    const r2 = await dispatch('prompt-a');
+    assert.equal(r1.count, 1);
+    assert.equal(r2.count, 2);
   });
 });
 
-test('FaultInjectedJournal: throws an ENOSPC-shaped error and writes NOTHING when the predicate fires', async () => {
-  await withTempDir(async (dir) => {
-    const journalPath = path.join(dir, 'journal.jsonl');
-    const journal = new FaultInjectedJournal(journalPath, (_entry, idx) => idx === 0);
-    await assert.rejects(
-      () => journal.append({ type: 'started', key: 'k1', agentId: '1' }),
-      (err) => {
-        assert.equal(err.code, 'ENOSPC');
-        return true;
-      },
-    );
-    // Nothing was written at all — the file must not even exist.
-    await assert.rejects(() => readFile(journalPath, 'utf8'), (err) => err.code === 'ENOENT');
+test('makeCleanBackendFailure: always rejects with ECONNRESET and never runs any effect', async () => {
+  const dispatch = makeCleanBackendFailure();
+  await assert.rejects(() => dispatch('prompt-a'), (err) => {
+    assert.equal(err.code, 'ECONNRESET');
+    return true;
   });
 });
 
-test('FaultInjectedJournal: predicate sees an increasing call index, so "fail the Nth call" is expressible', async () => {
+test('makeDirtyBackendFailure: runs the effect THEN rejects with ECONNRESET', async () => {
   await withTempDir(async (dir) => {
-    const journal = new FaultInjectedJournal(path.join(dir, 'journal.jsonl'), (_entry, idx) => idx === 1);
-    await journal.append({ type: 'started', key: 'k1', agentId: '1' }); // idx 0, passes
-    await assert.rejects(() => journal.append({ type: 'effect_complete', key: 'k1', agentId: '1' })); // idx 1, fails
-    const replay = await journal.load();
-    assert.equal(replay.started.get('k1').length, 1);
-    assert.equal(replay.ambiguousEffects.has('k1'), false, 'the failed effect_complete write must not have landed');
+    const effectsFile = path.join(dir, 'effects.json');
+    const dispatch = makeDirtyBackendFailure(effectsFile);
+    await assert.rejects(() => dispatch('prompt-a'), (err) => {
+      assert.equal(err.code, 'ECONNRESET');
+      return true;
+    });
+    const counts = await readEffectCounts(effectsFile);
+    assert.equal(counts['prompt-a'], 1, 'the effect must have run once, durably, before the rejection');
   });
 });
 
-// ---------------------------------------------------------------------------
-// withTimeout: this harness must never hang on a stub that never settles.
-// ---------------------------------------------------------------------------
-
-test('withTimeout: resolves normally when the promise settles in time', async () => {
-  const result = await withTimeout(Promise.resolve('ok'), 500, 'test');
-  assert.equal(result, 'ok');
-});
-
-test('withTimeout: rejects (does not hang) when the promise never settles', async () => {
+test('withTimeout: rejects a silently-hanging promise instead of hanging the harness', async () => {
   const neverSettles = new Promise(() => {});
-  await assert.rejects(() => withTimeout(neverSettles, 50, 'test'), (err) => {
+  await assert.rejects(() => withTimeout(neverSettles, 20, 'test-op'), (err) => {
     assert.equal(err.code, 'ETIMEDOUT');
     return true;
   });
 });
 
+test('withTimeout: a promise that settles first wins', async () => {
+  const result = await withTimeout(Promise.resolve('ok'), 500, 'test-op');
+  assert.equal(result, 'ok');
+});
+
 // ---------------------------------------------------------------------------
-// runChain: the ported dispatch/persist/latch contract itself.
+// Sandboxed script builders
 // ---------------------------------------------------------------------------
 
-test('runChain: a clean run persists started -> effect_complete -> result for every dispatch, effect runs exactly once each', async () => {
-  await withTempDir(async (dir) => {
-    const effectsFile = path.join(dir, 'effects.json');
-    const journal = new WorkflowJournalFile(path.join(dir, 'journal.jsonl'));
-    const dispatches = [
-      { prompt: 'p1', opts: OPTS },
-      { prompt: 'p2', opts: OPTS },
-    ];
-    const outcome = await runChain({
-      dispatches,
-      journal,
-      dispatchFn: makeCleanDispatch(effectsFile),
-      argsSeed: { run: 'x' },
-    });
-    assert.equal(outcome.aborted, false);
-    assert.deepEqual(outcome.perIndex.map((e) => e.outcome), ['redispatched', 'redispatched']);
-    const counts = await readEffectCounts(effectsFile);
-    for (const e of outcome.perIndex) assert.equal(counts[e.key], 1);
+const DISPATCHES = [
+  { prompt: 'p-a', opts: OPTS },
+  { prompt: 'p-b', opts: OPTS },
+];
+
+test('buildSequentialScript: emits N agent() calls in order and returns them as an array', () => {
+  const script = buildSequentialScript(DISPATCHES);
+  assert.equal(script.split('await agent(').length - 1, 2);
+  assert.ok(script.indexOf('"p-a"') < script.indexOf('"p-b"'));
+  assert.match(script, /return \[r0, r1\];/);
+});
+
+test('buildTryCatchScript: wraps each agent() call in its own try/catch and always returns', () => {
+  const script = buildTryCatchScript(DISPATCHES);
+  assert.equal((script.match(/try {/g) || []).length, 2);
+  assert.equal((script.match(/catch \(e\)/g) || []).length, 2);
+  assert.match(script, /return outcomes;/);
+});
+
+// ---------------------------------------------------------------------------
+// checkBuildFreshness: the guard itself, against synthetic temp trees.
+// ---------------------------------------------------------------------------
+
+async function withSyntheticTrees(fn) {
+  const root = await mkdtemp(path.join(os.tmpdir(), WORKSPACE_PREFIX));
+  try {
+    const srcDir = path.join(root, 'src');
+    const distDir = path.join(root, 'dist');
+    fs.mkdirSync(srcDir, { recursive: true });
+    fs.mkdirSync(distDir, { recursive: true });
+    await fn({ root, srcDir, distDir });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+function writeWithMtime(filePath, contents, mtimeMs) {
+  fs.writeFileSync(filePath, contents);
+  const t = mtimeMs / 1000;
+  fs.utimesSync(filePath, t, t);
+}
+
+test('checkBuildFreshness: fresh when dist is newer than src', async () => {
+  await withSyntheticTrees(async ({ srcDir, distDir }) => {
+    const now = Date.now();
+    writeWithMtime(path.join(srcDir, 'a.ts'), 'x', now);
+    writeWithMtime(path.join(distDir, 'a.js'), 'x', now + 60_000);
+    const result = checkBuildFreshness(srcDir, distDir, []);
+    assert.equal(result.fresh, true);
   });
 });
 
-test('runChain: a cache hit on resume runs zero live effects', async () => {
-  await withTempDir(async (dir) => {
-    const effectsFile = path.join(dir, 'effects.json');
-    const journal = new WorkflowJournalFile(path.join(dir, 'journal.jsonl'));
-    const dispatches = [{ prompt: 'p1', opts: OPTS }];
-    await runChain({ dispatches, journal, dispatchFn: makeCleanDispatch(effectsFile), argsSeed: { run: 'x' } });
-    const countsAfterFirst = await readEffectCounts(effectsFile);
-
-    const replay = await journal.load();
-    const resumed = await runChain({
-      dispatches,
-      journal,
-      dispatchFn: makeCleanDispatch(effectsFile),
-      replay,
-      argsSeed: { run: 'x' },
-    });
-    assert.equal(resumed.perIndex[0].outcome, 'recovered-cached');
-    const countsAfterResume = await readEffectCounts(effectsFile);
-    assert.deepEqual(countsAfterResume, countsAfterFirst, 'a cache hit must not run the effect again');
+test('checkBuildFreshness: stale when src changed after the dist build', async () => {
+  await withSyntheticTrees(async ({ srcDir, distDir }) => {
+    const now = Date.now();
+    writeWithMtime(path.join(distDir, 'a.js'), 'x', now);
+    writeWithMtime(path.join(srcDir, 'a.ts'), 'x', now + 60_000);
+    const result = checkBuildFreshness(srcDir, distDir, []);
+    assert.equal(result.fresh, false);
+    assert.equal(result.staleFiles[0].reason, 'source-newer-than-build');
   });
 });
 
-test('runChain: an ambiguous key is refused and aborts the resume immediately, without touching the effect', async () => {
-  await withTempDir(async (dir) => {
-    const effectsFile = path.join(dir, 'effects.json');
-    const journal = new WorkflowJournalFile(path.join(dir, 'journal.jsonl'));
-    const dispatches = [{ prompt: 'p1', opts: OPTS }];
-    // Discover the real key deterministically, then hand-build an ambiguous
-    // replay (started + effect_complete, no result) for it.
-    const probe = await runChain({ dispatches, journal: new WorkflowJournalFile(path.join(dir, 'probe.jsonl')), dispatchFn: makeCleanDispatch(path.join(dir, 'probe-effects.json')), argsSeed: { run: 'x' } });
-    const key = probe.perIndex[0].key;
-    await runEffect(effectsFile, key); // the effect already ran once
-    const replay = buildReplay([
-      { type: 'started', key, agentId: '1' },
-      { type: 'effect_complete', key, agentId: '1' },
-    ]);
-    const outcome = await runChain({ dispatches, journal, dispatchFn: makeCleanDispatch(effectsFile), replay, argsSeed: { run: 'x' } });
-    assert.equal(outcome.aborted, true);
-    assert.equal(outcome.abortReason, 'ambiguous-effect');
-    assert.equal(outcome.perIndex[0].outcome, 'refused-ambiguous');
-    const counts = await readEffectCounts(effectsFile);
-    assert.equal(counts[key], 1, 'the ambiguous effect must NOT be re-run');
+test('checkBuildFreshness: missing-compiled-artifact when the dist file is absent', async () => {
+  await withSyntheticTrees(async ({ srcDir, distDir }) => {
+    writeWithMtime(path.join(srcDir, 'a.ts'), 'x', Date.now());
+    const result = checkBuildFreshness(srcDir, distDir, []);
+    assert.equal(result.staleFiles[0].reason, 'missing-compiled-artifact');
   });
 });
 
-test('runChain: a journal write failure latches for the rest of the run — later dispatches are blocked without their own write or effect', async () => {
-  await withTempDir(async (dir) => {
-    const effectsFile = path.join(dir, 'effects.json');
-    const journal = new FaultInjectedJournal(path.join(dir, 'journal.jsonl'), (_entry, idx) => idx === 0);
-    const dispatches = [{ prompt: 'p1', opts: OPTS }, { prompt: 'p2', opts: OPTS }];
-    const outcome = await runChain({ dispatches, journal, dispatchFn: makeCleanDispatch(effectsFile), argsSeed: { run: 'x' } });
-    assert.equal(outcome.perIndex[0].outcome, 'blocked-journal-write-failed');
-    assert.equal(outcome.perIndex[1].outcome, 'blocked-journal-poisoned');
-    const counts = await readEffectCounts(effectsFile);
-    assert.deepEqual(counts, {}, 'no effect must run once the journal is known unwritable');
-  });
+test('checkBuildFreshness: a missing src directory is a dirError, not a silent "fresh"', () => {
+  const result = checkBuildFreshness('/definitely/does/not/exist/lal-m2', '/also/missing', []);
+  assert.equal(result.fresh, false);
+  assert.ok(result.dirError);
 });
 
-test('runChain: a clean backend failure (before any effect) leaves the key an ordinary miss, safely redispatched once on retry', async () => {
+// ---------------------------------------------------------------------------
+// Adaptive integration test.
+// ---------------------------------------------------------------------------
+
+test('loadRuntimeModules: against the real repo, either a fresh-build live scenario run or an explicit stale-build skip -- never a silent pass or a false failure', async (t) => {
+  const freshness = checkBuildFreshness();
+  if (!freshness.fresh) {
+    t.skip(
+      `apps/cli/packages/core/dist is currently stale relative to its src ` +
+        `(${freshness.staleFiles.map((f) => path.basename(f.srcPath)).join(', ')}); ` +
+        `loadRuntimeModules() is expected to throw StaleBuildError, which is exactly ` +
+        `what node scripts/m2-fault-recovery.mjs observes right now (exit code 3). ` +
+        `Skipping the live scenario run rather than failing or silently passing.`,
+    );
+    await assert.rejects(() => loadRuntimeModules(), StaleBuildError);
+    return;
+  }
+  const modules = await loadRuntimeModules();
   await withTempDir(async (dir) => {
-    const effectsFile = path.join(dir, 'effects.json');
-    const journal = new WorkflowJournalFile(path.join(dir, 'journal.jsonl'));
-    const dispatches = [{ prompt: 'p1', opts: OPTS }];
-    const failed = await runChain({ dispatches, journal, dispatchFn: makeCleanBackendFailure(), argsSeed: { run: 'x' } });
-    assert.equal(failed.perIndex[0].outcome, 'blocked-backend-failed');
-    assert.deepEqual(await readEffectCounts(effectsFile), {});
-
-    const replay = await journal.load();
-    const retried = await runChain({ dispatches, journal, dispatchFn: makeCleanDispatch(effectsFile), replay, argsSeed: { run: 'x' } });
-    assert.equal(retried.perIndex[0].outcome, 'redispatched');
-    const counts = await readEffectCounts(effectsFile);
-    assert.equal(counts[failed.perIndex[0].key], 1);
-  });
-});
-
-test('runChain: GATE 2 GAP reproduction — a dirty backend failure (effect ran, then rejected) duplicates the effect on resume', async () => {
-  await withTempDir(async (dir) => {
-    const effectsFile = path.join(dir, 'effects.json');
-    const journal = new WorkflowJournalFile(path.join(dir, 'journal.jsonl'));
-    const dispatches = [{ prompt: 'p1', opts: OPTS }];
-    const failed = await runChain({ dispatches, journal, dispatchFn: makeDirtyBackendFailure(effectsFile), argsSeed: { run: 'x' } });
-    const key = failed.perIndex[0].key;
-    assert.equal(failed.perIndex[0].outcome, 'blocked-backend-failed');
-    assert.equal((await readEffectCounts(effectsFile))[key], 1, 'the effect already ran once inside the failed attempt');
-
-    const onDisk = await journal.load();
-    assert.equal(onDisk.ambiguousEffects.has(key), false, 'no journal entry exists to mark this key ambiguous — that IS the gap');
-    assert.equal(onDisk.results.has(key), false);
-
-    const replay = await journal.load();
-    const resumed = await runChain({ dispatches, journal, dispatchFn: makeCleanDispatch(effectsFile), replay, argsSeed: { run: 'x' } });
-    assert.equal(resumed.perIndex[0].outcome, 'redispatched', 'resume treats it as an ordinary miss, per the gap');
-    const finalCount = (await readEffectCounts(effectsFile))[key];
-    assert.equal(finalCount, 2, 'REPRODUCED: the non-idempotent effect ran twice with no crash involved');
-  });
-});
-
-test('runChain: GATE 2 GAP reproduction — an ENOSPC on the effect_complete write duplicates the effect on resume', async () => {
-  await withTempDir(async (dir) => {
-    const effectsFile = path.join(dir, 'effects.json');
     const journalPath = path.join(dir, 'journal.jsonl');
-    const faultyJournal = new FaultInjectedJournal(journalPath, (_entry, idx) => idx === 1); // idx1 = effect_complete
-    const dispatches = [{ prompt: 'p1', opts: OPTS }];
-    const failed = await runChain({ dispatches, journal: faultyJournal, dispatchFn: makeCleanDispatch(effectsFile), argsSeed: { run: 'x' } });
-    const key = failed.perIndex[0].key;
-    assert.equal(failed.perIndex[0].outcome, 'blocked-journal-write-failed');
-    assert.equal((await readEffectCounts(effectsFile))[key], 1, 'this.dispatch already resolved before the journal write failed');
-
-    const healedJournal = new WorkflowJournalFile(journalPath);
-    const replay = await healedJournal.load();
-    assert.equal(replay.ambiguousEffects.has(key), false, 'started-only on disk — identical to "never ran"');
-
-    const resumed = await runChain({ dispatches, journal: healedJournal, dispatchFn: makeCleanDispatch(effectsFile), replay, argsSeed: { run: 'x' } });
-    assert.equal(resumed.perIndex[0].outcome, 'redispatched');
-    const finalCount = (await readEffectCounts(effectsFile))[key];
-    assert.equal(finalCount, 2, 'REPRODUCED: an ordinary ENOSPC (no crash) duplicated the non-idempotent effect');
-  });
-});
-
-test('runChain: changed args produce a fully disjoint key space on resume (no cross-run reuse)', async () => {
-  await withTempDir(async (dir) => {
-    const effectsFile = path.join(dir, 'effects.json');
-    const journal = new WorkflowJournalFile(path.join(dir, 'journal.jsonl'));
-    const dispatches = [{ prompt: 'p1', opts: OPTS }, { prompt: 'p2', opts: OPTS }];
-    const runA = await runChain({ dispatches, journal, dispatchFn: makeCleanDispatch(effectsFile), argsSeed: { run: 'A' } });
-    const keysA = new Set(runA.perIndex.map((e) => e.key));
-
-    const replay = await journal.load();
-    const runB = await runChain({ dispatches, journal, dispatchFn: makeCleanDispatch(effectsFile), replay, argsSeed: { run: 'B' } });
-    for (const e of runB.perIndex) {
-      assert.equal(e.outcome, 'redispatched');
-      assert.equal(keysA.has(e.key), false, 'changed-args key must not collide with a run-A key');
-    }
-    const counts = await readEffectCounts(effectsFile);
-    for (const key of keysA) assert.equal(counts[key], 1, 'run A keys must remain untouched');
-  });
-});
-
-test('runChain: a different dispatch at the same position never reuses a stale committed result', async () => {
-  await withTempDir(async (dir) => {
-    const effectsFile = path.join(dir, 'effects.json');
-    const journal = new WorkflowJournalFile(path.join(dir, 'journal.jsonl'));
-    const runX = await runChain({ dispatches: [{ prompt: 'task-x', opts: OPTS }], journal, dispatchFn: makeCleanDispatch(effectsFile), argsSeed: { run: 'x' } });
-    const keyX = runX.perIndex[0].key;
-
-    const replay = await journal.load();
-    const runY = await runChain({ dispatches: [{ prompt: 'task-y', opts: OPTS }], journal, dispatchFn: makeCleanDispatch(effectsFile), replay, argsSeed: { run: 'x' } });
-    assert.equal(runY.perIndex[0].outcome, 'redispatched');
-    assert.notEqual(runY.perIndex[0].key, keyX);
-    const counts = await readEffectCounts(effectsFile);
-    assert.equal(counts[keyX], 1);
-    assert.equal(counts[runY.perIndex[0].key], 1);
+    const journal = new modules.WorkflowJournal(journalPath);
+    const orchestrator = new modules.WorkflowOrchestrator(async () => 'live-ok');
+    const outcome = await orchestrator.run({
+      script: 'return await agent("smoke test");',
+      args: { smoke: true },
+      journal,
+    });
+    assert.equal(outcome.result, 'live-ok');
   });
 });
