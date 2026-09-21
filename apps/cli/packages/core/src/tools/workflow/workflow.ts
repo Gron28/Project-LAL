@@ -212,13 +212,24 @@ class WorkflowToolInvocation extends BaseToolInvocation<
   override getConfirmationDetails(
     _abortSignal: AbortSignal,
   ): Promise<ToolCallConfirmationDetails> {
+    const scope = buildWorkflowPermissionScope(this.params);
     const details: ToolInfoConfirmationDetails = {
       type: 'info',
       title: 'Confirm Workflow',
       prompt: buildWorkflowConfirmationPrompt(this.params),
+      // Gate 2 authority fix: bind "Always Allow" to WHAT WAS SHOWN, not to
+      // the bare tool name. Without this, `injectPermissionRulesIfMissing`
+      // (permission-helpers.ts) would fall back to `buildPermissionRules`
+      // (rule-parser.ts), which has no scoping specifier for `workflow` and
+      // persists a bare `"workflow"` allow rule — authorizing every future,
+      // unrelated script. See `buildWorkflowPermissionScope` below.
+      permissionRules: scope.permissionRules,
+      hideAlwaysAllow: scope.hideAlwaysAllow,
       onConfirm: async () => {
         // No-op: persistence is handled by coreToolScheduler via PM rules,
         // matching BaseToolInvocation's default confirmation contract.
+        // The RULES it persists now come from `permissionRules` above,
+        // not the unscoped centralized fallback.
       },
     };
     return Promise.resolve(details);
@@ -518,6 +529,65 @@ class WorkflowToolInvocation extends BaseToolInvocation<
       }
     }
   }
+}
+
+/**
+ * Gate 2 authority fix: decide what a "Always Allow" decision on THIS
+ * invocation is permitted to persist, and whether "Always Allow" should
+ * even be offered.
+ *
+ * Identity choice:
+ *
+ *  - **Saved workflow (`scriptPath`, no inline `script`)**: the absolute
+ *    file path is a stable, human-reviewable identity — it is exactly
+ *    what the confirmation prompt disclosed ("Run saved workflow
+ *    <name>"), it round-trips through settings.json as a readable
+ *    `workflow(scriptPath:/abs/path.js)` rule, and re-approves only THIS
+ *    saved script. "Always allow" legitimately means "trust this named,
+ *    saved script again" — a reasonable, bounded reading of the phrase.
+ *    Edits to the saved file are already disclosed as a live risk in the
+ *    prompt itself ("read fresh at run time... review the file
+ *    directly"); this fix does not change that pre-existing tradeoff.
+ *
+ *  - **Inline `script`**: no such identity exists. The only candidate is
+ *    a content hash, and it is deliberately rejected: a hash is opaque
+ *    to a human reviewing `/permissions`, and a single-character edit to
+ *    the script mints a brand-new, silently-unapproved identity — so a
+ *    hash rule would either be too narrow to ever fire twice, or (if
+ *    anyone tried to normalize/fuzz it for readability) too broad again.
+ *    Neither serves the user. Inline scripts therefore get NO persisted
+ *    rule at all (`permissionRules: []`) and `hideAlwaysAllow: true` — a
+ *    one-time approval only, which correctly reflects that nothing
+ *    durable can identify "this exact script" a second time. The empty
+ *    `permissionRules` array is a deliberate second layer: even if a
+ *    caller ever bypasses `hideAlwaysAllow` (e.g. a non-UI ACP client),
+ *    `persistPermissionOutcome` (permission-helpers.ts) no-ops on an
+ *    empty rule list, so nothing is written to disk either way.
+ *
+ * Consequence for a PRE-EXISTING bare `"workflow"` allow rule (persisted
+ * by the old, buggy fallback before this fix): this function cannot
+ * retroactively edit a user's settings.json, so the stale rule stays on
+ * disk. It is neutralized instead at the matching layer — see the
+ * `workflow`-specific carve-out in `rule-parser.ts`'s `matchesRule`,
+ * which now refuses to treat a specifier-less `workflow` rule as
+ * "matches everything". Net effect: a user who previously clicked
+ * "Always Allow" on one workflow script will be RE-PROMPTED on their
+ * next workflow run (and any run after that, since no new bare rule can
+ * ever be generated again) — the old blanket grant is revoked, not
+ * honoured. Silently keeping it would have preserved the exact hole this
+ * fix exists to close.
+ */
+function buildWorkflowPermissionScope(params: WorkflowParams): {
+  permissionRules: string[];
+  hideAlwaysAllow: boolean;
+} {
+  if (params.scriptPath && params.script === undefined) {
+    return {
+      permissionRules: [`workflow(scriptPath:${params.scriptPath})`],
+      hideAlwaysAllow: false,
+    };
+  }
+  return { permissionRules: [], hideAlwaysAllow: true };
 }
 
 /**

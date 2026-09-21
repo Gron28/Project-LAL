@@ -1217,6 +1217,26 @@ export function matchesRule(
     return false;
   }
 
+  // ── Gate 2 authority carve-out: `workflow` never blanket-matches ─────
+  // A specifier-less `workflow` rule carries NO script identity — it
+  // cannot mean "this exact workflow again" (WorkflowTool now always
+  // scopes its persisted rules by `scriptPath`, see workflow.ts's
+  // `buildWorkflowPermissionScope`, and never persists one at all for
+  // inline scripts). A bare rule here can only be a pre-fix leftover
+  // written by the old buggy fallback (one "Always Allow" silently
+  // authorizing every future, unrelated script) or a hand-edited
+  // attempt at the same unsafe blanket grant. Either way, honouring it
+  // would preserve exactly the authority violation this fix closes, so
+  // it is treated as inert rather than "matches everything" — the
+  // invocation falls through to the tool's own 'ask' default instead.
+  if (
+    canonicalCtxToolName === 'workflow' &&
+    !rule.specifier &&
+    !rule.toolParamMatchers?.length
+  ) {
+    return false;
+  }
+
   // ── No specifier and no param matchers → match any invocation ────────
   if (!rule.specifier && !rule.toolParamMatchers?.length) {
     return true;

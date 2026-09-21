@@ -15,6 +15,7 @@ import { WorkflowRunRegistry } from '../../agents/workflow-run-registry.js';
 import { Storage } from '../../config/storage.js';
 import { evaluatePermissionFlow } from '../../core/permissionFlow.js';
 import type { ToolInfoConfirmationDetails } from '../tools.js';
+import { PermissionManager } from '../../permissions/permission-manager.js';
 
 function fakeConfig(): Config {
   return {} as unknown as Config;
@@ -842,6 +843,157 @@ describe('WorkflowTool', () => {
       )) as ToolInfoConfirmationDetails;
       expect(details.prompt).toContain('deep-research.js');
       expect(details.prompt).toMatch(/no further per-step confirmation/i);
+    });
+
+    // ── Worker W's fix: "Always Allow" must be bound to what was shown ────
+
+    it('an inline script offers no persistable identity: no permissionRules and "Always Allow" is hidden', async () => {
+      const tool = new WorkflowTool(fakeConfig());
+      const invocation = tool.build({ script: 'return 1;' });
+      const details = (await invocation.getConfirmationDetails(
+        new AbortController().signal,
+      )) as ToolInfoConfirmationDetails;
+      expect(details.permissionRules).toEqual([]);
+      expect(details.hideAlwaysAllow).toBe(true);
+    });
+
+    it('a saved workflow (scriptPath) is scoped by its absolute path, and "Always Allow" is offered', async () => {
+      const tool = new WorkflowTool(fakeConfig());
+      const invocation = tool.build({ scriptPath: '/abs/deep-research.js' });
+      const details = (await invocation.getConfirmationDetails(
+        new AbortController().signal,
+      )) as ToolInfoConfirmationDetails;
+      expect(details.permissionRules).toEqual([
+        'workflow(scriptPath:/abs/deep-research.js)',
+      ]);
+      expect(details.hideAlwaysAllow).toBeFalsy();
+    });
+
+    it('"Always Allow" on one saved workflow authorizes that exact scriptPath again, but not a different saved workflow', async () => {
+      const tool = new WorkflowTool(fakeConfig());
+      const approved = tool.build({ scriptPath: '/abs/deep-research.js' });
+      const details = (await approved.getConfirmationDetails(
+        new AbortController().signal,
+      )) as ToolInfoConfirmationDetails;
+
+      const pm = new PermissionManager({
+        getPermissionsAllow: () => [],
+        getPermissionsAsk: () => [],
+        getPermissionsDeny: () => [],
+        getProjectRoot: () => '/proj',
+        getCwd: () => '/proj',
+      });
+      pm.initialize();
+      for (const rule of details.permissionRules ?? []) {
+        pm.addPersistentRule(rule, 'allow');
+      }
+      const config = {
+        getPermissionManager: () => pm,
+        getTargetDir: () => '/proj',
+      } as unknown as Config;
+
+      // Same saved script, re-run later: the scoped rule covers it.
+      const sameScript = tool.build({ scriptPath: '/abs/deep-research.js' });
+      const sameFlow = await evaluatePermissionFlow(
+        config,
+        sameScript,
+        ToolNames.WORKFLOW,
+        sameScript.params as unknown as Record<string, unknown>,
+      );
+      expect(sameFlow.finalPermission).toBe('allow');
+
+      // A different saved workflow, never shown or approved by name.
+      const otherScript = tool.build({
+        scriptPath: '/abs/delete-everything.js',
+      });
+      const otherFlow = await evaluatePermissionFlow(
+        config,
+        otherScript,
+        ToolNames.WORKFLOW,
+        otherScript.params as unknown as Record<string, unknown>,
+      );
+      expect(otherFlow.finalPermission).not.toBe('allow');
+
+      // An inline script was never disclosed as this saved file either.
+      const inlineScript = tool.build({
+        script: 'return await agent("delete the production database");',
+      });
+      const inlineFlow = await evaluatePermissionFlow(
+        config,
+        inlineScript,
+        ToolNames.WORKFLOW,
+        inlineScript.params as unknown as Record<string, unknown>,
+      );
+      expect(inlineFlow.finalPermission).not.toBe('allow');
+    });
+
+    it('an inline script never persists a rule even if the caller ignores hideAlwaysAllow: a bypassed "Always Allow" leaves the next inline script at "ask"', async () => {
+      const tool = new WorkflowTool(fakeConfig());
+      const invocation = tool.build({ script: 'return 1;' });
+      const details = (await invocation.getConfirmationDetails(
+        new AbortController().signal,
+      )) as ToolInfoConfirmationDetails;
+      expect(details.permissionRules).toEqual([]);
+
+      const pm = new PermissionManager({
+        getPermissionsAllow: () => [],
+        getPermissionsAsk: () => [],
+        getPermissionsDeny: () => [],
+        getProjectRoot: () => '/proj',
+        getCwd: () => '/proj',
+      });
+      pm.initialize();
+      // Simulate persistPermissionOutcome's own no-op-on-empty-array guard
+      // being bypassed by a hypothetical caller — even so, there is
+      // nothing to persist.
+      for (const rule of details.permissionRules ?? []) {
+        pm.addPersistentRule(rule, 'allow');
+      }
+
+      const config = {
+        getPermissionManager: () => pm,
+        getTargetDir: () => '/proj',
+      } as unknown as Config;
+      const later = tool.build({
+        script: 'return await agent("an unrelated later action");',
+      });
+      const flow = await evaluatePermissionFlow(
+        config,
+        later,
+        ToolNames.WORKFLOW,
+        later.params as unknown as Record<string, unknown>,
+      );
+      expect(flow.finalPermission).not.toBe('allow');
+    });
+
+    it('a pre-existing bare "workflow" allow rule (persisted before this fix) is neutralized, not honoured', async () => {
+      const pm = new PermissionManager({
+        getPermissionsAllow: () => ['workflow'],
+        getPermissionsAsk: () => [],
+        getPermissionsDeny: () => [],
+        getProjectRoot: () => '/proj',
+        getCwd: () => '/proj',
+      });
+      pm.initialize();
+
+      const config = {
+        getPermissionManager: () => pm,
+        getTargetDir: () => '/proj',
+      } as unknown as Config;
+      const tool = new WorkflowTool(fakeConfig());
+      const invocation = tool.build({
+        script: 'return await agent("delete the production database");',
+      });
+      const flow = await evaluatePermissionFlow(
+        config,
+        invocation,
+        ToolNames.WORKFLOW,
+        invocation.params as unknown as Record<string, unknown>,
+      );
+      // The stale blanket grant is revoked, not silently kept: the user
+      // is re-prompted rather than having every future script pre-approved.
+      expect(flow.finalPermission).not.toBe('allow');
+      expect(flow.finalPermission).toBe('ask');
     });
   });
 });
