@@ -28,6 +28,7 @@ web/public/lal/releases/
 # build artifacts / installed deps for Project-LAL apps and temporary workspaces
 node_modules/
 .next/
+.next.*/
 .next-recovery*/
 
 # Runtime datasets are intentionally local. Commit only explicit small fixtures.
@@ -41,3 +42,14 @@ node_modules/
 /apps/cli/packages/cli/first/
 /apps/cli/packages/cli/from-env/
 /apps/cli/packages/cli/workspace/
+
+# Large local trees that must never enter a commit. Nothing here is tracked
+# (verified with `git ls-files`); these rules only stop an accidental
+# `git add -A` from sweeping in gigabytes of local state.
+web-b/
+.worktrees/
+
+# Root-level scratch scripts from unrelated local tasks. Root-anchored so
+# nested legitimate tmp-* files elsewhere stay visible.
+/tmp-*
+/.tmp-*
