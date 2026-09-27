@@ -1,0 +1,18 @@
+# SearXNG for LAL's research mode: a local, free meta-search engine that LAL
+# queries over JSON. Bound to 127.0.0.1 only; the secret comes from the
+# SEARXNG_SECRET environment variable (kept outside the repo).
+use_default_settings: true
+general:
+  instance_name: "LAL search"
+server:
+  limiter: false          # only LAL calls this instance, from localhost
+  image_proxy: false
+  secret_key: "overridden-by-SEARXNG_SECRET"
+search:
+  safe_search: 1
+  formats: [html, json]
+engines:
+  - name: wikipedia
+    disabled: false
+  - name: wikimedia commons
+    disabled: false
