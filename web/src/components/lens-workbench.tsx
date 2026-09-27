@@ -14,7 +14,7 @@ function cellBg(prob: number) {
 }
 
 function cellText(prob: number) {
-  return prob > 0.45 ? "#05090c" : "var(--text-2)";
+  return prob > 0.45 ? "var(--on-accent)" : "var(--text-2)";
 }
 
 function Trajectory({ result, position }: { result: LensResult; position: number }) {
@@ -55,9 +55,9 @@ function Trajectory({ result, position }: { result: LensResult; position: number
 function SummaryStat({ label, value, note }: { label: string; value: string; note: string }) {
   return (
     <div className="min-w-0 border-l border-[var(--border-soft)] pl-3 first:border-l-0 first:pl-0">
-      <div className="text-[9px] uppercase tracking-[0.16em] text-[var(--muted)]">{label}</div>
+      <div className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">{label}</div>
       <div className="text-xl font-semibold tracking-tight mt-1">{value}</div>
-      <div className="text-[9px] text-[var(--muted)] truncate">{note}</div>
+      <div className="text-[10px] text-[var(--muted)] truncate">{note}</div>
     </div>
   );
 }
@@ -123,21 +123,21 @@ export default function LensWorkbench({ toolbar }: { toolbar?: React.ReactNode }
           </div>
           <div className="grid sm:grid-cols-[1fr_110px] gap-2">
             <div>
-              <label htmlFor="lens-checkpoint" className="block text-[10px] uppercase tracking-[0.16em] text-[var(--muted)] mb-1.5">Checkpoint</label>
+              <label htmlFor="lens-checkpoint" className="block text-[11px] uppercase tracking-[0.16em] text-[var(--muted)] mb-1.5">Checkpoint</label>
               <select id="lens-checkpoint" value={model} onChange={(e) => setModel(e.target.value)} className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] p-2.5 text-xs outline-none focus:border-[var(--border-loud)]">
                 {models.map((name) => <option key={name} value={name}>{name}</option>)}
                 {!models.length && <option value="">No retained HF checkpoints found</option>}
               </select>
             </div>
             <div>
-              <label htmlFor="lens-candidates" className="block text-[10px] uppercase tracking-[0.16em] text-[var(--muted)] mb-1.5">Candidates</label>
+              <label htmlFor="lens-candidates" className="block text-[11px] uppercase tracking-[0.16em] text-[var(--muted)] mb-1.5">Candidates</label>
               <select id="lens-candidates" value={topK} onChange={(e) => setTopK(Number(e.target.value))} className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] p-2.5 text-xs outline-none focus:border-[var(--border-loud)]">
                 {[3, 5, 8, 10].map((k) => <option key={k} value={k}>top-{k}</option>)}
               </select>
             </div>
           </div>
           <div>
-            <label htmlFor="lens-prompt" className="block text-[10px] uppercase tracking-[0.16em] text-[var(--muted)] mb-1.5">Prompt</label>
+            <label htmlFor="lens-prompt" className="block text-[11px] uppercase tracking-[0.16em] text-[var(--muted)] mb-1.5">Prompt</label>
             <textarea id="lens-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Enter a prompt whose internal token evolution you want to inspect…" className="w-full min-h-28 bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] p-3 text-xs leading-relaxed resize-y outline-none focus:border-[var(--border-loud)]" />
           </div>
           <Button active disabled={busy || !model || !prompt.trim()} onClick={run} className="justify-center font-bold text-xs disabled:opacity-40">
@@ -148,10 +148,10 @@ export default function LensWorkbench({ toolbar }: { toolbar?: React.ReactNode }
 
         <Panel className="flex flex-col justify-between gap-5 bg-[linear-gradient(145deg,var(--surface-1),color-mix(in_srgb,var(--accent-ai)_7%,var(--surface-1)))]">
           <div>
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-[var(--accent-ai)]"><BrainCircuit size={15} /> Compute contract</div>
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-[var(--accent-ai)]"><BrainCircuit size={15} /> Compute contract</div>
             <p className="text-sm leading-relaxed text-[var(--text-2)] mt-4">Lens uses the full retained checkpoint and temporarily claims the whole GPU. Chat, Code, and Hive serving are parked for the run and automatically restored afterward.</p>
           </div>
-          <div className="space-y-2 text-[10px] text-[var(--muted)]">
+          <div className="space-y-2 text-[11px] text-[var(--muted)]">
             <div className="flex justify-between border-b border-[var(--border-soft)] pb-2"><span>Compatible models</span><span className="text-[var(--text-2)]">{models.length} retained checkpoints</span></div>
             <div className="flex justify-between border-b border-[var(--border-soft)] pb-2"><span>Projection</span><span className="text-[var(--text-2)]">every layer × input token</span></div>
             <div className="flex justify-between"><span>Expected duration</span><span className="text-[var(--text-2)]">up to several minutes</span></div>
@@ -174,10 +174,10 @@ export default function LensWorkbench({ toolbar }: { toolbar?: React.ReactNode }
             <Panel padding="sm" className="min-w-0 overflow-hidden">
               <div className="flex items-start justify-between gap-4 px-2 py-1 mb-3">
                 <div>
-                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-[var(--text-2)]"><Layers3 size={14} className="text-[var(--accent-ai)]" /> Layer × token projection</div>
-                  <p className="text-[9px] text-[var(--muted)] mt-1">Click a column to inspect its confidence trajectory. Hover any cell for the full top-{topK}.</p>
+                  <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-[var(--text-2)]"><Layers3 size={14} className="text-[var(--accent-ai)]" /> Layer × token projection</div>
+                  <p className="text-[10px] text-[var(--muted)] mt-1">Click a column to inspect its confidence trajectory. Hover any cell for the full top-{topK}.</p>
                 </div>
-                <div className="flex items-center gap-1 text-[8px] text-[var(--muted)] shrink-0">
+                <div className="flex items-center gap-1 text-[10px] text-[var(--muted)] shrink-0">
                   <span>0%</span><span className="w-20 h-2 rounded-full" style={{ background: "linear-gradient(90deg, var(--surface-2), var(--accent-ai))" }} /><span>100%</span>
                 </div>
               </div>
@@ -185,23 +185,23 @@ export default function LensWorkbench({ toolbar }: { toolbar?: React.ReactNode }
                 <div className="inline-grid min-w-full" style={{ gridTemplateColumns: `48px repeat(${result.inputTokens.length}, minmax(58px, 1fr))` }}>
                   <div className="sticky top-0 left-0 z-20 bg-[var(--surface-1)] border-b border-[var(--border-soft)]" />
                   {result.inputTokens.map((token, i) => (
-                    <button key={i} onClick={() => setPosition(i)} className="sticky top-0 z-10 text-[9px] text-center px-1 py-2 truncate border-b border-[var(--border-soft)] bg-[var(--surface-1)]" style={{ color: position === i ? "var(--accent-ai)" : "var(--muted)" }} title={token}>
-                      <span className="block text-[7px] opacity-60">{i + 1}</span>{token.trim() || "·"}
+                    <button key={i} onClick={() => setPosition(i)} className="sticky top-0 z-10 text-[10px] text-center px-1 py-2 truncate border-b border-[var(--border-soft)] bg-[var(--surface-1)]" style={{ color: position === i ? "var(--accent-ai)" : "var(--muted)" }} title={token}>
+                      <span className="block text-[10px] opacity-60">{i + 1}</span>{token.trim() || "·"}
                     </button>
                   ))}
                   {result.grid.map((row, layerIdx) => (
                     <div key={layerIdx} className="contents">
-                      <div className="sticky left-0 z-10 text-[9px] text-[var(--muted)] flex items-center justify-end pr-2 bg-[var(--surface-1)] border-r border-[var(--border-soft)]">L{layerIdx}</div>
+                      <div className="sticky left-0 z-10 text-[10px] text-[var(--muted)] flex items-center justify-end pr-2 bg-[var(--surface-1)] border-r border-[var(--border-soft)]">L{layerIdx}</div>
                       {row.map((cell, pos) => {
                         const top = cell[0];
                         const isHover = hover?.layer === layerIdx && hover?.pos === pos;
                         return (
                           <button key={pos} onClick={() => setPosition(pos)} onMouseEnter={() => setHover({ layer: layerIdx, pos })} onMouseLeave={() => setHover(null)}
-                            className="relative text-[9px] text-center px-1 py-1.5 border border-[var(--bg)] truncate cursor-crosshair outline-none"
+                            className="relative text-[10px] text-center px-1 py-1.5 border border-[var(--bg)] truncate cursor-crosshair outline-none"
                             style={{ background: top ? cellBg(top.prob) : "var(--surface-1)", color: top ? cellText(top.prob) : "var(--muted)", boxShadow: position === pos ? "inset 0 0 0 1px var(--accent-highlight)" : undefined }}>
                             {top ? (top.token.trim() || "·") : "—"}
                             {isHover && cell.length > 0 && (
-                              <span className="absolute z-30 top-full left-1/2 -translate-x-1/2 mt-1 bg-[var(--surface-2)] border border-[var(--border-loud)] rounded-[var(--r-md)] p-2 text-left text-[10px] whitespace-nowrap shadow-2xl pointer-events-none">
+                              <span className="absolute z-30 top-full left-1/2 -translate-x-1/2 mt-1 bg-[var(--surface-2)] border border-[var(--border-loud)] rounded-[var(--r-md)] p-2 text-left text-[11px] whitespace-nowrap shadow-2xl pointer-events-none">
                                 {cell.map((candidate, i) => <span key={i} className="flex gap-4 justify-between" style={{ color: i === 0 ? "var(--accent-ai)" : "var(--text-2)" }}><span>{candidate.token.trim() || "·"}</span><span>{(candidate.prob * 100).toFixed(1)}%</span></span>)}
                               </span>
                             )}
@@ -215,14 +215,14 @@ export default function LensWorkbench({ toolbar }: { toolbar?: React.ReactNode }
             </Panel>
 
             <Panel className="xl:sticky xl:top-4">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-[var(--text-2)]">Position {position + 1} trajectory</div>
+              <div className="text-[11px] uppercase tracking-[0.16em] text-[var(--text-2)]">Position {position + 1} trajectory</div>
               <div className="text-sm font-semibold mt-1 truncate" title={result.inputTokens[position]}>{result.inputTokens[position]?.trim() || "Whitespace token"}</div>
-              <p className="text-[9px] text-[var(--muted)] mt-1">Confidence of the winning hypothesis at this input position across model depth.</p>
+              <p className="text-[10px] text-[var(--muted)] mt-1">Confidence of the winning hypothesis at this input position across model depth.</p>
               <div className="mt-3"><Trajectory result={result} position={position} /></div>
               <div className="border-t border-[var(--border-soft)] pt-3 mt-2 space-y-2">
                 {[0, Math.floor((result.numLayers - 1) / 2), result.numLayers - 1].map((layer) => {
                   const cell = result.grid[layer]?.[position]?.[0];
-                  return <div key={layer} className="flex items-center justify-between gap-3 text-[10px]"><span className="text-[var(--muted)]">Layer {layer}</span><span className="truncate text-[var(--text-2)]">{cell?.token.trim() || "·"}</span><span className="font-mono">{cell ? `${(cell.prob * 100).toFixed(1)}%` : "—"}</span></div>;
+                  return <div key={layer} className="flex items-center justify-between gap-3 text-[11px]"><span className="text-[var(--muted)]">Layer {layer}</span><span className="truncate text-[var(--text-2)]">{cell?.token.trim() || "·"}</span><span className="font-mono">{cell ? `${(cell.prob * 100).toFixed(1)}%` : "—"}</span></div>;
                 })}
               </div>
             </Panel>

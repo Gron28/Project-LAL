@@ -112,15 +112,15 @@ export default function DirPicker({ open, recents, onPick, onClose }: {
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border-soft)]">
           <div className="flex items-center gap-1">
             <button onClick={() => setTab("browse")}
-              className={"text-xs font-semibold tracking-widest rounded px-2 py-1 " + (tab === "browse" ? "text-[var(--accent-ai)] bg-[var(--surface-2,#11151c)]" : "text-[var(--muted)]")}>
+              className={"text-xs font-semibold tracking-widest rounded px-2 py-1 " + (tab === "browse" ? "text-[var(--accent-ai)] bg-[var(--surface-2)]" : "text-[var(--muted)]")}>
               OPEN FOLDER
             </button>
             <button onClick={() => setTab("clone")}
-              className={"flex items-center gap-1.5 text-xs font-semibold tracking-widest rounded px-2 py-1 " + (tab === "clone" ? "text-[var(--accent-ai)] bg-[var(--surface-2,#11151c)]" : "text-[var(--muted)]")}>
+              className={"flex items-center gap-1.5 text-xs font-semibold tracking-widest rounded px-2 py-1 " + (tab === "clone" ? "text-[var(--accent-ai)] bg-[var(--surface-2)]" : "text-[var(--muted)]")}>
               <GitBranch size={12} /> CLONE
             </button>
             <button onClick={() => setTab("new")}
-              className={"flex items-center gap-1.5 text-xs font-semibold tracking-widest rounded px-2 py-1 " + (tab === "new" ? "text-[var(--accent-ai)] bg-[var(--surface-2,#11151c)]" : "text-[var(--muted)]")}>
+              className={"flex items-center gap-1.5 text-xs font-semibold tracking-widest rounded px-2 py-1 " + (tab === "new" ? "text-[var(--accent-ai)] bg-[var(--surface-2)]" : "text-[var(--muted)]")}>
               <FolderPlus size={12} /> NEW
             </button>
           </div>
@@ -143,7 +143,7 @@ export default function DirPicker({ open, recents, onPick, onClose }: {
         )}
         {tab === "browse" && recents.length > 0 && (
           <div className="px-4 pt-2 pb-1 border-b border-[var(--border-soft)] shrink-0">
-            <div className="text-[10px] uppercase tracking-widest text-[var(--muted)] mb-1">recent</div>
+            <div className="text-[11px] uppercase tracking-widest text-[var(--muted)] mb-1">recent</div>
             <div className="flex flex-wrap gap-1.5 pb-2">
               {recents.slice(0, 4).map((p) => (
                 <button key={p} onClick={() => onPick(p)} title={p}
@@ -174,7 +174,7 @@ export default function DirPicker({ open, recents, onPick, onClose }: {
               onDoubleClick={() => tab === "browse" && onPick(listing.path + "/" + d)}
               onClick={() => nav(listing.path + "/" + d)}
               title={tab === "browse" ? "click to enter, double-click to select" : "click to enter"}
-              className="w-full flex items-center gap-2 text-xs font-mono px-2 py-1.5 rounded hover:bg-[var(--surface-2,#11151c)] text-left">
+              className="w-full flex items-center gap-2 text-xs font-mono px-2 py-1.5 rounded hover:bg-[var(--surface-2)] text-left">
               <Folder size={13} className="text-[var(--muted)] shrink-0" />
               <span className="truncate">{d}</span>
             </button>
@@ -186,53 +186,53 @@ export default function DirPicker({ open, recents, onPick, onClose }: {
             <input value={manual} onChange={(e) => setManual(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && manual.trim()) onPick(manual.trim()); }}
               placeholder="or paste an absolute path…"
-              className="flex-1 bg-[var(--surface-2,#11151c)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono" />
+              className="flex-1 bg-[var(--surface-2)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono" />
             {listing?.isGit && (
-              <span className="flex items-center gap-1 text-[10px] text-[var(--accent-ai)]" title="this folder is a git repository">
+              <span className="flex items-center gap-1 text-[11px] text-[var(--accent-ai)]" title="this folder is a git repository">
                 <FolderGit2 size={12} /> git
               </span>
             )}
             <button onClick={() => manual.trim() ? onPick(manual.trim()) : listing && onPick(listing.path)}
-              className="text-xs font-semibold bg-[var(--accent-ai)] text-[#05090c] rounded px-3 py-1.5">
+              className="text-xs font-semibold bg-[var(--accent-ai)] text-[var(--on-accent)] rounded px-3 py-1.5">
               Select {manual.trim() ? "path" : "this folder"}
             </button>
           </div>
         ) : tab === "clone" ? (
           <div className="flex flex-col gap-2 px-4 py-3 border-t border-[var(--border-soft)] shrink-0">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-[var(--muted)] shrink-0">into:</span>
+              <span className="text-[11px] text-[var(--muted)] shrink-0">into:</span>
               <span className="text-[11px] font-mono truncate" title={listing?.path}>{listing?.path}</span>
             </div>
             <input value={cloneUrl}
               onChange={(e) => { setCloneUrl(e.target.value); if (!cloneNameTouched) setCloneName(nameFromUrl(e.target.value)); }}
               placeholder="git remote URL (https://…, git@host:…)"
-              className="bg-[var(--surface-2,#11151c)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono" />
+              className="bg-[var(--surface-2)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono" />
             <div className="flex items-center gap-2">
               <input value={cloneName} onChange={(e) => { setCloneName(e.target.value); setCloneNameTouched(true); }}
-                placeholder="folder name" className="flex-1 bg-[var(--surface-2,#11151c)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono" />
+                placeholder="folder name" className="flex-1 bg-[var(--surface-2)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono" />
               <button onClick={doClone} disabled={!cloneUrl.trim() || !cloneName.trim() || cloning}
-                className="text-xs font-semibold bg-[var(--accent-ai)] text-[#05090c] rounded px-3 py-1.5 disabled:opacity-40 shrink-0">
+                className="text-xs font-semibold bg-[var(--accent-ai)] text-[var(--on-accent)] rounded px-3 py-1.5 disabled:opacity-40 shrink-0">
                 {cloning ? "cloning…" : "Clone here"}
               </button>
             </div>
-            {cloneMsg && <pre className="text-[10px] text-[var(--accent-danger)] whitespace-pre-wrap max-h-20 overflow-auto">{cloneMsg}</pre>}
+            {cloneMsg && <pre className="text-[11px] text-[var(--accent-danger)] whitespace-pre-wrap max-h-20 overflow-auto">{cloneMsg}</pre>}
           </div>
         ) : (
           <div className="flex flex-col gap-2 px-4 py-3 border-t border-[var(--border-soft)] shrink-0">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-[var(--muted)] shrink-0">into:</span>
+              <span className="text-[11px] text-[var(--muted)] shrink-0">into:</span>
               <span className="text-[11px] font-mono truncate" title={listing?.path}>{listing?.path}</span>
             </div>
             <div className="flex items-center gap-2">
               <input value={newName} onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && newName.trim()) doCreate(); }}
-                placeholder="new folder name" className="flex-1 bg-[var(--surface-2,#11151c)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono" />
+                placeholder="new folder name" className="flex-1 bg-[var(--surface-2)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono" />
               <button onClick={doCreate} disabled={!newName.trim() || creating}
-                className="text-xs font-semibold bg-[var(--accent-ai)] text-[#05090c] rounded px-3 py-1.5 disabled:opacity-40 shrink-0">
+                className="text-xs font-semibold bg-[var(--accent-ai)] text-[var(--on-accent)] rounded px-3 py-1.5 disabled:opacity-40 shrink-0">
                 {creating ? "creating…" : "Create project here"}
               </button>
             </div>
-            {createMsg && <pre className="text-[10px] text-[var(--accent-danger)] whitespace-pre-wrap max-h-20 overflow-auto">{createMsg}</pre>}
+            {createMsg && <pre className="text-[11px] text-[var(--accent-danger)] whitespace-pre-wrap max-h-20 overflow-auto">{createMsg}</pre>}
           </div>
         )}
       </div>

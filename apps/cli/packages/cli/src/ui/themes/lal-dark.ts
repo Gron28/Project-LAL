@@ -6,45 +6,19 @@
 
 import { type ColorsTheme, Theme } from './theme.js';
 import type { SemanticColors } from './semantic-tokens.js';
+import { LAL_PALETTE_DARK } from './lal-palette.js';
 
-// LAL brand palette: green → lime → yellow (see Header.tsx brand constants).
+// LAL brand palette: solar → sage (see Header.tsx brand constants).
 // Blue/purple roles from the inherited themes are re-pointed at the
-// green–lime axis so every surface (links, accents, focus borders, symbols,
+// solar–sage axis so every surface (links, accents, focus borders, symbols,
 // syntax) reads as one system. Red stays reserved for errors/diff-removed.
+// Palette values are generated from design/tokens.json (cli.dark) so the
+// terminal and the web app share one source; the token build enforces
+// WCAG AA (4.5:1) for every text color against Background and DiffAdded.
 const lalDarkColors: ColorsTheme = {
   type: 'dark',
-  Background: '#0B0F0C',
-  // Keep all reading text comfortably above the near-black background.
-  Foreground: '#F2F7F1',
-  // "LightBlue" slot → light lime (inline code, names).
-  LightBlue: '#D5FF8A',
-  // "AccentBlue" slot → lime-green (links, focused borders, types).
-  AccentBlue: '#A9FF73',
-  // "AccentPurple" slot → yellow-lime (accents, literals).
-  AccentPurple: '#FFF28A',
-  // Mint-green (quotes, symbols) — cool counterpoint inside the family.
-  AccentCyan: '#A7FFE1',
-  AccentGreen: '#80FF9B',
-  AccentYellow: '#FFE78A',
-  AccentRed: '#F26D78',
-  AccentYellowDim: '#C9BB56',
-  AccentRedDim: '#D97984',
-  // Full-line backgrounds for diff rendering — DiffRenderer.tsx fills the
-  // entire line with this color and then draws syntax-highlighted /
-  // status-colored text (including AccentGreen for the "+" prefix) on top.
-  // The bare accent hues above (#80FF9B green, same #F26D78 as AccentRed)
-  // measured a WCAG contrast ratio of ~1.0–1.16 against that foreground
-  // text — reportedly "hard to read" (2026-07-19). These are the LAL brand
-  // green / accent red blended at 18% into Background (#0B0F0C) instead of
-  // used at full saturation: a dark, on-brand tint that still reads as
-  // "green"/"red" while keeping every foreground color on top comfortably
-  // above WCAG AAA (>10:1, verified against Foreground/AccentGreen/
-  // AccentYellow/LightBlue).
-  DiffAdded: '#18351E',
-  DiffRemoved: '#35201F',
-  Comment: '#AABAAA',
-  Gray: '#8FA18F',
-  GradientColors: ['#80FF9B', '#CFFF68', '#FFE78A'],
+  ...LAL_PALETTE_DARK,
+  GradientColors: [...LAL_PALETTE_DARK.GradientColors],
 };
 
 const lalDarkSemanticColors: SemanticColors = {

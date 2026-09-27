@@ -7,6 +7,8 @@ import { BenchmarkTimeline, CapabilityProfile, DeltaChart, MetricBars, QuestionD
 import LensWorkbench from "@/components/lens-workbench";
 import { Panel } from "@/components/ui/panel";
 import { LabNav } from "@/components/lab-nav";
+import { GuidedHeader } from "@/components/ui/guided-header";
+import { GUIDES } from "@/lib/page-guides";
 
 const head = "px-4 py-3 border-b border-[var(--border-soft)] text-[11px] tracking-widest uppercase text-[var(--text-2)] flex items-center gap-2";
 
@@ -63,14 +65,14 @@ function TestManager({ suiteId, onClose, onSaved }: { suiteId: string; onClose: 
           </select>
           <button onClick={newSuite} className="text-xs text-[var(--accent-ai)] hover:underline">+ new suite</button>
           <button onClick={delSuite} className="text-xs text-[var(--accent-danger)] hover:underline">delete suite</button>
-          <span className="ml-auto text-[10px] text-[var(--accent-ai)]">{msg}</span>
-          <button onClick={onClose} aria-label="Close test manager" className="w-10 h-10 inline-grid place-items-center text-[var(--muted)] hover:text-white text-lg leading-none">×</button>
+          <span className="ml-auto text-[11px] text-[var(--accent-ai)]">{msg}</span>
+          <button onClick={onClose} aria-label="Close test manager" className="w-10 h-10 inline-grid place-items-center text-[var(--muted)] hover:text-[var(--text)] text-lg leading-none">×</button>
         </div>
         <div className="p-4 space-y-3">
           <div className="flex items-center gap-2">
-            <label className="text-[10px] uppercase tracking-widest text-[var(--muted)]">Label</label>
+            <label className="text-[11px] uppercase tracking-widest text-[var(--muted)]">Label</label>
             <input value={label} onChange={(e) => setLabel(e.target.value)} className={inp + " flex-1"} />
-            <span className="text-[10px] text-[var(--muted)]">{items.length} questions</span>
+            <span className="text-[11px] text-[var(--muted)]">{items.length} questions</span>
           </div>
 
           <div className="border border-[var(--border-soft)] rounded-[var(--r-md)] divide-y divide-[var(--border-soft)] max-h-[40vh] overflow-auto">
@@ -90,11 +92,11 @@ function TestManager({ suiteId, onClose, onSaved }: { suiteId: string; onClose: 
           </div>
 
           <div className="border-t border-[var(--border-soft)] pt-3">
-            <div className="text-[10px] uppercase tracking-widest text-[var(--muted)] mb-1.5">Import questions (JSON array or JSONL)</div>
-            <p className="text-[10px] text-[var(--muted)] mb-2 leading-snug">Accepts our format <code>{`{cat,q,a}`}</code> or common ones <code>{`{question, answer}`}</code> / <code>{`{prompt, output}`}</code> — paste GSM8K, HumanEval-style sets, etc.</p>
+            <div className="text-[11px] uppercase tracking-widest text-[var(--muted)] mb-1.5">Import questions (JSON array or JSONL)</div>
+            <p className="text-[11px] text-[var(--muted)] mb-2 leading-snug">Accepts our format <code>{`{cat,q,a}`}</code> or common ones <code>{`{question, answer}`}</code> / <code>{`{prompt, output}`}</code> — paste GSM8K, HumanEval-style sets, etc.</p>
             <textarea value={importText} onChange={(e) => setImportText(e.target.value)} rows={4} className={inp + " w-full font-mono resize-y"} placeholder='[{"cat":"math","q":"2+2?","a":["4"]}]  or  {"question":"...","answer":"..."} per line' />
             <div className="flex items-center gap-2 mt-2">
-              <label className="text-[10px] text-[var(--muted)]">mode</label>
+              <label className="text-[11px] text-[var(--muted)]">mode</label>
               <select value={mode} onChange={(e) => setMode(e.target.value as "append" | "replace")} className={inp}><option value="append">append</option><option value="replace">replace</option></select>
               <button onClick={doImport} disabled={!importText.trim()} className="text-xs font-semibold border border-[var(--accent-ai)]/50 text-[var(--accent-ai)] rounded px-4 py-1.5 ml-auto disabled:opacity-40">Import</button>
             </div>
@@ -228,21 +230,21 @@ export default function Benchmark() {
 
   return (
     <main id="main-content" className="page-shell text-[var(--text)]">
-      <div className="page-frame max-w-[1500px] flex flex-col gap-4">
+      <div className="page-frame">
         <LabNav />
-        <h1 className="sr-only">{view === "lens" ? "Model lens" : "Evaluation"}</h1>
+        <GuidedHeader id="benchmark" eyebrow="Lab" title={view === "lens" ? "Model lens" : "Evaluation"} guide={GUIDES.benchmark} />
         {view === "lens" ? <LensWorkbench toolbar={<ViewSwitch view={view} onChange={switchView} />} /> : (
           <>
             <Panel className="grid sm:grid-cols-[auto_1fr] lg:grid-cols-[auto_1fr_1fr_auto_auto] gap-3 items-end">
               <ViewSwitch view={view} onChange={switchView} />
               <div>
-                <label htmlFor="evaluation-suite" className="block text-[10px] tracking-[0.16em] uppercase text-[var(--muted)] mb-1.5">Evaluation suite</label>
+                <label htmlFor="evaluation-suite" className="block text-[11px] tracking-[0.16em] uppercase text-[var(--muted)] mb-1.5">Evaluation suite</label>
                 <select id="evaluation-suite" className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-3 py-2.5 text-sm outline-none focus:border-[var(--border-loud)]" value={suite} onChange={(e) => { setSuite(e.target.value); setDetail(null); setPendingDetail(null); }}>
                   {(suiteList.length ? suiteList : SUITES.map((item) => ({ ...item, count: 0 }))).map((item) => <option key={item.id} value={item.id}>{item.label || item.id}{item.count ? ` · ${item.count} questions` : ""}</option>)}
                 </select>
               </div>
               <div>
-                <label htmlFor="evaluation-model" className="block text-[10px] tracking-[0.16em] uppercase text-[var(--muted)] mb-1.5">Model under test</label>
+                <label htmlFor="evaluation-model" className="block text-[11px] tracking-[0.16em] uppercase text-[var(--muted)] mb-1.5">Model under test</label>
                 <select id="evaluation-model" className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-3 py-2.5 text-sm outline-none focus:border-[var(--border-loud)]" value={model} onChange={(e) => setModel(e.target.value)}>{models.map((name) => <option key={name}>{name}</option>)}</select>
               </div>
               <button onClick={() => setManageOpen(true)} className="h-[42px] inline-flex items-center justify-center gap-2 border border-[var(--border)] text-[var(--text-2)] rounded-[var(--r-md)] px-4 text-[11px] font-semibold uppercase tracking-[0.12em] hover:border-[var(--border-loud)]"><Settings2 size={14} /> Tests</button>
@@ -261,10 +263,10 @@ export default function Benchmark() {
 
             {allSuiteRuns.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 px-1">
-                <span className="text-[9px] uppercase tracking-[0.16em] text-[var(--muted)] mr-1">Visible models</span>
+                <span className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)] mr-1">Visible models</span>
                 {allSuiteRuns.map((result, i) => {
                   const hidden = hiddenModels.has(result.model);
-                  return <button key={result.model} onClick={() => toggleModel(result.model)} className="inline-flex items-center gap-1.5 text-[10px] px-2.5 py-1 rounded-full border transition-opacity" style={{ borderColor: hidden ? "var(--border)" : colorOf(i), color: hidden ? "var(--muted)" : colorOf(i), background: hidden ? "var(--surface-1)" : `${colorOf(i)}14`, opacity: hidden ? 0.55 : 1 }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: colorOf(i) }} />{shortName(result.model)}{hidden ? " · hidden" : ""}</button>;
+                  return <button key={result.model} onClick={() => toggleModel(result.model)} className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full border transition-opacity" style={{ borderColor: hidden ? "var(--border)" : colorOf(i), color: hidden ? "var(--muted)" : colorOf(i), background: hidden ? "var(--surface-1)" : `${colorOf(i)}14`, opacity: hidden ? 0.55 : 1 }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: colorOf(i) }} />{shortName(result.model)}{hidden ? " · hidden" : ""}</button>;
                 })}
               </div>
             )}
@@ -286,7 +288,7 @@ export default function Benchmark() {
                     <div className="space-y-2 mt-4 max-h-[560px] overflow-auto pr-1">
                       {ranked.map((result, i) => (
                         <button key={result.model} onClick={() => { setDetail(result); setPendingDetail(null); }} className="w-full text-left p-3 rounded-[var(--r-md)] border border-[var(--border-soft)] bg-[var(--surface-2)] hover:border-[var(--border-loud)]">
-                          <div className="flex items-start gap-3"><span className="text-[10px] text-[var(--muted)] pt-0.5">{String(i + 1).padStart(2, "0")}</span><div className="min-w-0 flex-1"><div className="flex items-center gap-1.5"><span className="text-xs font-semibold truncate">{shortName(result.model)}</span>{result.pinned && <Pin size={11} className="text-[var(--accent-highlight)]" />}{result.stale && <span className="text-[8px] uppercase tracking-wide text-[var(--accent-warn)]">stale baseline</span>}</div><div className="text-[9px] text-[var(--muted)] mt-1">{result.score}/{result.total} correct · {result.tokSec ?? "—"} tok/s</div></div><span className="text-xl font-semibold" style={{ color: i === 0 ? "var(--accent-success)" : "var(--text)" }}>{pct(result.score, result.total)}%</span></div>
+                          <div className="flex items-start gap-3"><span className="text-[11px] text-[var(--muted)] pt-0.5">{String(i + 1).padStart(2, "0")}</span><div className="min-w-0 flex-1"><div className="flex items-center gap-1.5"><span className="text-xs font-semibold truncate">{shortName(result.model)}</span>{result.pinned && <Pin size={11} className="text-[var(--accent-highlight)]" />}{result.stale && <span className="text-[10px] uppercase tracking-wide text-[var(--accent-warn)]">stale baseline</span>}</div><div className="text-[10px] text-[var(--muted)] mt-1">{result.score}/{result.total} correct · {result.tokSec ?? "—"} tok/s</div></div><span className="text-xl font-semibold" style={{ color: i === 0 ? "var(--accent-success)" : "var(--text)" }}>{pct(result.score, result.total)}%</span></div>
                           <div className="h-1 bg-[var(--surface-3)] rounded-full mt-3 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${pct(result.score, result.total)}%`, background: PALETTE[suiteRuns.indexOf(result) % PALETTE.length] }} /></div>
                         </button>
                       ))}
@@ -317,16 +319,16 @@ export default function Benchmark() {
                                 <span style={{ width: `${100 * gsmDifficulty.contested / gsmDifficulty.total}%`, background: "var(--accent-warn)" }} />
                                 <span style={{ width: `${100 * gsmDifficulty.solved / gsmDifficulty.total}%`, background: "var(--accent-success)" }} />
                               </div>
-                              <div className="flex justify-between text-[8px] text-[var(--muted)] mt-2"><span>hard</span><span>model-separating</span><span>solved</span></div>
+                              <div className="flex justify-between text-[10px] text-[var(--muted)] mt-2"><span>hard</span><span>model-separating</span><span>solved</span></div>
                             </div>
                           </>
-                        ) : <div className="flex-1 grid place-items-center text-[10px] text-[var(--muted)]">Per-question evidence populates after the first complete run.</div>}
+                        ) : <div className="flex-1 grid place-items-center text-[11px] text-[var(--muted)]">Per-question evidence populates after the first complete run.</div>}
                       </Panel>
                     </div>
 
                     <Panel>
                       <SectionTitle eyebrow="GSM8K reasoning matrix" title="Every problem × every model" note="hardest first · green correct · red incorrect · scroll for all 60" />
-                      <div className="flex flex-wrap gap-4 text-[8px] text-[var(--muted)] mb-3"><span><i className="inline-block w-2 h-2 rounded-sm bg-[var(--accent-success)] mr-1" />correct</span><span><i className="inline-block w-2 h-2 rounded-sm bg-[var(--accent-danger)] mr-1" />incorrect</span><span>Rows are ranked by observed pass rate, not hand-labeled difficulty.</span></div>
+                      <div className="flex flex-wrap gap-4 text-[10px] text-[var(--muted)] mb-3"><span><i className="inline-block w-2 h-2 rounded-sm bg-[var(--accent-success)] mr-1" />correct</span><span><i className="inline-block w-2 h-2 rounded-sm bg-[var(--accent-danger)] mr-1" />incorrect</span><span>Rows are ranked by observed pass rate, not hand-labeled difficulty.</span></div>
                       <QuestionDifficultyMatrix runs={suiteRuns} />
                     </Panel>
                   </>
@@ -343,28 +345,28 @@ export default function Benchmark() {
                 </Panel>
 
                 <div className="grid xl:grid-cols-2 gap-4">
-                  {before && after && <Panel><SectionTitle eyebrow="Training delta" title={`${shortName(before.model)} → ${shortName(after.model)}`} note="Points gained or lost by capability" /><DeltaChart before={before} after={after} cats={cats} /><div className="flex gap-4 justify-center text-[9px] text-[var(--muted)]"><span className="inline-flex items-center gap-1.5"><span className="w-4 border-t border-dashed border-[var(--muted)]" />before</span><span className="inline-flex items-center gap-1.5"><span className="w-4 border-t-2 border-[var(--accent-ai)]" />after</span></div></Panel>}
+                  {before && after && <Panel><SectionTitle eyebrow="Training delta" title={`${shortName(before.model)} → ${shortName(after.model)}`} note="Points gained or lost by capability" /><DeltaChart before={before} after={after} cats={cats} /><div className="flex gap-4 justify-center text-[10px] text-[var(--muted)]"><span className="inline-flex items-center gap-1.5"><span className="w-4 border-t border-dashed border-[var(--muted)]" />before</span><span className="inline-flex items-center gap-1.5"><span className="w-4 border-t-2 border-[var(--accent-ai)]" />after</span></div></Panel>}
                   <Panel><SectionTitle eyebrow="Efficiency frontier" title="Smarter ↑ and faster →" note="Bubble area represents checkpoint size" /><div className="mt-2"><ScatterPlot runs={suiteRuns} colorOf={colorOf} /></div></Panel>
                 </div>
 
                 <Panel padding="none">
-                  <div className={head}><span className="text-[var(--accent-ai)]">◆</span> Full measurement matrix <span className="ml-auto normal-case tracking-normal text-[9px] text-[var(--muted)]">percent · exact count · runtime telemetry</span></div>
+                  <div className={head}><span className="text-[var(--accent-ai)]">◆</span> Full measurement matrix <span className="ml-auto normal-case tracking-normal text-[10px] text-[var(--muted)]">percent · exact count · runtime telemetry</span></div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-[10px]">
+                    <table className="w-full text-[11px]">
                       <thead><tr className="text-[var(--muted)] uppercase tracking-[0.12em]"><th className="text-left px-4 py-3">Model</th>{cats.map((cat) => <th key={cat} className="px-3 py-3">{cat}</th>)}<th className="px-3 py-3">Overall</th><th className="px-3 py-3">tok/s</th><th className="px-3 py-3">latency</th><th className="px-3 py-3">TTFT</th><th className="px-3 py-3">size</th><th className="px-3 py-3">saved</th><th className="px-3 py-3">actions</th></tr></thead>
-                      <tbody>{suiteRuns.map((result, ri) => <tr key={result.model} className="border-t border-[var(--border-soft)] hover:bg-[var(--surface-2)] cursor-pointer" onClick={() => { setDetail(result); setPendingDetail(null); }}><td className="px-4 py-3 min-w-44"><div className="flex items-center gap-2 font-medium"><span className="w-2 h-2 rounded-full" style={{ background: colorOf(ri) }} />{shortName(result.model)}{result.pinned && <Pin size={10} className="text-[var(--accent-highlight)]" />}</div>{result.stale && <div className="text-[8px] text-[var(--accent-warn)] mt-1">suite changed since pinning</div>}</td>{cats.map((cat) => { const value = result.cats[cat]; const score = pct(value?.ok ?? 0, value?.total ?? 0); return <td key={cat} className="px-3 py-3 text-center"><div style={{ color: score >= 67 ? "var(--accent-success)" : score >= 34 ? "var(--accent-warn)" : "var(--accent-danger)" }}>{value ? `${score}%` : "—"}</div><div className="text-[8px] text-[var(--muted)]">{value ? `${value.ok}/${value.total}` : ""}</div></td>; })}<td className="px-3 py-3 text-center font-semibold">{pct(result.score, result.total)}%<div className="text-[8px] text-[var(--muted)]">{result.score}/{result.total}</div></td><td className="px-3 py-3 text-center">{result.tokSec ?? "—"}</td><td className="px-3 py-3 text-center">{result.latencyMs ? `${result.latencyMs}ms` : "—"}</td><td className="px-3 py-3 text-center">{result.ttftMs ? `${result.ttftMs}ms` : "—"}</td><td className="px-3 py-3 text-center">{result.sizeGb != null ? `${result.sizeGb.toFixed(1)}GB` : "—"}</td><td className="px-3 py-3 text-center whitespace-nowrap">{result.ts ? new Date(result.ts).toLocaleDateString() : "—"}</td><td className="px-3 py-3" onClick={(e) => e.stopPropagation()}><div className="flex justify-center gap-1"><button onClick={() => togglePin(result)} title={result.pinned ? "Unpin baseline" : "Pin as baseline"} className="p-1.5 rounded hover:bg-[var(--surface-3)] text-[var(--muted)] hover:text-[var(--accent-highlight)]">{result.pinned ? <PinOff size={13} /> : <Pin size={13} />}</button><button onClick={() => deleteResult(result)} title="Delete result" className="p-1.5 rounded hover:bg-[var(--surface-3)] text-[var(--muted)] hover:text-[var(--accent-danger)]"><Trash2 size={13} /></button></div></td></tr>)}</tbody>
+                      <tbody>{suiteRuns.map((result, ri) => <tr key={result.model} className="border-t border-[var(--border-soft)] hover:bg-[var(--surface-2)] cursor-pointer" onClick={() => { setDetail(result); setPendingDetail(null); }}><td className="px-4 py-3 min-w-44"><div className="flex items-center gap-2 font-medium"><span className="w-2 h-2 rounded-full" style={{ background: colorOf(ri) }} />{shortName(result.model)}{result.pinned && <Pin size={10} className="text-[var(--accent-highlight)]" />}</div>{result.stale && <div className="text-[10px] text-[var(--accent-warn)] mt-1">suite changed since pinning</div>}</td>{cats.map((cat) => { const value = result.cats[cat]; const score = pct(value?.ok ?? 0, value?.total ?? 0); return <td key={cat} className="px-3 py-3 text-center"><div style={{ color: score >= 67 ? "var(--accent-success)" : score >= 34 ? "var(--accent-warn)" : "var(--accent-danger)" }}>{value ? `${score}%` : "—"}</div><div className="text-[10px] text-[var(--muted)]">{value ? `${value.ok}/${value.total}` : ""}</div></td>; })}<td className="px-3 py-3 text-center font-semibold">{pct(result.score, result.total)}%<div className="text-[10px] text-[var(--muted)]">{result.score}/{result.total}</div></td><td className="px-3 py-3 text-center">{result.tokSec ?? "—"}</td><td className="px-3 py-3 text-center">{result.latencyMs ? `${result.latencyMs}ms` : "—"}</td><td className="px-3 py-3 text-center">{result.ttftMs ? `${result.ttftMs}ms` : "—"}</td><td className="px-3 py-3 text-center">{result.sizeGb != null ? `${result.sizeGb.toFixed(1)}GB` : "—"}</td><td className="px-3 py-3 text-center whitespace-nowrap">{result.ts ? new Date(result.ts).toLocaleDateString() : "—"}</td><td className="px-3 py-3" onClick={(e) => e.stopPropagation()}><div className="flex justify-center gap-1"><button onClick={() => togglePin(result)} title={result.pinned ? "Unpin baseline" : "Pin as baseline"} className="p-1.5 rounded hover:bg-[var(--surface-3)] text-[var(--muted)] hover:text-[var(--accent-highlight)]">{result.pinned ? <PinOff size={13} /> : <Pin size={13} />}</button><button onClick={() => deleteResult(result)} title="Delete result" className="p-1.5 rounded hover:bg-[var(--surface-3)] text-[var(--muted)] hover:text-[var(--accent-danger)]"><Trash2 size={13} /></button></div></td></tr>)}</tbody>
                     </table>
                   </div>
                 </Panel>
 
                 <Panel padding="none">
-                  <div className={head}><span className="text-[var(--accent-ai)]">◆</span> Question-level evidence <span className="ml-auto normal-case tracking-normal text-[9px] text-[var(--muted)]">{selectedDetail ? `${selectedDetail.results?.length ?? 0} responses · ${failures} failures` : loadingSuite ? "loading this suite's evidence…" : "select a model row"}</span></div>
-                  {selectedDetail ? <div className="max-h-[58vh] overflow-auto text-xs">{(selectedDetail.results || []).map((item, i) => <div key={i} className="px-4 py-3 border-b border-[var(--border-soft)] last:border-0 grid grid-cols-[20px_48px_1fr] gap-2"><span style={{ color: item.ok ? "var(--accent-success)" : "var(--accent-danger)" }}>{item.ok ? "✓" : "✗"}</span><span className="text-[8px] uppercase tracking-widest text-[var(--muted)] pt-0.5">{item.cat}</span><span className="min-w-0"><span className="text-[var(--text-2)]">{item.q}</span><br /><span className="text-[var(--muted)]">→ {item.got || "(empty)"}</span>{item.detail && <><br /><span className="text-[10px] text-[var(--muted)] italic">{item.detail}</span></>}{item.shot && <a href={`/api/webshot?id=${item.shot}`} target="_blank" rel="noreferrer" className="block mt-2"><img src={`/api/webshot?id=${item.shot}`} alt="rendered benchmark output" className="max-h-44 rounded border border-[var(--border-soft)]" /></a>}</span></div>)}</div> : <div className="h-28 grid place-items-center text-[11px] text-[var(--muted)]">Select any leaderboard card or matrix row to inspect every prompt, response, grade, and rendered artifact.</div>}
+                  <div className={head}><span className="text-[var(--accent-ai)]">◆</span> Question-level evidence <span className="ml-auto normal-case tracking-normal text-[10px] text-[var(--muted)]">{selectedDetail ? `${selectedDetail.results?.length ?? 0} responses · ${failures} failures` : loadingSuite ? "loading this suite's evidence…" : "select a model row"}</span></div>
+                  {selectedDetail ? <div className="max-h-[58vh] overflow-auto text-xs">{(selectedDetail.results || []).map((item, i) => <div key={i} className="px-4 py-3 border-b border-[var(--border-soft)] last:border-0 grid grid-cols-[20px_48px_1fr] gap-2"><span style={{ color: item.ok ? "var(--accent-success)" : "var(--accent-danger)" }}>{item.ok ? "✓" : "✗"}</span><span className="text-[10px] uppercase tracking-widest text-[var(--muted)] pt-0.5">{item.cat}</span><span className="min-w-0"><span className="text-[var(--text-2)]">{item.q}</span><br /><span className="text-[var(--muted)]">→ {item.got || "(empty)"}</span>{item.detail && <><br /><span className="text-[11px] text-[var(--muted)] italic">{item.detail}</span></>}{item.shot && <a href={`/api/webshot?id=${item.shot}`} target="_blank" rel="noreferrer" className="block mt-2"><img src={`/api/webshot?id=${item.shot}`} alt="rendered benchmark output" className="max-h-44 rounded border border-[var(--border-soft)]" /></a>}</span></div>)}</div> : <div className="h-28 grid place-items-center text-[11px] text-[var(--muted)]">Select any leaderboard card or matrix row to inspect every prompt, response, grade, and rendered artifact.</div>}
                 </Panel>
               </>
             )}
 
-            {runs.length > 0 && <Panel padding="none"><div className={head}><Clock3 size={13} className="text-[var(--accent-ai)]" /> Complete evaluation archive <span className="ml-auto normal-case tracking-normal text-[9px] text-[var(--muted)]">all suites · nothing omitted by the current filter</span></div><div className="overflow-auto max-h-[540px]"><table className="w-full text-[10px]"><thead className="sticky top-0 z-10 bg-[var(--surface-1)]"><tr className="text-[var(--muted)] uppercase tracking-[0.12em]"><th className="text-left px-4 py-2.5">Suite</th><th className="text-left px-3 py-2.5">Model</th><th className="px-3 py-2.5">Score</th><th className="px-3 py-2.5">Speed</th><th className="px-3 py-2.5">Latency</th><th className="px-3 py-2.5">Saved</th></tr></thead><tbody>{[...runs].reverse().map((result) => <tr key={`${result.suite}-${result.model}`} onClick={() => { setSuite(result.suite); setDetail(null); setPendingDetail({ suite: result.suite, model: result.model }); }} className="border-t border-[var(--border-soft)] hover:bg-[var(--surface-2)] cursor-pointer"><td className="px-4 py-2.5 text-[var(--text-2)]">{result.suite}</td><td className="px-3 py-2.5">{shortName(result.model)}</td><td className="px-3 py-2.5 text-center">{result.score}/{result.total} · {pct(result.score, result.total)}%</td><td className="px-3 py-2.5 text-center">{result.tokSec ?? "—"} tok/s</td><td className="px-3 py-2.5 text-center">{result.latencyMs ? `${result.latencyMs}ms` : "—"}</td><td className="px-3 py-2.5 text-center">{result.ts ? new Date(result.ts).toLocaleString() : "—"}</td></tr>)}</tbody></table></div></Panel>}
+            {runs.length > 0 && <Panel padding="none"><div className={head}><Clock3 size={13} className="text-[var(--accent-ai)]" /> Complete evaluation archive <span className="ml-auto normal-case tracking-normal text-[10px] text-[var(--muted)]">all suites · nothing omitted by the current filter</span></div><div className="overflow-auto max-h-[540px]"><table className="w-full text-[11px]"><thead className="sticky top-0 z-10 bg-[var(--surface-1)]"><tr className="text-[var(--muted)] uppercase tracking-[0.12em]"><th className="text-left px-4 py-2.5">Suite</th><th className="text-left px-3 py-2.5">Model</th><th className="px-3 py-2.5">Score</th><th className="px-3 py-2.5">Speed</th><th className="px-3 py-2.5">Latency</th><th className="px-3 py-2.5">Saved</th></tr></thead><tbody>{[...runs].reverse().map((result) => <tr key={`${result.suite}-${result.model}`} onClick={() => { setSuite(result.suite); setDetail(null); setPendingDetail({ suite: result.suite, model: result.model }); }} className="border-t border-[var(--border-soft)] hover:bg-[var(--surface-2)] cursor-pointer"><td className="px-4 py-2.5 text-[var(--text-2)]">{result.suite}</td><td className="px-3 py-2.5">{shortName(result.model)}</td><td className="px-3 py-2.5 text-center">{result.score}/{result.total} · {pct(result.score, result.total)}%</td><td className="px-3 py-2.5 text-center">{result.tokSec ?? "—"} tok/s</td><td className="px-3 py-2.5 text-center">{result.latencyMs ? `${result.latencyMs}ms` : "—"}</td><td className="px-3 py-2.5 text-center">{result.ts ? new Date(result.ts).toLocaleString() : "—"}</td></tr>)}</tbody></table></div></Panel>}
           </>
         )}
       </div>
@@ -373,21 +375,22 @@ export default function Benchmark() {
 }
 
 function Summary({ label, value, note, Icon }: { label: string; value: string; note: string; Icon: typeof Gauge }) {
-  return <div className="flex items-start gap-3 min-w-0"><div className="w-8 h-8 rounded-[var(--r-md)] bg-[var(--surface-3)] text-[var(--accent-ai)] grid place-items-center shrink-0"><Icon size={15} /></div><div className="min-w-0"><div className="text-[9px] uppercase tracking-[0.16em] text-[var(--muted)]">{label}</div><div className="text-xl font-semibold tracking-tight mt-0.5 truncate">{value}</div><div className="text-[9px] text-[var(--muted)] truncate">{note}</div></div></div>;
+  return <div className="flex items-start gap-3 min-w-0"><div className="w-8 h-8 rounded-[var(--r-md)] bg-[var(--surface-3)] text-[var(--accent-ai)] grid place-items-center shrink-0"><Icon size={15} /></div><div className="min-w-0"><div className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">{label}</div><div className="text-xl font-semibold tracking-tight mt-0.5 truncate">{value}</div><div className="text-[10px] text-[var(--muted)] truncate">{note}</div></div></div>;
 }
 
 function SectionTitle({ eyebrow, title, note }: { eyebrow: string; title: string; note: string }) {
-  return <div className="flex flex-wrap items-end justify-between gap-2 mb-2"><div><div className="text-[9px] uppercase tracking-[0.18em] text-[var(--accent-ai)]">{eyebrow}</div><h2 className="text-sm font-semibold mt-1">{title}</h2></div><div className="text-[9px] text-[var(--muted)]">{note}</div></div>;
+  return <div className="flex flex-wrap items-end justify-between gap-2 mb-2"><div><div className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-ai)]">{eyebrow}</div><h2 className="text-sm font-semibold mt-1">{title}</h2></div><div className="text-[10px] text-[var(--muted)]">{note}</div></div>;
 }
 
 function Legend({ runs }: { runs: Res[] }) {
-  return <div className="flex flex-wrap gap-x-4 gap-y-1 justify-center mt-1">{runs.map((result, i) => <span key={result.model} className="inline-flex items-center gap-1.5 text-[9px] text-[var(--text-2)]"><span className="w-2 h-2 rounded-full" style={{ background: PALETTE[i % PALETTE.length] }} />{shortName(result.model)}</span>)}</div>;
+  return <div className="flex flex-wrap gap-x-4 gap-y-1 justify-center mt-1">{runs.map((result, i) => <span key={result.model} className="inline-flex items-center gap-1.5 text-[10px] text-[var(--text-2)]"><span className="w-2 h-2 rounded-full" style={{ background: PALETTE[i % PALETTE.length] }} />{shortName(result.model)}</span>)}</div>;
 }
 
 function LandscapeStat({ label, value, note, color }: { label: string; value: string | number; note: string; color: string }) {
-  return <div className="bg-[var(--surface-2)] p-3"><div className="text-[8px] uppercase tracking-[0.14em] text-[var(--muted)]">{label}</div><div className="text-2xl font-semibold mt-1" style={{ color }}>{value}</div><div className="text-[8px] text-[var(--muted)] mt-0.5">{note}</div></div>;
+  return <div className="bg-[var(--surface-2)] p-3"><div className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">{label}</div><div className="text-2xl font-semibold mt-1" style={{ color }}>{value}</div><div className="text-[10px] text-[var(--muted)] mt-0.5">{note}</div></div>;
 }
 
 function ViewSwitch({ view, onChange }: { view: "scores" | "lens"; onChange: (view: "scores" | "lens") => void }) {
-  return <div className="inline-flex p-0.5 bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] self-end"><button onClick={() => onChange("scores")} className="px-2.5 h-9 rounded-[6px] text-[10px] whitespace-nowrap" style={{ color: view === "scores" ? "var(--bg)" : "var(--text-2)", background: view === "scores" ? "var(--accent-ai)" : "transparent", fontWeight: view === "scores" ? 700 : 400 }}>Bench</button><button onClick={() => onChange("lens")} className="px-2.5 h-9 rounded-[6px] text-[10px] whitespace-nowrap" style={{ color: view === "lens" ? "var(--bg)" : "var(--text-2)", background: view === "lens" ? "var(--accent-ai)" : "transparent", fontWeight: view === "lens" ? 700 : 400 }}>Lens</button></div>;
+  const tabs: ["scores" | "lens", string][] = [["scores", "Quality"], ["lens", "Lens"]];
+  return <div role="tablist" aria-label="Evaluation views" className="seg self-end">{tabs.map(([id, label]) => <button key={id} role="tab" aria-selected={view === id} onClick={() => onChange(id)}>{label}</button>)}</div>;
 }

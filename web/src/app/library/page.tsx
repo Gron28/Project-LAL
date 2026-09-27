@@ -7,6 +7,8 @@ import DirPicker from "@/components/code/dir-picker";
 import { Panel } from "@/components/ui/panel";
 import { ICON_SIZE } from "@/components/ui/icon";
 import { LabNav } from "@/components/lab-nav";
+import { GuidedHeader } from "@/components/ui/guided-header";
+import { GUIDES } from "@/lib/page-guides";
 
 type M = { name: string; source: "local" | "ollama"; gb: number };
 type ModelDownloadJob = { id: string; state: string; progress: { phase: string; completed: number; total?: number }; error?: { message: string } };
@@ -24,7 +26,7 @@ type Diagnosis = {
   stats: { durationSec: number; rounds: number; toolCalls: number; toolFailures: number; textChars: number; thinkChars: number; nudges: number; maxGapSec: number; tokPerSec: number | null; avgConf: number | null; minConf: number | null };
 };
 type ModelReportRow = { model: string; runs: number; clean: number; flawed: number; failed: number; toolCalls: number; toolFailures: number; avgTokPerSec: number | null; avgConf: number | null; topFailures: { code: string; count: number }[] };
-const verdictColor = (v: string) => v === "clean" ? "var(--accent-success)" : v === "flawed" ? "var(--accent-warn,#d29922)" : "var(--accent-danger)";
+const verdictColor = (v: string) => v === "clean" ? "var(--accent-success)" : v === "flawed" ? "var(--accent-warn)" : "var(--accent-danger)";
 type ExperimentRow = {
   name: string; status: string; updatedAt: number; base: string; mode: string; steps: number; lr: number;
   dataset: { name: string; sha256: string; bytes: number; rows: number | null } | null; model?: string | null;
@@ -113,8 +115,8 @@ function Models() {
         ) : (
           <span className="flex-1 truncate text-sm" style={{ color: m.name === current ? "var(--accent-ai)" : "var(--text)" }}>{m.name}</span>
         )}
-        <span className="text-[10px] text-[var(--muted)] w-12 text-right">{m.gb}GB</span>
-        {m.name === current ? <span className="text-[10px] px-2 py-1 rounded-full border border-[var(--accent-ai)] text-[var(--accent-ai)]">CURRENT</span> : <button className={btn} onClick={() => setCur(m.name)}>Use</button>}
+        <span className="text-[11px] text-[var(--muted)] w-12 text-right">{m.gb}GB</span>
+        {m.name === current ? <span className="text-[11px] px-2 py-1 rounded-full border border-[var(--accent-ai)] text-[var(--accent-ai)]">CURRENT</span> : <button className={btn} onClick={() => setCur(m.name)}>Use</button>}
         {m.source === "local" && <button className={btn} title="Rename" onClick={() => isRenaming ? doRename(m.name) : startRename(m.name)}>{isRenaming ? "✓" : "✎"}</button>}
         {m.source === "local" && <a className={btn} href={"/api/download?model=" + encodeURIComponent(m.name)}>⤓</a>}
         <button className={btn} onClick={() => del(m.name, m.source)}>✕</button>
@@ -136,7 +138,7 @@ function Models() {
           <div className="grid sm:grid-cols-2 gap-2"><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="SHA-256" value={digest} onChange={(event) => setDigest(event.target.value)} /><input className="bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="Exact byte size" inputMode="numeric" value={sizeBytes} onChange={(event) => setSizeBytes(event.target.value)} /></div>
           <div className="flex flex-wrap gap-2 items-center"><input className="flex-1 min-w-48 bg-[var(--surface-2)] border border-[var(--border)] rounded p-2" placeholder="License name" value={licenseName} onChange={(event) => setLicenseName(event.target.value)} /><label className="flex items-center gap-1 text-[var(--muted)]"><input type="checkbox" checked={acceptedLicense} onChange={(event) => setAcceptedLicense(event.target.checked)} /> I reviewed and accept it</label><button className={btn} onClick={download}>Download verified GGUF</button></div>
           {downloadStatus && <p className="text-[var(--muted)]">{downloadStatus}</p>}
-          {downloads.length > 0 && <div className="text-[10px] text-[var(--muted)]">{downloads.map((job) => <div key={job.id}>{job.id}: {job.state} · {job.progress.phase} {job.progress.total ? `${job.progress.completed}/${job.progress.total}` : ""}{job.error ? ` · ${job.error.message}` : ""}</div>)}</div>}
+          {downloads.length > 0 && <div className="text-[11px] text-[var(--muted)]">{downloads.map((job) => <div key={job.id}>{job.id}: {job.state} · {job.progress.phase} {job.progress.total ? `${job.progress.completed}/${job.progress.total}` : ""}{job.error ? ` · ${job.error.message}` : ""}</div>)}</div>}
         </div>
       </Panel>
       <Panel padding="none">
@@ -205,7 +207,7 @@ function Documents() {
   const chip = (id: string, label: string, n: number, removable?: boolean) => (
     <span key={id} className="inline-flex items-center">
       <button onClick={() => setSel(id)} className="px-3 py-1.5 text-[11px] tracking-wide rounded-l-[var(--r-md)] border"
-        style={{ color: sel === id ? "#05090c" : "var(--text-2)", background: sel === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)", fontWeight: sel === id ? 700 : 400, borderRight: removable ? 0 : undefined, borderRadius: removable ? undefined : "var(--r-md)" }}>
+        style={{ color: sel === id ? "var(--text-accent)" : "var(--text-2)", background: sel === id ? "var(--bg-selected)" : "var(--surface-1)", borderColor: "var(--border)", borderRight: removable ? 0 : undefined, borderRadius: removable ? undefined : "var(--r-md)" }}>
         {label} <span style={{ opacity: 0.6 }}>{n}</span>
       </button>
       {removable && <button onClick={() => delFolder(id)} title="Delete folder" className="px-2 py-1.5 text-[11px] rounded-r-[var(--r-md)] border border-l-0" style={{ color: "var(--muted)", background: sel === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)" }}>✕</button>}
@@ -222,7 +224,7 @@ function Documents() {
         {folders.map((f) => chip(f, f, count(f), true))}
         {/* permanent training-data folder */}
         <button onClick={() => setSel(DATASETS)} className="px-3 py-1.5 text-[11px] tracking-wide rounded-[var(--r-md)] border"
-          style={{ color: isDatasets ? "#05090c" : "var(--accent-ai)", background: isDatasets ? "var(--accent-ai)" : "var(--surface-1)", borderColor: isDatasets ? "var(--accent-ai)" : "var(--accent-ai)", fontWeight: isDatasets ? 700 : 400 }}>
+          style={{ color: "var(--text-accent)", background: isDatasets ? "var(--bg-selected)" : "var(--surface-1)", borderColor: isDatasets ? "var(--border-focus)" : "var(--border-strong)" }}>
           ◆ Training Data <span style={{ opacity: 0.6 }}>{dataFiles.length}</span>
         </button>
         <button onClick={newFolder} className={btn}>+ Folder</button>
@@ -233,24 +235,24 @@ function Documents() {
           <span className="text-[var(--accent-ai)]">◆</span>
           {isDatasets ? "TRAINING DATA" : sel === "__all" ? "ALL DOCUMENTS" : sel === "" ? "UNCATEGORIZED" : sel.toUpperCase()}
           {isDatasets
-            ? <span className="ml-auto text-[var(--muted)] normal-case tracking-normal text-[10px]">synced with Train page</span>
+            ? <span className="ml-auto text-[var(--muted)] normal-case tracking-normal text-[11px]">synced with Train page</span>
             : null}
           <span className={isDatasets ? "" : "ml-auto"}>
-            <label className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] cursor-pointer border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)]">
+            <label className="text-[11px] tracking-widest uppercase text-[var(--accent-ai)] cursor-pointer border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)]">
               ⬆ Upload{!isDatasets && sel !== "__all" && sel !== "" ? " → " + sel : ""}
               <input type="file" multiple accept={isDatasets ? ".txt,.jsonl,.pdf,.md" : ".pdf,.txt,.md,.text"} className="hidden" onChange={isDatasets ? onDatasetFile : onFile} />
             </label>
           </span>
         </div>
 
-        {status && <div className="px-4 py-2 text-[10px] text-[var(--muted)] border-b border-[var(--border-soft)]">{status}</div>}
+        {status && <div className="px-4 py-2 text-[11px] text-[var(--muted)] border-b border-[var(--border-soft)]">{status}</div>}
 
         {isDatasets ? (
           dataFiles.length ? dataFiles.map((f) => (
             <div key={f.name} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
-              <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-widest shrink-0 ${f.kind === "sft" ? "bg-[var(--accent-ai)]/20 text-[var(--accent-ai)]" : "bg-[var(--surface-3)] text-[var(--muted)]"}`}>{f.kind}</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-widest shrink-0 ${f.kind === "sft" ? "bg-[var(--accent-ai)]/20 text-[var(--accent-ai)]" : "bg-[var(--surface-3)] text-[var(--muted)]"}`}>{f.kind}</span>
               <span className="flex-1 truncate text-sm">{f.name}</span>
-              <span className="text-[10px] text-[var(--muted)] hidden sm:inline">{f.rows != null ? f.rows + " rows · " : ""}{f.chars >= 1000 ? (f.chars / 1000).toFixed(0) + "k" : f.chars} chars</span>
+              <span className="text-[11px] text-[var(--muted)] hidden sm:inline">{f.rows != null ? f.rows + " rows · " : ""}{f.chars >= 1000 ? (f.chars / 1000).toFixed(0) + "k" : f.chars} chars</span>
               <button className={btn} onClick={() => delDataset(f.name)}>✕</button>
             </div>
           )) : <div className="p-6 text-center text-[var(--muted)] text-xs">No training datasets yet — upload a .txt or .jsonl file above.</div>
@@ -258,8 +260,8 @@ function Documents() {
           shown.length ? shown.map((d) => (
             <div key={d.id} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
               <span className="flex-1 truncate text-sm">{d.name}</span>
-              <span className="text-[10px] text-[var(--muted)] hidden sm:inline">{(d.chars / 1000).toFixed(0)}k</span>
-              <select value={d.folder || ""} onChange={(e) => move(d.id, e.target.value)} className="text-[10px] bg-[var(--surface-2)] border border-[var(--border)] rounded px-1 py-1 text-[var(--text-2)] outline-none">
+              <span className="text-[11px] text-[var(--muted)] hidden sm:inline">{(d.chars / 1000).toFixed(0)}k</span>
+              <select value={d.folder || ""} onChange={(e) => move(d.id, e.target.value)} className="text-[11px] bg-[var(--surface-2)] border border-[var(--border)] rounded px-1 py-1 text-[var(--text-2)] outline-none">
                 <option value="">Uncategorized</option>
                 {folders.map((f) => <option key={f} value={f}>{f}</option>)}
               </select>
@@ -305,8 +307,8 @@ function Chats() {
 
   const shown = filter === "all" ? convos : convos.filter((c) => c.kind === filter);
   const chip = (id: typeof filter, label: string) => (
-    <button key={id} onClick={() => setFilter(id)} className="px-3 py-1.5 text-[11px] tracking-wide rounded-[var(--r-md)] border"
-      style={{ color: filter === id ? "#05090c" : "var(--text-2)", background: filter === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)", fontWeight: filter === id ? 700 : 400 }}>
+    <button key={id} onClick={() => setFilter(id)} className="px-3 py-1.5 text-[12px] rounded-[var(--radius-pill)] border transition-colors"
+      style={{ color: filter === id ? "var(--text-accent)" : "var(--text-2)", background: filter === id ? "var(--bg-selected)" : "var(--surface-1)", borderColor: filter === id ? "var(--border-strong)" : "var(--border-soft)" }}>
       {label}
     </button>
   );
@@ -329,10 +331,10 @@ function Chats() {
               <a href={(c.kind === "code" ? "/code" : "/chat") + "?conv=" + encodeURIComponent(c.id)}
                 className="flex-1 min-w-0 flex flex-col hover:text-[var(--accent-ai)]">
                 <span className="truncate text-sm">{c.title}</span>
-                {c.project && <span className="text-[10px] text-[var(--muted)] truncate font-mono">{c.project}</span>}
+                {c.project && <span className="text-[11px] text-[var(--muted)] truncate font-mono">{c.project}</span>}
               </a>
             )}
-            <span className="text-[10px] text-[var(--muted)] hidden sm:inline shrink-0">{relTime(c.updatedAt)}</span>
+            <span className="text-[11px] text-[var(--muted)] hidden sm:inline shrink-0">{relTime(c.updatedAt)}</span>
             <a href={(c.kind === "code" ? "/code" : "/chat") + "?conv=" + encodeURIComponent(c.id)} title="Open" className={btn}><ExternalLink size={ICON_SIZE.sm} /></a>
             <button className={btn} title="Rename" onClick={() => startRename(c)}><Pencil size={ICON_SIZE.sm} /></button>
             <button className={btn} title="Delete" onClick={() => del(c.id)}><Trash2 size={ICON_SIZE.sm} /></button>
@@ -387,7 +389,7 @@ function Runs() {
           <div className={head}><FlaskConical size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> MODEL REPORT CARD <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">from every stored run — measure what works</span></div>
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
+              <tr className="text-[11px] uppercase tracking-wider text-[var(--muted)]">
                 <th className="text-left px-4 py-2 font-normal">model</th>
                 <th className="text-right px-2 py-2 font-normal">runs</th>
                 <th className="text-right px-2 py-2 font-normal" title="no findings">clean</th>
@@ -405,7 +407,7 @@ function Runs() {
                   <td className="px-4 py-2 font-mono truncate max-w-[160px]">{m.model}</td>
                   <td className="px-2 py-2 text-right tabular-nums">{m.runs}</td>
                   <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--accent-success)" }}>{m.clean}</td>
-                  <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--accent-warn,#d29922)" }}>{m.flawed}</td>
+                  <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--accent-warn)" }}>{m.flawed}</td>
                   <td className="px-2 py-2 text-right tabular-nums" style={{ color: "var(--accent-danger)" }}>{m.failed}</td>
                   <td className="px-2 py-2 text-right tabular-nums text-[var(--muted)]">{m.toolFailures}/{m.toolCalls}</td>
                   <td className="px-2 py-2 text-right tabular-nums text-[var(--muted)]">{m.avgTokPerSec ?? "—"}</td>
@@ -423,16 +425,16 @@ function Runs() {
           <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">{runs.length}</span>
           {runs.length > 0 && <button onClick={removeAll} title="Delete every run record" className={btn + " normal-case tracking-normal"}>Delete all</button>}
         </div>
-        {status && <div className="px-4 py-2 text-[10px] text-[var(--muted)] border-b border-[var(--border-soft)]">{status}</div>}
+        {status && <div className="px-4 py-2 text-[11px] text-[var(--muted)] border-b border-[var(--border-soft)]">{status}</div>}
         {!runs.length && <div className="p-6 text-center text-[var(--muted)] text-xs">No agent or chat runs yet.</div>}
         {runs.slice(0, visibleCount).map((run) => (
           <div key={run.id} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
             <Terminal size={ICON_SIZE.sm} className="text-[var(--accent-ai)] shrink-0" />
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 text-sm"><span className="truncate">{run.kind}{run.mode ? " · " + run.mode : ""}</span><span className="text-[10px] uppercase tracking-wide text-[var(--muted)] shrink-0">{run.status}</span></div>
-              <div className="text-[10px] text-[var(--muted)] truncate">{run.model}{run.project ? " · " + run.project : ""}{run.truncated ? " · truncated" : ""}</div>
+              <div className="flex items-center gap-2 text-sm"><span className="truncate">{run.kind}{run.mode ? " · " + run.mode : ""}</span><span className="text-[11px] uppercase tracking-wide text-[var(--muted)] shrink-0">{run.status}</span></div>
+              <div className="text-[11px] text-[var(--muted)] truncate">{run.model}{run.project ? " · " + run.project : ""}{run.truncated ? " · truncated" : ""}</div>
             </div>
-            <span className="text-[10px] text-[var(--muted)] hidden sm:inline shrink-0">{relTime(run.updatedAt)}</span>
+            <span className="text-[11px] text-[var(--muted)] hidden sm:inline shrink-0">{relTime(run.updatedAt)}</span>
             <a href={href(run)} title="Open conversation" className={btn}><ExternalLink size={12} /></a>
             <button onClick={() => inspect(run)} title="Inspect run trace" className={btn}><ListTree size={12} /></button>
             <button onClick={() => remove(run)} title="Delete run record" className={btn}><Trash2 size={ICON_SIZE.sm} /></button>
@@ -444,14 +446,14 @@ function Runs() {
         <Panel padding="none" className="overflow-hidden">
           <div className={head}>
             <ListTree size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> RUN TRACE <span className="normal-case tracking-normal text-[var(--muted)] truncate">{selected.id}</span>
-            {diag && <span className="text-[10px] px-2 py-0.5 rounded-full border normal-case tracking-normal" style={{ color: verdictColor(diag.verdict), borderColor: verdictColor(diag.verdict) }}>{diag.verdict}</span>}
+            {diag && <span className="text-[11px] px-2 py-0.5 rounded-full border normal-case tracking-normal" style={{ color: verdictColor(diag.verdict), borderColor: verdictColor(diag.verdict) }}>{diag.verdict}</span>}
             <button onClick={() => { setSelected(null); setTrace(null); setDiag(null); }} className="ml-auto text-[var(--muted)] hover:text-[var(--text)]" title="Close trace"><X size={ICON_SIZE.sm} /></button>
           </div>
           {!trace && <div className="p-4 text-xs text-[var(--muted)]">Loading trace...</div>}
           {trace && <div className="divide-y divide-[var(--border-soft)]">
             {diag && (
               <section className="p-4">
-                <h2 className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Diagnosis</h2>
+                <h2 className="text-[11px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Diagnosis</h2>
                 <div className="text-[11px] text-[var(--muted)] mb-2 flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
                   <span>{diag.stats.durationSec}s</span>
                   <span>{diag.stats.rounds} rounds</span>
@@ -471,9 +473,9 @@ function Runs() {
                     ))}
               </section>
             )}
-            {trace.reasoning && <section className="p-4"><h2 className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Model-emitted reasoning</h2><pre className="whitespace-pre-wrap break-words text-xs leading-5 text-[var(--text-2)] max-h-72 overflow-auto">{trace.reasoning}</pre></section>}
-            {trace.events.length > 0 && <section className="p-4"><h2 className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Process events</h2><div className="flex flex-col gap-2 max-h-72 overflow-auto">{trace.events.map((event) => <div key={event.seq + event.k} className="text-xs"><span className="text-[var(--accent-ai)] font-mono">{event.k}</span>{event.detail && <pre className="mt-1 whitespace-pre-wrap break-words text-[var(--muted)]">{event.detail}</pre>}</div>)}</div></section>}
-            {trace.output && <section className="p-4"><h2 className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Model output</h2><pre className="whitespace-pre-wrap break-words text-xs leading-5 text-[var(--text)] max-h-72 overflow-auto">{trace.output}</pre></section>}
+            {trace.reasoning && <section className="p-4"><h2 className="text-[11px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Model-emitted reasoning</h2><pre className="whitespace-pre-wrap break-words text-xs leading-5 text-[var(--text-2)] max-h-72 overflow-auto">{trace.reasoning}</pre></section>}
+            {trace.events.length > 0 && <section className="p-4"><h2 className="text-[11px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Process events</h2><div className="flex flex-col gap-2 max-h-72 overflow-auto">{trace.events.map((event) => <div key={event.seq + event.k} className="text-xs"><span className="text-[var(--accent-ai)] font-mono">{event.k}</span>{event.detail && <pre className="mt-1 whitespace-pre-wrap break-words text-[var(--muted)]">{event.detail}</pre>}</div>)}</div></section>}
+            {trace.output && <section className="p-4"><h2 className="text-[11px] tracking-widest uppercase text-[var(--accent-ai)] mb-2">Model output</h2><pre className="whitespace-pre-wrap break-words text-xs leading-5 text-[var(--text)] max-h-72 overflow-auto">{trace.output}</pre></section>}
             {!trace.reasoning && !trace.events.length && !trace.output && <div className="p-4 text-xs text-[var(--muted)]">This run has no retained events.</div>}
           </div>}
         </Panel>
@@ -497,15 +499,15 @@ function Experiments() {
     <div className="flex flex-col gap-3">
       <Panel padding="none">
         <div className={head}><FlaskConical size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> TRAINING EXPERIMENTS <span className="ml-auto text-[var(--muted)] normal-case tracking-normal">{experiments.length}</span></div>
-        {status && <div className="px-4 py-2 text-[10px] text-[var(--muted)] border-b border-[var(--border-soft)]">{status}</div>}
+        {status && <div className="px-4 py-2 text-[11px] text-[var(--muted)] border-b border-[var(--border-soft)]">{status}</div>}
         {!experiments.length && <div className="p-6 text-center text-[var(--muted)] text-xs">No training experiments yet.</div>}
         {experiments.map((experiment) => (
           <div key={experiment.name} className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-soft)] last:border-0">
             <FlaskConical size={ICON_SIZE.sm} className="text-[var(--accent-ai)] shrink-0" />
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 text-sm"><span className="truncate">{experiment.name}</span><span className="text-[10px] uppercase tracking-wide text-[var(--muted)] shrink-0">{experiment.status}</span></div>
-              <div className="text-[10px] text-[var(--muted)] truncate">{experiment.base} · {experiment.mode} · {experiment.steps} steps · lr {experiment.lr}{experiment.dataset ? ` · ${experiment.dataset.name}${experiment.dataset.rows != null ? ` (${experiment.dataset.rows} rows)` : ""}` : ""}</div>
-              {experiment.dataset?.sha256 && <div className="text-[10px] text-[var(--muted)] font-mono truncate">data {experiment.dataset.sha256.slice(0, 12)}</div>}
+              <div className="flex items-center gap-2 text-sm"><span className="truncate">{experiment.name}</span><span className="text-[11px] uppercase tracking-wide text-[var(--muted)] shrink-0">{experiment.status}</span></div>
+              <div className="text-[11px] text-[var(--muted)] truncate">{experiment.base} · {experiment.mode} · {experiment.steps} steps · lr {experiment.lr}{experiment.dataset ? ` · ${experiment.dataset.name}${experiment.dataset.rows != null ? ` (${experiment.dataset.rows} rows)` : ""}` : ""}</div>
+              {experiment.dataset?.sha256 && <div className="text-[11px] text-[var(--muted)] font-mono truncate">data {experiment.dataset.sha256.slice(0, 12)}</div>}
             </div>
             <a href={`/train?run=${encodeURIComponent(experiment.name)}`} title="Open in Train" className={btn}><ExternalLink size={ICON_SIZE.sm} /></a>
             <button onClick={() => remove(experiment.name)} title="Delete experiment record" className={btn}><Trash2 size={ICON_SIZE.sm} /></button>
@@ -549,7 +551,7 @@ function Projects() {
       <Panel padding="none">
         <div className={head}>
           <span className="text-[var(--accent-ai)]">◆</span> PROJECT FOLDERS <span className="text-[var(--muted)] normal-case tracking-normal">{projects.length}</span>
-          <button onClick={() => setPickerOpen(true)} className="ml-auto text-[10px] tracking-widest uppercase text-[var(--accent-ai)] border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)]">
+          <button onClick={() => setPickerOpen(true)} className="ml-auto text-[11px] tracking-widest uppercase text-[var(--accent-ai)] border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)]">
             + Create / Import
           </button>
         </div>
@@ -562,7 +564,7 @@ function Projects() {
               style={{ color: selected === p.path ? "var(--accent-ai)" : "var(--text)" }}>
               {p.path}
             </button>
-            {!p.exists && <span className="text-[10px] text-[var(--accent-danger)] shrink-0">missing</span>}
+            {!p.exists && <span className="text-[11px] text-[var(--accent-danger)] shrink-0">missing</span>}
             <a href={"/code?project=" + encodeURIComponent(p.path)} title="Open in /code" className={btn}><ExternalLink size={ICON_SIZE.sm} /></a>
             <button className={btn} title="Forget (doesn't delete files)" onClick={() => forget(p.path)}><Trash2 size={ICON_SIZE.sm} /></button>
           </div>
@@ -628,7 +630,7 @@ function Prompts() {
     <Panel padding="none">
       <div className={head}><Terminal size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> PROMPT REGISTRY</div>
       {prompts.map((prompt) => <button key={prompt.id} onClick={() => { setSelected(prompt); setDraft(prompt.prompt); }} className="w-full text-left px-4 py-3 border-b border-[var(--border-soft)] hover:bg-[var(--surface-2)]" style={{ background: selected?.id === prompt.id ? "var(--surface-2)" : undefined }}>
-        <div className="text-sm">{prompt.name}</div><div className="mt-1 text-[10px] text-[var(--muted)]">{prompt.inherited ? "managed base" : "owner override"}</div>
+        <div className="text-sm">{prompt.name}</div><div className="mt-1 text-[11px] text-[var(--muted)]">{prompt.inherited ? "managed base" : "owner override"}</div>
       </button>)}
     </Panel>
     <Panel padding="none">
@@ -645,15 +647,14 @@ function Prompts() {
 export default function Library() {
   const [tab, setTab] = useState<"docs" | "chats" | "runs" | "experiments" | "projects" | "prompts">("runs");
   const tabBtn = (id: typeof tab, label: string) => (
-    <button onClick={() => setTab(id)} className="px-4 py-2 text-[11px] tracking-widest uppercase rounded-[var(--r-md)] border"
-      style={{ color: tab === id ? "#05090c" : "var(--text-2)", background: tab === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: "var(--border)", fontWeight: tab === id ? 700 : 400 }}>{label}</button>
+    <button role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>{label}</button>
   );
   return (
     <main id="main-content" className="page-shell text-[var(--text)]">
-      <div className="page-frame max-w-7xl flex flex-col gap-4">
+      <div className="page-frame">
         <LabNav />
-        <h1 className="sr-only">History</h1>
-        <div className="flex gap-1 overflow-x-auto rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--surface-1)] p-1.5">{tabBtn("runs", "Runs")}{tabBtn("chats", "Chats")}{tabBtn("experiments", "Experiments")}{tabBtn("projects", "Projects")}{tabBtn("docs", "Documents")}{tabBtn("prompts", "Prompts")}</div>
+        <GuidedHeader id="library" eyebrow="Lab" title="History" guide={GUIDES.library} />
+        <div role="tablist" aria-label="History views" className="seg self-start">{tabBtn("runs", "Runs")}{tabBtn("chats", "Chats")}{tabBtn("experiments", "Experiments")}{tabBtn("projects", "Projects")}{tabBtn("docs", "Documents")}{tabBtn("prompts", "Prompts")}</div>
         {tab === "docs" ? <Documents /> : tab === "chats" ? <Chats /> : tab === "runs" ? <Runs /> : tab === "experiments" ? <Experiments /> : tab === "projects" ? <Projects /> : <Prompts />}
       </div>
     </main>

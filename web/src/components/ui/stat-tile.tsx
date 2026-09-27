@@ -24,8 +24,8 @@ export function StatTile({
 }) {
   return (
     <Panel className="flex flex-col gap-1">
-      <span className="text-[10px] uppercase tracking-widest text-[var(--text-3)]">{label}</span>
-      <span className="text-2xl font-bold" style={{ color: TONE_COLOR[tone], fontFamily: "var(--font-display), monospace" }}>
+      <span className="eyebrow">{label}</span>
+      <span className="text-2xl font-bold tabular-nums tracking-[-0.02em]" style={{ color: TONE_COLOR[tone] }}>
         {value}
       </span>
       {sub && <span className="text-xs text-[var(--text-3)]">{sub}</span>}

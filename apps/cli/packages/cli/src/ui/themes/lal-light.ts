@@ -6,36 +6,17 @@
 
 import { type ColorsTheme, Theme } from './theme.js';
 import type { SemanticColors } from './semantic-tokens.js';
+import { LAL_PALETTE_LIGHT } from './lal-palette.js';
 
-// Light variant of the LAL green → lime → yellow palette. Hues are deepened
+// Light variant of the LAL solar → sage palette. Hues are deepened
 // for contrast on a paper-white background; red stays reserved for errors.
+// Palette values are generated from design/tokens.json (cli.light) so the
+// terminal and the web app share one source; the token build enforces
+// WCAG AA (4.5:1) for every text color against Background and DiffAdded.
 const lalLightColors: ColorsTheme = {
   type: 'light',
-  Background: '#F7FAF5',
-  Foreground: '#2B342C',
-  // "LightBlue" slot → deep lime (inline code, names).
-  LightBlue: '#5C8F1E',
-  // "AccentBlue" slot → deep green (links, focused borders, types).
-  AccentBlue: '#1E9E4A',
-  // "AccentPurple" slot → olive-yellow (accents, literals).
-  AccentPurple: '#87851A',
-  // Deep mint (quotes, symbols).
-  AccentCyan: '#1C8F76',
-  AccentGreen: '#1E9E4A',
-  AccentYellow: '#9A8A16',
-  AccentRed: '#D14856',
-  AccentYellowDim: '#C6BA6E',
-  AccentRedDim: '#E2A2A9',
-  // Full-line diff backgrounds — same contrast fix as lal-dark.ts. The bare
-  // accent hues here measured 3.71/2.93 WCAG contrast against Foreground,
-  // both below the 4.5:1 AA minimum ("hard to read", 2026-07-19). These are
-  // AccentGreen / AccentRed blended at 15% into Background (#F7FAF5)
-  // instead: a pale, on-brand tint at >10:1 contrast with Foreground.
-  DiffAdded: '#DFF6E1',
-  DiffRemoved: '#F1DFDD',
-  Comment: '#7A857B',
-  Gray: '#9AA69B',
-  GradientColors: ['#1E9E4A', '#5C8F1E', '#9A8A16'],
+  ...LAL_PALETTE_LIGHT,
+  GradientColors: [...LAL_PALETTE_LIGHT.GradientColors],
 };
 
 const lalLightSemanticColors: SemanticColors = {

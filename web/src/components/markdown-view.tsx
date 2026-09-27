@@ -36,14 +36,14 @@ export default function MarkdownView({ text }: { text: string }) {
       remarkPlugins={[remarkGfm]}
       components={{
         p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
-        strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+        strong: ({ children }) => <strong className="font-semibold text-[var(--text)]">{children}</strong>,
         em: ({ children }) => <em className="italic">{children}</em>,
         ul: ({ children }) => <ul className="list-disc ml-5 my-2 space-y-1">{children}</ul>,
         ol: ({ children }) => <ol className="list-decimal ml-5 my-2 space-y-1">{children}</ol>,
         li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-        h1: ({ children }) => <h1 className="text-base font-semibold text-white mt-3 mb-1.5">{children}</h1>,
-        h2: ({ children }) => <h2 className="text-sm font-semibold text-white mt-3 mb-1.5">{children}</h2>,
-        h3: ({ children }) => <h3 className="text-sm font-semibold text-white mt-2 mb-1">{children}</h3>,
+        h1: ({ children }) => <h1 className="text-base font-semibold text-[var(--text)] mt-3 mb-1.5">{children}</h1>,
+        h2: ({ children }) => <h2 className="text-sm font-semibold text-[var(--text)] mt-3 mb-1.5">{children}</h2>,
+        h3: ({ children }) => <h3 className="text-sm font-semibold text-[var(--text)] mt-2 mb-1">{children}</h3>,
         a: ({ href, children }) => (
           <a href={href} target="_blank" rel="noreferrer" className="text-[var(--accent-ai)] underline break-all">{children}</a>
         ),
@@ -57,7 +57,7 @@ export default function MarkdownView({ text }: { text: string }) {
           const lang = /language-(\w+)/.exec(className ?? "")?.[1] ?? "";
           return (
             <div className="relative my-2 rounded-lg border border-[var(--border-soft)] overflow-hidden">
-              <div className="flex items-center justify-between px-3 py-1 bg-[var(--surface-1)] text-[10px] text-[var(--muted)]">
+              <div className="flex items-center justify-between px-3 py-1 bg-[var(--surface-1)] text-[11px] text-[var(--muted)]">
                 {lang || "code"}
               </div>
               <code className="block bg-[var(--surface-2)] p-3 text-[11px] font-mono overflow-x-auto whitespace-pre">{code}</code>

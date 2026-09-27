@@ -9,6 +9,7 @@ import { StatsGlance, type Usage } from "@/components/agent/stats-hud";
 import { SignalTrace } from "@/components/ui/signal-trace";
 import CertaintyWave, { type TokenAlternatives } from "@/components/agent/certainty-wave";
 import { useModelSettingsSync } from "./use-model-settings-sync";
+import { CallResearch, type CallResearchHandle } from "@/components/research/call-research";
 
 type Msg = { role: "user" | "assistant"; content: string; thinking?: string; status?: string; images?: string[]; visionModel?: string; truncated?: boolean; wave?: number[]; alternatives?: TokenAlternatives[] };
 type Convo = { id: string; title: string; model: string; updatedAt: string };
@@ -190,7 +191,7 @@ function DiffView({ before, after }: { before: string; after: string }) {
   const dels = lines.filter((l) => l.kind === "del").length;
   return (
     <div>
-      <div className="px-2 py-1 text-[10px] text-[var(--muted)] border-b border-[var(--border)]">
+      <div className="px-2 py-1 text-[11px] text-[var(--muted)] border-b border-[var(--border)]">
         <span className="text-emerald-400">+{adds}</span> <span className="text-red-400">−{dels}</span> lines changed
       </div>
       <pre className="text-[11px] font-mono p-0 max-h-72 overflow-auto leading-relaxed">
@@ -331,6 +332,11 @@ export default function AgentChat() {
   const [listening, setListening] = useState(false);
   const [speakOn, setSpeakOn] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false); // full hands-free conversation mode
+  // Research inside a call: same orb, narrated waves (components/research/call-research.tsx).
+  const [callResearch, setCallResearch] = useState(false);
+  const callResearchRef = useRef<CallResearchHandle | null>(null);
+  const callResearchOnRef = useRef(false);
+  useEffect(() => { callResearchOnRef.current = callResearch; }, [callResearch]);
   const [speakingText, setSpeakingText] = useState(""); // current chunk being spoken (subtitle)
   const [bargeIn, setBargeIn] = useState(false); // experimental: talk over the voice to interrupt
   // refs so the auto-listen loop reads live state without re-subscribing
@@ -625,6 +631,13 @@ export default function AgentChat() {
       openConvo(deepLinkId).then((msgs) => reattachIfLive(deepLinkId, msgs));
       window.history.replaceState(null, "", "/chat");
     }
+    // Home's "Ask LAL" box hands off its draft as ?q=; it lands in the composer
+    // (not auto-sent) so the user can still pick a model or attach files.
+    const draft = new URLSearchParams(window.location.search).get("q");
+    if (!deepLinkId && draft) {
+      setInput(draft);
+      window.history.replaceState(null, "", "/chat");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadConvos, openConvo]);
 
@@ -686,6 +699,11 @@ export default function AgentChat() {
       const imgs = attached.map((a) => a.data);
       setAttached([]);
       if (taRef.current) taRef.current.style.height = "auto";
+      // In a research call, what you say goes to the research session instead.
+      if (voiceModeRef.current && callResearchOnRef.current && callResearchRef.current && body) {
+        callResearchRef.current.submit(body);
+        return;
+      }
 
       const history = base ?? messages;
       const currentArtifact = priorArtifactAt(history, history.length);
@@ -911,7 +929,7 @@ export default function AgentChat() {
       <div className="shrink-0 flex items-center gap-2 px-3 min-h-14 border-b border-[var(--border-soft)] bg-[var(--bg)]/90 backdrop-blur-md">
         <button
           onClick={() => { setListOpen((v) => !v); loadConvos(); }}
-          className="md:hidden text-[var(--muted)] hover:text-white w-10 h-10 -ml-1 inline-flex items-center justify-center rounded-[var(--r-md)]"
+          className="md:hidden text-[var(--muted)] hover:text-[var(--text)] w-10 h-10 -ml-1 inline-flex items-center justify-center rounded-[var(--r-md)]"
           title="Chats"
           aria-label="Chats"
         >
@@ -927,7 +945,7 @@ export default function AgentChat() {
             onClick={() => toggleModes(!webMode, docsMode)}
             title={webMode ? "Web grounding ON — replies use live search" : "Ground replies in live web search"}
             aria-label="Toggle web grounding"
-            className={`w-9 h-9 shrink-0 inline-grid place-items-center border rounded-[var(--r-md)] ${webMode ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-white"}`}
+            className={`w-9 h-9 shrink-0 inline-grid place-items-center border rounded-[var(--r-md)] ${webMode ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]"}`}
           >
             <Globe size={15} />
           </button>
@@ -935,7 +953,7 @@ export default function AgentChat() {
             onClick={() => toggleModes(webMode, !docsMode)}
             title={docsMode ? "Doc grounding ON — replies use your documents" : "Ground replies in your uploaded documents"}
             aria-label="Toggle document grounding"
-            className={`w-9 h-9 shrink-0 inline-grid place-items-center border rounded-[var(--r-md)] ${docsMode ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-white"}`}
+            className={`w-9 h-9 shrink-0 inline-grid place-items-center border rounded-[var(--r-md)] ${docsMode ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]"}`}
           >
             <FileText size={15} />
           </button>
@@ -943,7 +961,7 @@ export default function AgentChat() {
             onClick={() => { stopSpeech(); setSpeakOn((v) => !v); }}
             title={speakOn ? "Reading replies aloud (tap to mute)" : "Read replies aloud"}
             aria-label="Toggle read-aloud"
-            className={`hidden sm:inline-grid w-9 h-9 shrink-0 place-items-center border rounded-[var(--r-md)] ${speakOn ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-white"}`}
+            className={`hidden sm:inline-grid w-9 h-9 shrink-0 place-items-center border rounded-[var(--r-md)] ${speakOn ? "border-[var(--accent-ai)]/50 text-[var(--accent-ai)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]"}`}
           >
             {speakOn ? <Volume2 size={15} /> : <VolumeX size={15} />}
           </button>
@@ -959,7 +977,7 @@ export default function AgentChat() {
             onClick={() => setSettingsOpen(true)}
             title="LLM settings"
             aria-label="LLM settings"
-            className="w-9 h-9 shrink-0 inline-grid place-items-center text-[var(--muted)] hover:text-white border border-[var(--border)] rounded-[var(--r-md)]"
+            className="w-9 h-9 shrink-0 inline-grid place-items-center text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-[var(--r-md)]"
           >
             <SlidersHorizontal size={15} />
           </button>
@@ -983,7 +1001,7 @@ export default function AgentChat() {
           <button
             onClick={newChat}
             disabled={streaming}
-            className="h-9 shrink-0 text-xs text-[var(--accent-ai)] hover:text-white px-2.5 rounded-[var(--r-md)] disabled:opacity-40"
+            className="h-9 shrink-0 text-xs text-[var(--accent-ai)] hover:text-[var(--text)] px-2.5 rounded-[var(--r-md)] disabled:opacity-40"
             title="New chat"
           >
             New
@@ -1009,7 +1027,7 @@ export default function AgentChat() {
             <div className="flex items-center justify-between px-3 h-12 border-b border-[var(--border-soft)]">
               <span className="text-xs font-bold uppercase tracking-wider text-[var(--muted)]">Chats</span>
               <div className="flex items-center gap-3">
-                <button onClick={copyChat} disabled={!messages.length} title="Copy current chat" className="text-[var(--muted)] hover:text-white disabled:opacity-30"><Copy size={14} /></button>
+                <button onClick={copyChat} disabled={!messages.length} title="Copy current chat" className="text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-30"><Copy size={14} /></button>
                 <button onClick={newChat} className="text-xs text-[var(--accent-ai)] hover:underline">+ New</button>
               </div>
             </div>
@@ -1026,7 +1044,7 @@ export default function AgentChat() {
                   onClick={() => openConvo(c.id)}
                 >
                   <span className="flex-1 text-sm truncate">{c.title || "Untitled"}</span>
-                  <span className="text-[10px] text-[var(--muted)] shrink-0">{ago(c.updatedAt)}</span>
+                  <span className="text-[11px] text-[var(--muted)] shrink-0">{ago(c.updatedAt)}</span>
                   <button
                     onClick={(e) => { e.stopPropagation(); deleteConvo(c.id); }}
                     className="text-[var(--muted)] hover:text-[var(--accent-danger)] opacity-0 group-hover:opacity-100 shrink-0"
@@ -1042,7 +1060,7 @@ export default function AgentChat() {
 
       {/* Messages */}
       <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto w-full px-3 py-6 space-y-6">
+        <div className="w-full px-[var(--gutter)] py-6 space-y-6">
           {empty ? (
             <div className="pt-[12vh] flex flex-col items-center text-center animate-fade-in">
               <span className="w-10 h-10 rounded-full bg-[var(--accent-ai)]/15 text-[var(--accent-ai)] flex items-center justify-center mb-4"><Sparkles size={18} /></span>
@@ -1053,7 +1071,7 @@ export default function AgentChat() {
                   <button
                     key={s}
                     onClick={() => send(s)}
-                    className="text-left text-sm text-[var(--muted)] hover:text-white border border-[var(--border)] hover:border-[var(--border-loud)] rounded-[var(--r-md)] px-3 py-2.5 transition-colors"
+                    className="text-left text-sm text-[var(--muted)] hover:text-[var(--text)] border border-[var(--border)] hover:border-[var(--border-loud)] rounded-[var(--r-md)] px-3 py-2.5 transition-colors"
                   >
                     {s}
                   </button>
@@ -1076,7 +1094,7 @@ export default function AgentChat() {
                           className="w-full resize-y bg-[var(--surface-1)] border border-[var(--border-loud)] rounded-[var(--r-lg)] px-3.5 py-2 text-[15px] outline-none"
                         />
                         <div className="flex justify-end gap-2 mt-1">
-                          <button onClick={cancelEdit} className="text-xs text-[var(--muted)] hover:text-white px-2 py-1">Cancel</button>
+                          <button onClick={cancelEdit} className="text-xs text-[var(--muted)] hover:text-[var(--text)] px-2 py-1">Cancel</button>
                           <button onClick={() => saveEdit(i)} className="text-xs font-semibold bg-white text-black px-3 py-1 rounded-[var(--r-sm)] hover:bg-zinc-200">Save &amp; resend</button>
                         </div>
                       </div>
@@ -1086,11 +1104,11 @@ export default function AgentChat() {
                 return (
                   <div key={i} className="group flex justify-end items-center gap-1.5 animate-msg-in">
                     <div className={`flex flex-col gap-0.5 transition-opacity ${revealedIdx === i ? "opacity-100" : "opacity-0 pointer-events-none [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-hover:pointer-events-auto"}`}>
-                      <button onClick={() => startEdit(i)} disabled={streaming} aria-label="Edit & resend" title="Edit & resend" className="p-1.5 text-[var(--muted)] hover:text-white disabled:opacity-30"><Pencil size={14} /></button>
-                      <button onClick={() => copyText(m.content)} aria-label="Copy" title="Copy" className="p-1.5 text-[var(--muted)] hover:text-white"><Copy size={14} /></button>
+                      <button onClick={() => startEdit(i)} disabled={streaming} aria-label="Edit & resend" title="Edit & resend" className="p-1.5 text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-30"><Pencil size={14} /></button>
+                      <button onClick={() => copyText(m.content)} aria-label="Copy" title="Copy" className="p-1.5 text-[var(--muted)] hover:text-[var(--text)]"><Copy size={14} /></button>
                       <button onClick={() => deleteMessage(i)} disabled={streaming} aria-label="Delete" title="Delete" className="p-1.5 text-[var(--muted)] hover:text-[var(--accent-danger)] disabled:opacity-30"><Trash2 size={14} /></button>
                     </div>
-                    <div {...longPress(i)} className="max-w-[85%] bg-[var(--surface-2)] text-white rounded-[var(--r-lg)] rounded-br-sm px-3.5 py-2 text-[15px] whitespace-pre-wrap break-words shadow-[var(--shadow-bubble)] [@media(hover:none)]:select-none [-webkit-touch-callout:none]">
+                    <div {...longPress(i)} className="max-w-[85%] bg-[var(--surface-2)] text-[var(--text)] rounded-[var(--r-lg)] rounded-br-sm px-3.5 py-2 text-[15px] whitespace-pre-wrap break-words shadow-[var(--shadow-bubble)] [@media(hover:none)]:select-none [-webkit-touch-callout:none]">
                       {m.images && m.images.length > 0 && (
                         <div className="flex flex-wrap gap-1.5 mb-1.5">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1126,7 +1144,7 @@ export default function AgentChat() {
                   {m.visionModel && (
                     <span
                       title={m.visionModel === "gemma4:e4b" ? "5+ images in this turn — routed to the faster, smaller vision model" : "routed to the higher-quality vision model"}
-                      className="self-start inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-[var(--muted)] border border-[var(--border)] rounded-full px-2 py-0.5 w-fit">
+                      className="self-start inline-flex items-center gap-1 text-[11px] uppercase tracking-wide text-[var(--muted)] border border-[var(--border)] rounded-full px-2 py-0.5 w-fit">
                       <Eye size={10} /> {m.visionModel === "gemma4:e4b" ? "fast" : "quality"} · {m.visionModel.replace("gemma4:", "")}
                     </span>
                   )}
@@ -1147,7 +1165,7 @@ export default function AgentChat() {
                   )}
                   {!(isLast && streaming) && (
                     <div className={`flex items-center gap-0.5 self-start transition-opacity ${revealedIdx === i ? "opacity-100" : "opacity-0 pointer-events-none [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-hover:pointer-events-auto"}`}>
-                      <button onClick={() => copyText(m.content)} aria-label="Copy" title="Copy" className="p-1.5 -ml-1.5 text-[var(--muted)] hover:text-white"><Copy size={14} /></button>
+                      <button onClick={() => copyText(m.content)} aria-label="Copy" title="Copy" className="p-1.5 -ml-1.5 text-[var(--muted)] hover:text-[var(--text)]"><Copy size={14} /></button>
                       <button onClick={() => deleteMessage(i)} aria-label="Delete" title="Delete" className="p-1.5 text-[var(--muted)] hover:text-[var(--accent-danger)]"><Trash2 size={14} /></button>
                     </div>
                   )}
@@ -1168,13 +1186,19 @@ export default function AgentChat() {
         onThinkChange={setThink}
       />
 
+      {voiceMode && callResearch && (
+        <CallResearch ref={callResearchRef} language="en" model={model} listening={listening} speakingText={speakingText}
+          onOrb={() => { if (listening) { recogRef.current?.stop(); return; } stopSpeech(); startVoice(); }}
+          onExit={() => setCallResearch(false)} />
+      )}
+
       {/* Voice mode — full-screen hands-free */}
       {voiceMode && (
         <div className="fixed inset-0 z-[60] bg-[var(--bg)] flex flex-col items-center justify-center gap-2 px-6 animate-fade-in">
           <button
-            onClick={() => { setVoiceMode(false); stopSpeech(); if (listening) recogRef.current?.stop(); }}
+            onClick={() => { setVoiceMode(false); setCallResearch(false); stopSpeech(); if (listening) recogRef.current?.stop(); }}
             aria-label="Exit voice mode"
-            className="absolute top-4 right-4 text-[var(--muted)] hover:text-white p-2"
+            className="absolute top-4 right-4 text-[var(--muted)] hover:text-[var(--text)] p-2"
           >
             <X size={22} />
           </button>
@@ -1201,7 +1225,7 @@ export default function AgentChat() {
                 listening ? "scale-110" : speakingText ? "scale-105 animate-pulse" : streaming ? "animate-pulse" : "hover:scale-105"
               }`}
             >
-              <Mic size={40} className="text-white/90" />
+              <Mic size={40} className="text-[var(--text)]/90" />
             </div>
           </div>
 
@@ -1209,13 +1233,13 @@ export default function AgentChat() {
             {listening ? "Listening… tap to send" : speakingText ? "" : streaming ? "Thinking…" : "Tap to talk"}
           </p>
           {speakingText && (
-            <p className="max-w-md text-center text-[17px] leading-relaxed text-white px-4 animate-fade-in">
+            <p className="max-w-md text-center text-[17px] leading-relaxed text-[var(--text)] px-4 animate-fade-in">
               {speakingText}
             </p>
           )}
           <button
             onClick={toggleBargeIn}
-            className={`absolute top-4 left-4 px-2.5 py-1 rounded-full border text-[10px] uppercase tracking-wider transition-colors press ${
+            className={`absolute top-4 left-4 px-2.5 py-1 rounded-full border text-[11px] uppercase tracking-wider transition-colors press ${
               bargeIn
                 ? "border-[var(--accent-ai)] text-[var(--accent-ai)] bg-[var(--accent-ai)]/10"
                 : "border-[var(--border-loud)] text-[var(--muted)]"
@@ -1224,6 +1248,13 @@ export default function AgentChat() {
           >
             barge-in {bargeIn ? "on" : "off"}
           </button>
+          <button
+            onClick={() => setCallResearch(true)}
+            className="absolute top-14 left-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border-default)] text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-accent)] hover:border-[var(--border-focus)] transition-colors"
+            title="Research mode: LAL searches the web, reads, and narrates what it finds while you talk"
+          >
+            <span className="w-2 h-2 rounded-full bg-[var(--brand-gold)]" /> Research
+          </button>
           <p className="absolute bottom-[max(1.5rem,env(safe-area-inset-bottom))] text-[11px] text-[var(--muted)]">
             Hands-free · speaks back with the SAM voice{bargeIn ? " · talk to interrupt" : ""}
           </p>
@@ -1231,13 +1262,13 @@ export default function AgentChat() {
       )}
 
       {/* Composer */}
-      <div className="shrink-0 border-t border-[var(--border-soft)] bg-[var(--bg)] px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <div className="max-w-4xl mx-auto">
+      <div className="shrink-0 border-t border-[var(--border-soft)] bg-[var(--bg)] px-[var(--gutter)] pt-3 pb-[max(var(--gutter),env(safe-area-inset-bottom))]">
+        <div className="w-full">
           {suggestSwitch && (
             <div className="mb-2 flex items-center gap-2 text-xs border border-[var(--accent-warn)]/40 bg-[var(--accent-warn)]/10 rounded-[var(--r-md)] px-3 py-2">
               <span className="flex-1 text-[var(--text-2)]"><span className="font-medium">{model}</span> looks like it crashed the GPU — try lowering GPU layers in settings, or switch to a smaller model.</span>
               <button onClick={() => { setSettingsOpen(true); setSuggestDismissed(true); }} className="font-semibold text-[var(--accent-ai)] whitespace-nowrap">Settings</button>
-              <button onClick={() => setSuggestDismissed(true)} className="text-[var(--muted)] hover:text-white">Dismiss</button>
+              <button onClick={() => setSuggestDismissed(true)} className="text-[var(--muted)] hover:text-[var(--text)]">Dismiss</button>
             </div>
           )}
           {attached.length > 0 && (
@@ -1248,7 +1279,7 @@ export default function AgentChat() {
                   <img src={a.data} alt={a.name} className="h-14 w-14 object-cover rounded-[var(--r-sm)] border border-[var(--border)]" />
                   <button
                     onClick={() => setAttached((p) => p.filter((_, j) => j !== i))}
-                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black text-white border border-[var(--border-loud)] flex items-center justify-center"
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black text-[var(--text)] border border-[var(--border-loud)] flex items-center justify-center"
                     aria-label="Remove"
                   >
                     <X size={10} />
@@ -1271,7 +1302,7 @@ export default function AgentChat() {
               disabled={streaming}
               aria-label="Attach image"
               title="Attach image"
-              className="shrink-0 w-10 h-10 rounded-full border border-[var(--border)] text-[var(--muted)] hover:text-white hover:border-[var(--border-loud)] flex items-center justify-center disabled:opacity-40"
+              className="shrink-0 w-10 h-10 rounded-full border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--border-loud)] flex items-center justify-center disabled:opacity-40"
             >
               <Paperclip size={17} />
             </button>
@@ -1280,7 +1311,7 @@ export default function AgentChat() {
               disabled={streaming}
               aria-label={listening ? "Stop listening" : "Voice input"}
               title={listening ? "Listening… tap to stop" : "Speak to it"}
-              className={`shrink-0 w-10 h-10 rounded-full border flex items-center justify-center disabled:opacity-40 ${listening ? "border-[var(--accent-danger)] text-[var(--accent-danger)] animate-pulse" : "border-[var(--border)] text-[var(--muted)] hover:text-white hover:border-[var(--border-loud)]"}`}
+              className={`shrink-0 w-10 h-10 rounded-full border flex items-center justify-center disabled:opacity-40 ${listening ? "border-[var(--accent-danger)] text-[var(--accent-danger)] animate-pulse" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--border-loud)]"}`}
             >
               <Mic size={17} />
             </button>
@@ -1316,7 +1347,7 @@ export default function AgentChat() {
             )}
           </div>
         </div>
-        <p className="max-w-4xl mx-auto text-[10px] text-[var(--muted)] mt-1.5 px-1">
+        <p className="text-[11px] text-[var(--muted)] mt-1.5 px-1">
           Enter to send · Shift+Enter for new line.
         </p>
       </div>

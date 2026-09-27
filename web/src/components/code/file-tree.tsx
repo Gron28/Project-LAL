@@ -83,7 +83,7 @@ export default function FileTree({ project, refreshTick, onOpenFile, selected, r
 
   const render = (rel: string, depth: number): React.ReactNode => {
     const entries = dirs.get(rel);
-    if (entries === "loading") return <div key={rel + "/…"} className="text-[10px] text-[var(--muted)]" style={{ paddingLeft: depth * 12 + 20 }}>loading…</div>;
+    if (entries === "loading") return <div key={rel + "/…"} className="text-[11px] text-[var(--muted)]" style={{ paddingLeft: depth * 12 + 20 }}>loading…</div>;
     if (!entries) return null;
     return entries.map((e) => {
       const childRel = rel === "." ? e.name : rel + "/" + e.name;
@@ -93,7 +93,7 @@ export default function FileTree({ project, refreshTick, onOpenFile, selected, r
         return (
           <div key={childRel}>
             <button onClick={() => toggle(childRel)}
-              className={"w-full flex items-center gap-1.5 text-[11px] font-mono py-1 rounded hover:bg-[var(--surface-2,#11151c)] text-left " + (dim ? "opacity-40" : "")}
+              className={"w-full flex items-center gap-1.5 text-[11px] font-mono py-1 rounded hover:bg-[var(--surface-2)] text-left " + (dim ? "opacity-40" : "")}
               style={{ paddingLeft: depth * 12 + 4 }}>
               {open ? <ChevronDown size={11} className="shrink-0" /> : <ChevronRight size={11} className="shrink-0" />}
               <Folder size={11} className="text-[var(--muted)] shrink-0" />
@@ -106,8 +106,8 @@ export default function FileTree({ project, refreshTick, onOpenFile, selected, r
       return (
         <div key={childRel} className="group flex items-center">
           <button onClick={() => onOpenFile(childRel)}
-            className={"flex-1 min-w-0 flex items-center gap-1.5 text-[11px] font-mono py-1 rounded text-left hover:bg-[var(--surface-2,#11151c)] "
-              + (selected === childRel ? "text-[var(--accent-ai)] bg-[var(--surface-2,#11151c)]" : "text-[var(--text-2)]")}
+            className={"flex-1 min-w-0 flex items-center gap-1.5 text-[11px] font-mono py-1 rounded text-left hover:bg-[var(--surface-2)] "
+              + (selected === childRel ? "text-[var(--accent-ai)] bg-[var(--surface-2)]" : "text-[var(--text-2)]")}
             style={{ paddingLeft: depth * 12 + 20 }}>
             <File size={11} className="shrink-0 text-[var(--muted)]" />
             <span className="truncate">{e.name}</span>

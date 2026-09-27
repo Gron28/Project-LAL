@@ -132,7 +132,7 @@ export function Grid({
               {editable && (
                 <div className="flex items-center gap-1 px-2 h-5 bg-[var(--surface-2)] border-b border-[var(--border-soft)] cursor-move shrink-0"
                   onPointerDown={(e) => onPointerDown(e, w.id, "move")}>
-                  <span className="text-[9px] tracking-widest uppercase text-[var(--muted)] flex-1 truncate">{w.type}</span>
+                  <span className="text-[10px] tracking-widest uppercase text-[var(--muted)] flex-1 truncate">{w.type}</span>
                   {renderChrome?.(w, () => remove(w.id))}
                   <button onPointerDown={(e) => e.stopPropagation()} onClick={() => remove(w.id)}
                     className="text-[var(--muted)] hover:text-[var(--accent-danger)] text-[11px] leading-none px-0.5">✕</button>
@@ -161,7 +161,7 @@ export function Grid({
       <div className="flex md:hidden flex-col gap-3">
         {[...live.widgets].sort((a, b) => a.y - b.y).map((w) => (
           <div key={w.id} className="bg-[var(--surface-1)] border border-[var(--border)] rounded-[var(--r-lg)] overflow-hidden">
-            <div className="px-3 h-7 flex items-center bg-[var(--surface-2)] border-b border-[var(--border-soft)] text-[9px] tracking-widest uppercase text-[var(--muted)]">{w.type}</div>
+            <div className="px-3 h-7 flex items-center bg-[var(--surface-2)] border-b border-[var(--border-soft)] text-[10px] tracking-widest uppercase text-[var(--muted)]">{w.type}</div>
             <div className="p-2">{renderWidget(w)}</div>
           </div>
         ))}

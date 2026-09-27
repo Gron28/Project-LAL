@@ -15,7 +15,7 @@ export type Usage = {
 } | null;
 
 // High certainty is good — inverse of the load meters' color scale.
-const confColor = (avg: number) => avg >= 0.85 ? "#3fb950" : avg >= 0.6 ? "var(--accent-warn)" : "var(--accent-danger)";
+const confColor = (avg: number) => avg >= 0.85 ? "var(--accent-success)" : avg >= 0.6 ? "var(--accent-warn)" : "var(--accent-danger)";
 
 type Sys = {
   cpu: number; ramUsedGb: number; ramTotalGb: number; ramPct: number;
@@ -33,7 +33,7 @@ function Meter({ label, pct, detail, color }: { label: string; pct: number; deta
   const c = color ?? barColor(pct);
   return (
     <div className="flex flex-col gap-1 min-w-0">
-      <div className="flex items-center justify-between gap-2 text-[10px]">
+      <div className="flex items-center justify-between gap-2 text-[11px]">
         <span className="text-[var(--muted)] uppercase tracking-wider truncate">{label}</span>
         <span className="tabular-nums shrink-0" style={{ color: c }}>{detail}</span>
       </div>
@@ -108,7 +108,7 @@ export default function StatsHud({ usage, active, onServingChange }: { usage: Us
 export function StatsGlance({ usage }: { usage: Usage }) {
   const ctxPct = usage && usage.ctx ? Math.round((usage.totalTokens / usage.ctx) * 100) : null;
   return (
-    <span className="flex items-center gap-2 text-[10px] tabular-nums text-[var(--muted)]">
+    <span className="flex items-center gap-2 text-[11px] tabular-nums text-[var(--muted)]">
       <Gauge size={11} />
       <span style={{ color: ctxPct != null ? barColor(ctxPct) : "var(--muted)" }}>{ctxPct != null ? `${ctxPct}% ctx` : "ctx —"}</span>
       {usage?.tokPerSec != null && <span className="text-[var(--accent-ai)]">{usage.tokPerSec} tok/s</span>}

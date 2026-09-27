@@ -2,6 +2,7 @@
 // Verbatim extraction of the chart components from benchmark/page.tsx and
 // train/page.tsx — pure move so both pages and dashboard widgets share one copy.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { TOKENS } from "@/lib/design-tokens";
 
 export type Cats = Record<string, { ok: number; total: number }>;
 export type Res = {
@@ -12,7 +13,10 @@ export type Res = {
   results?: { cat: string; q: string; ok: boolean; got: string; detail?: string; shot?: string }[];
 };
 
-export const PALETTE = ["#34ffa6", "#7c9cff", "#ffb454", "#ff6b9d", "#5ec8d8", "#c084fc", "#f5d142", "#fb923c"];
+// Series colors come from design/tokens.json (color.semantic.chart).
+export const PALETTE: readonly string[] = TOKENS.chart;
+const INK = { grid: TOKENS.border.subtle, empty: TOKENS.text.muted, axis: TOKENS.text.muted, label: TOKENS.text.secondary, point: TOKENS.text.primary, primary: TOKENS.chart[0], secondary: TOKENS.chart[2], alert: TOKENS.chart[4], drop: TOKENS.status.error };
+const MONO = TOKENS.font.mono;
 export const pct = (ok: number, total: number) => (total ? Math.round((100 * ok) / total) : 0);
 export const shortName = (m: string) => (m.split("/").pop() || m).replace(/-f16$/, "").slice(0, 18);
 
@@ -24,7 +28,7 @@ export function HoverBox({ x, y, w, h, children }: { x: number; y: number; w: nu
   const left = Math.min(Math.max(x + 10, 4), w - boxW - 4);
   const top = Math.min(Math.max(y + 10, 4), h - 60);
   return (
-    <div className="absolute pointer-events-none z-10 text-[10px] font-mono leading-snug bg-[var(--surface-1)] border border-[var(--border-loud)] rounded-[var(--r-md)] px-2 py-1.5 shadow-lg whitespace-nowrap"
+    <div className="absolute pointer-events-none z-10 text-[11px] font-mono leading-snug bg-[var(--surface-1)] border border-[var(--border-loud)] rounded-[var(--r-md)] px-2 py-1.5 shadow-lg whitespace-nowrap"
       style={{ left, top, maxWidth: boxW }}>
       {children}
     </div>
@@ -80,16 +84,16 @@ export function MetricPanel({ title, runs, value, fmt, colorOf }: {
   const max = Math.max(...vals, 0.0001);
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-[var(--muted)] mb-2">{title}</div>
+      <div className="text-[11px] uppercase tracking-widest text-[var(--muted)] mb-2">{title}</div>
       <div className="flex flex-col gap-1.5">
         {runs.map((r, i) => {
           const v = value(r);
           const w = v != null ? Math.max(3, (v / max) * 100) : 0;
           return (
             <div key={r.model} className="flex items-center gap-2">
-              <span className="w-16 text-[9px] truncate text-[var(--text-2)]" title={r.model}>{shortName(r.model)}</span>
+              <span className="w-16 text-[10px] truncate text-[var(--text-2)]" title={r.model}>{shortName(r.model)}</span>
               <div className="flex-1 h-3 bg-[var(--surface-2)] rounded overflow-hidden"><div className="h-full rounded" style={{ width: w + "%", background: colorOf(i) }} /></div>
-              <span className="w-12 text-right text-[9px] text-[var(--muted)]">{v != null ? fmt(v) : "—"}</span>
+              <span className="w-12 text-right text-[10px] text-[var(--muted)]">{v != null ? fmt(v) : "—"}</span>
             </div>
           );
         })}
@@ -135,9 +139,9 @@ export function Stat({ label, value, sub, color, detail }: { label: string; valu
   return (
     <div className="bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-3 py-2.5"
       title={[label, value, sub, detail].filter(Boolean).join(" · ")}>
-      <div className="text-[9px] tracking-widest uppercase text-[var(--muted)]">{label}</div>
+      <div className="text-[10px] tracking-widest uppercase text-[var(--muted)]">{label}</div>
       <div className="text-base font-bold leading-tight mt-0.5 truncate" style={{ color: color || "var(--text)" }}>{value}</div>
-      {sub && <div className="text-[10px] text-[var(--muted)] truncate">{sub}</div>}
+      {sub && <div className="text-[11px] text-[var(--muted)] truncate">{sub}</div>}
     </div>
   );
 }
@@ -166,9 +170,9 @@ export function LossChart({ rows }: { rows: LossRow[] }) {
     const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
     c.width = w * dpr; c.height = h * dpr; const x = c.getContext("2d")!; x.scale(dpr, dpr); x.clearRect(0, 0, w, h);
     const L = 38, R = w - 8, T = 10, B = h - 18;
-    x.strokeStyle = "#1c4136"; for (let i = 0; i <= 4; i++) { const y = T + (B - T) * i / 4; x.beginPath(); x.moveTo(L, y); x.lineTo(R, y); x.stroke(); }
+    x.strokeStyle = INK.grid; for (let i = 0; i <= 4; i++) { const y = T + (B - T) * i / 4; x.beginPath(); x.moveTo(L, y); x.lineTo(R, y); x.stroke(); }
     const st = rows.filter((r) => r.event === "step" && r.loss != null);
-    if (!st.length) { x.fillStyle = "#7fa896"; x.font = "10px monospace"; x.textAlign = "center"; x.fillText("AWAITING TRAINING", (L + R) / 2, (T + B) / 2); return; }
+    if (!st.length) { x.fillStyle = INK.empty; x.font = `10px ${MONO}`; x.textAlign = "center"; x.fillText("AWAITING TRAINING", (L + R) / 2, (T + B) / 2); return; }
     const vl = rows.filter((r) => r.event === "val" && r.val_loss != null);
     const ys = st.map((s) => s.loss!).concat(vl.map((v) => v.val_loss!));
     // x-domain from the DATA's span, not 0..max: the dashboard stream sends a sliding
@@ -176,7 +180,7 @@ export function LossChart({ rows }: { rows: LossRow[] }) {
     const xs = st.map((s) => s.step!).concat(vl.filter((v) => v.step != null).map((v) => v.step!));
     const xmin = Math.min(...xs), xmax = Math.max(...xs), ymin = Math.min(...ys), ymax = Math.max(...ys);
     const X = (v: number) => L + (R - L) * (v - xmin) / ((xmax - xmin) || 1), Y = (v: number) => T + (B - T) * (1 - (v - ymin) / ((ymax - ymin) || 1));
-    x.fillStyle = "#90c0ac"; x.font = "9px monospace"; x.textAlign = "right"; x.fillText(ymax.toFixed(2), L - 3, T + 8); x.fillText(ymin.toFixed(2), L - 3, B);
+    x.fillStyle = INK.axis; x.font = `9px ${MONO}`; x.textAlign = "right"; x.fillText(ymax.toFixed(2), L - 3, T + 8); x.fillText(ymin.toFixed(2), L - 3, B);
     x.textAlign = "left"; x.fillText(String(xmin), L, h - 5); x.textAlign = "right"; x.fillText(String(xmax), R, h - 5);
     // epoch boundaries — faint vertical rule where the epoch counter increments
     let lastEpoch = st[0].epoch;
@@ -189,18 +193,18 @@ export function LossChart({ rows }: { rows: LossRow[] }) {
       }
     });
     // raw loss (faint)
-    x.strokeStyle = "rgba(52,255,166,0.28)"; x.lineWidth = 1; x.beginPath(); st.forEach((s, i) => { const px = X(s.step!), py = Y(s.loss!); if (i) x.lineTo(px, py); else x.moveTo(px, py); }); x.stroke();
+    x.strokeStyle = TOKENS.chart[0] + "47"; x.lineWidth = 1; x.beginPath(); st.forEach((s, i) => { const px = X(s.step!), py = Y(s.loss!); if (i) x.lineTo(px, py); else x.moveTo(px, py); }); x.stroke();
     // EMA smoothed loss (bold) — the trend through the noise
     let ema = st[0].loss!; const a = 0.3;
     const emaArr: number[] = [];
-    x.strokeStyle = "#34ffa6"; x.lineWidth = 2; x.beginPath();
+    x.strokeStyle = INK.primary; x.lineWidth = 2; x.beginPath();
     st.forEach((s, i) => { ema = a * s.loss! + (1 - a) * ema; emaArr.push(ema); const px = X(s.step!), py = Y(ema); if (i) x.lineTo(px, py); else x.moveTo(px, py); }); x.stroke();
     hit.current = { X, xmin, xmax, pts: st.map((s, i) => ({ step: s.step!, loss: s.loss!, ema: emaArr[i], source: s.source, repeat_n: s.repeat_n })) };
     // held-out val loss (amber line + dots) — divergence from train = overfitting
     if (vl.length) {
-      x.strokeStyle = "#ffb454"; x.lineWidth = 1.5; x.beginPath();
+      x.strokeStyle = INK.secondary; x.lineWidth = 1.5; x.beginPath();
       vl.forEach((v, i) => { const px = X(v.step!), py = Y(v.val_loss!); if (i) x.lineTo(px, py); else x.moveTo(px, py); }); x.stroke();
-      x.fillStyle = "#ffb454";
+      x.fillStyle = INK.secondary;
       vl.forEach((v) => { x.beginPath(); x.arc(X(v.step!), Y(v.val_loss!), 2.5, 0, 7); x.fill(); });
     }
     // memorization tell: a repeat-seen example that posts a new best-ever loss —
@@ -211,14 +215,14 @@ export function LossChart({ rows }: { rows: LossRow[] }) {
       const isNewBest = s.loss! < running - 1e-4; if (isNewBest) running = s.loss!;
       if (isNewBest && (s.repeat_n ?? 1) > 1) {
         const px = X(s.step!), py = Y(s.loss!);
-        x.strokeStyle = "#ff6b9d"; x.lineWidth = 1.3;
+        x.strokeStyle = INK.alert; x.lineWidth = 1.3;
         x.beginPath(); x.arc(px, py, 5, 0, 7); x.stroke();
       }
     });
     // best-train-loss marker
     const tmin = Math.min(...tys);
     const bi = tys.indexOf(tmin); const bx = X(st[bi].step!), by = Y(tmin);
-    x.fillStyle = "#eafff5"; x.beginPath(); x.arc(bx, by, 3, 0, 7); x.fill();
+    x.fillStyle = INK.point; x.beginPath(); x.arc(bx, by, 3, 0, 7); x.fill();
   }, [rows]);
   useEffect(() => { draw(); }, [draw]);
   return (
@@ -237,7 +241,7 @@ export function LossChart({ rows }: { rows: LossRow[] }) {
           <div>step <b className="text-[var(--text)]">{hover.p.step}</b></div>
           <div>loss {hover.p.loss.toFixed(4)} · ema {hover.p.ema.toFixed(4)}</div>
           {hover.p.source && <div>source: {hover.p.source}</div>}
-          {(hover.p.repeat_n ?? 1) > 1 && <div className="text-[#ff6b9d]">seen {hover.p.repeat_n}× this run</div>}
+          {(hover.p.repeat_n ?? 1) > 1 && <div className="text-[var(--chart-5)]">seen {hover.p.repeat_n}× this run</div>}
         </HoverBox>
       )}
     </div>
@@ -256,20 +260,20 @@ export function MetricHistoryChart({ rows, field, color, fmt, threshold }: {
     const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
     c.width = w * dpr; c.height = h * dpr; const x = c.getContext("2d")!; x.scale(dpr, dpr); x.clearRect(0, 0, w, h);
     const L = 34, R = w - 6, T = 8, B = h - 16;
-    x.strokeStyle = "#1c4136"; for (let i = 0; i <= 3; i++) { const y = T + (B - T) * i / 3; x.beginPath(); x.moveTo(L, y); x.lineTo(R, y); x.stroke(); }
+    x.strokeStyle = INK.grid; for (let i = 0; i <= 3; i++) { const y = T + (B - T) * i / 3; x.beginPath(); x.moveTo(L, y); x.lineTo(R, y); x.stroke(); }
     const st = rows.filter((r) => r.event === "step" && r[field] != null) as (LossRow & Record<string, number>)[];
-    if (!st.length) { x.fillStyle = "#7fa896"; x.font = "9px monospace"; x.textAlign = "center"; x.fillText("—", (L + R) / 2, (T + B) / 2); return; }
+    if (!st.length) { x.fillStyle = INK.empty; x.font = `9px ${MONO}`; x.textAlign = "center"; x.fillText("—", (L + R) / 2, (T + B) / 2); return; }
     const ys = st.map((s) => s[field] as number);
     const xs = st.map((s) => s.step!);
     const xmin = Math.min(...xs), xmax = Math.max(...xs);
     const ymin = Math.min(0, ...ys), ymax = Math.max(...ys, threshold ?? -Infinity) * 1.05 || 1;
     const X = (v: number) => L + (R - L) * (v - xmin) / ((xmax - xmin) || 1);
     const Y = (v: number) => T + (B - T) * (1 - (v - ymin) / ((ymax - ymin) || 1));
-    x.fillStyle = "#90c0ac"; x.font = "9px monospace"; x.textAlign = "right";
+    x.fillStyle = INK.axis; x.font = `9px ${MONO}`; x.textAlign = "right";
     x.fillText(fmt ? fmt(ymax) : ymax.toFixed(1), L - 3, T + 8);
     x.fillText(fmt ? fmt(ymin) : ymin.toFixed(1), L - 3, B);
     if (threshold != null) {
-      x.strokeStyle = "rgba(255,180,84,0.5)"; x.setLineDash([3, 3]); x.lineWidth = 1;
+      x.strokeStyle = TOKENS.chart[2] + "80"; x.setLineDash([3, 3]); x.lineWidth = 1;
       x.beginPath(); x.moveTo(L, Y(threshold)); x.lineTo(R, Y(threshold)); x.stroke(); x.setLineDash([]);
     }
     x.strokeStyle = color; x.lineWidth = 1.5; x.beginPath();
@@ -314,7 +318,7 @@ export function SourceLossChart({ rows }: { rows: LossRow[] }) {
     c.width = w * dpr; c.height = h * dpr; const x = c.getContext("2d")!; x.scale(dpr, dpr); x.clearRect(0, 0, w, h);
     const L = 34, R = w - 6, T = 8, B = h - 16;
     const st = rows.filter((r) => r.event === "step" && r.loss != null && r.source);
-    if (!st.length) { x.fillStyle = "#7fa896"; x.font = "9px monospace"; x.textAlign = "center"; x.fillText("no source-tagged steps yet", (L + R) / 2, (T + B) / 2); return; }
+    if (!st.length) { x.fillStyle = INK.empty; x.font = `9px ${MONO}`; x.textAlign = "center"; x.fillText("no source-tagged steps yet", (L + R) / 2, (T + B) / 2); return; }
     const bySource = new Map<string, { step: number; loss: number }[]>();
     st.forEach((s) => { const arr = bySource.get(s.source!) || []; arr.push({ step: s.step!, loss: s.loss! }); bySource.set(s.source!, arr); });
     const xs = st.map((s) => s.step!), ys = st.map((s) => s.loss!);
@@ -340,11 +344,11 @@ export function SourceLossChart({ rows }: { rows: LossRow[] }) {
     hit.current = hitPts;
     // legend
     let lx = L;
-    x.font = "9px monospace"; x.textAlign = "left";
+    x.font = `9px ${MONO}`; x.textAlign = "left";
     sources.forEach((src, i) => {
       const color = PALETTE[i % PALETTE.length];
       x.fillStyle = color; x.fillRect(lx, 2, 6, 6);
-      x.fillStyle = "#c8ddd2"; x.fillText(src, lx + 9, 8);
+      x.fillStyle = INK.label; x.fillText(src, lx + 9, 8);
       lx += 9 + x.measureText(src).width + 12;
     });
   }, [rows]);
@@ -380,7 +384,7 @@ export function BlockHeatmap({ rows, maxCols = 120 }: { rows: LossRow[]; maxCols
     const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
     c.width = w * dpr; c.height = h * dpr; const x = c.getContext("2d")!; x.scale(dpr, dpr); x.clearRect(0, 0, w, h);
     const st = rows.filter((r) => r.event === "step" && Array.isArray(r.layer_gnorm) && r.layer_gnorm!.length);
-    if (!st.length) { x.fillStyle = "#7fa896"; x.font = "9px monospace"; x.textAlign = "center"; x.fillText("awaiting per-block gradients", w / 2, h / 2); return; }
+    if (!st.length) { x.fillStyle = INK.empty; x.font = `9px ${MONO}`; x.textAlign = "center"; x.fillText("awaiting per-block gradients", w / 2, h / 2); return; }
     const cols = st.slice(-maxCols);
     const nBlocks = cols[0].layer_gnorm!.length;
     const L = 4, T = 4, R = w - 4, B = h - 4;
@@ -434,17 +438,17 @@ export function LengthHistogramChart({ hist }: { hist?: { edges: number[]; kept:
     const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
     c.width = w * dpr; c.height = h * dpr; const x = c.getContext("2d")!; x.scale(dpr, dpr); x.clearRect(0, 0, w, h);
     const L = 30, R = w - 6, T = 8, B = h - 16;
-    if (!hist || !hist.kept.length) { x.fillStyle = "#7fa896"; x.font = "9px monospace"; x.textAlign = "center"; x.fillText("—", (L + R) / 2, (T + B) / 2); return; }
+    if (!hist || !hist.kept.length) { x.fillStyle = INK.empty; x.font = `9px ${MONO}`; x.textAlign = "center"; x.fillText("—", (L + R) / 2, (T + B) / 2); return; }
     const n = hist.kept.length;
     const maxV = Math.max(1, ...hist.kept.map((v, i) => v + hist.dropped[i]));
     const bw = (R - L) / n;
     for (let i = 0; i < n; i++) {
       const kept = hist.kept[i], drop = hist.dropped[i];
       const keptH = (B - T) * (kept / maxV), dropH = (B - T) * (drop / maxV);
-      x.fillStyle = "#34ffa6"; x.fillRect(L + i * bw + 1, B - keptH, bw - 2, keptH);
-      x.fillStyle = "#e2726b"; x.globalAlpha = 0.8; x.fillRect(L + i * bw + 1, B - keptH - dropH, bw - 2, dropH); x.globalAlpha = 1;
+      x.fillStyle = INK.primary; x.fillRect(L + i * bw + 1, B - keptH, bw - 2, keptH);
+      x.fillStyle = INK.drop; x.globalAlpha = 0.8; x.fillRect(L + i * bw + 1, B - keptH - dropH, bw - 2, dropH); x.globalAlpha = 1;
     }
-    x.fillStyle = "#90c0ac"; x.font = "9px monospace"; x.textAlign = "left";
+    x.fillStyle = INK.axis; x.font = `9px ${MONO}`; x.textAlign = "left";
     x.fillText("0", L, h - 5); x.textAlign = "right"; x.fillText(String(hist.edges[hist.edges.length - 1]), R, h - 5);
     hit.current = { L, bw, n };
   }, [hist]);
@@ -464,7 +468,7 @@ export function LengthHistogramChart({ hist }: { hist?: { edges: number[]; kept:
       {hover && hist && (
         <HoverBox x={hover.x} y={hover.y} w={hover.w} h={hover.h}>
           <div>{hist.edges[hover.i]}–{hist.edges[hover.i + 1]} tok</div>
-          <div><span className="text-[#34ffa6]">kept {hist.kept[hover.i]}</span> · <span className="text-[#e2726b]">dropped {hist.dropped[hover.i]}</span></div>
+          <div><span className="text-[var(--chart-1)]">kept {hist.kept[hover.i]}</span> · <span className="text-[var(--status-error)]">dropped {hist.dropped[hover.i]}</span></div>
         </HoverBox>
       )}
     </div>
@@ -496,7 +500,7 @@ export function DeltaHeatmap({ data, vmax }: { data: AdapterDelta; vmax: number 
         x.fillRect(L + ci * cw, T + ri * ch, Math.ceil(cw) + 0.5, Math.ceil(ch) + 0.5);
       });
     });
-    x.fillStyle = "#90c0ac"; x.font = "8px monospace"; x.textAlign = "center";
+    x.fillStyle = INK.axis; x.font = `8px ${MONO}`; x.textAlign = "center";
     data.modules.forEach((m, ci) => x.fillText(m.replace("_proj", ""), L + (ci + 0.5) * cw, 10));
     hit.current = { L, T, cw, ch, nRows, nCols };
   }, [data, vmax]);
@@ -559,7 +563,7 @@ export function DeltaSurface3D({ data, module }: { data: AdapterEvolution; modul
     c.width = w * dpr; c.height = h * dpr; const x = c.getContext("2d")!; x.scale(dpr, dpr); x.clearRect(0, 0, w, h);
     const { g, nLayers, nSteps } = grid;
     if (!nLayers || nSteps < 2) {
-      x.fillStyle = "#7fa896"; x.font = "10px monospace"; x.textAlign = "center";
+      x.fillStyle = INK.empty; x.font = `10px ${MONO}`; x.textAlign = "center";
       x.fillText(nSteps < 2 ? "needs 2+ snapshots — enable snapshots on the next run" : "no data", w / 2, h / 2);
       return;
     }
@@ -607,7 +611,7 @@ export function DeltaSurface3D({ data, module }: { data: AdapterEvolution; modul
     });
 
     // axis captions (approximate, since axes tilt with the drag)
-    x.fillStyle = "#90c0ac"; x.font = "9px monospace"; x.textAlign = "left";
+    x.fillStyle = INK.axis; x.font = `9px ${MONO}`; x.textAlign = "left";
     x.fillText("layer 0 -> " + (nLayers - 1), 6, h - 8);
     x.textAlign = "right";
     x.fillText(`step ${data.steps[0]} -> ${data.steps[nSteps - 1]}`, w - 6, h - 8);
@@ -676,7 +680,7 @@ export function ConceptGalaxy3D({ snapshots, categories, labels, upToIndex }: {
     const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
     c.width = w * dpr; c.height = h * dpr; const x = c.getContext("2d")!; x.scale(dpr, dpr); x.clearRect(0, 0, w, h);
     const idx = Math.min(upToIndex, snapshots.length - 1);
-    if (idx < 0) { x.fillStyle = "#7fa896"; x.font = "10px monospace"; x.textAlign = "center"; x.fillText("no embedding snapshots yet", w / 2, h / 2); return; }
+    if (idx < 0) { x.fillStyle = INK.empty; x.font = `10px ${MONO}`; x.textAlign = "center"; x.fillText("no embedding snapshots yet", w / 2, h / 2); return; }
 
     const all = snapshots.slice(0, idx + 1).flatMap((s) => s.points.flat());
     const span = Math.max(1e-6, ...all.map(Math.abs));
@@ -711,14 +715,14 @@ export function ConceptGalaxy3D({ snapshots, categories, labels, upToIndex }: {
     hit.current = hitPts;
 
     // legend
-    let lx = 6; x.font = "9px monospace"; x.textAlign = "left";
+    let lx = 6; x.font = `9px ${MONO}`; x.textAlign = "left";
     uniqueCats.forEach((cat, i) => {
       const color = PALETTE[i % PALETTE.length];
       x.fillStyle = color; x.fillRect(lx, 6, 6, 6);
-      x.fillStyle = "#c8ddd2"; x.fillText(cat, lx + 9, 12);
+      x.fillStyle = INK.label; x.fillText(cat, lx + 9, 12);
       lx += 9 + x.measureText(cat).width + 12;
     });
-    x.fillStyle = "#90c0ac"; x.textAlign = "right";
+    x.fillStyle = INK.axis; x.textAlign = "right";
     x.fillText(`step ${snapshots[idx].step}`, w - 6, h - 6);
   }, [snapshots, categories, uniqueCats, upToIndex, yaw, pitch]);
 
@@ -776,20 +780,20 @@ export function ProbePanel({ row }: { row?: LossRow }) {
   const meanP = hasCert ? row.probs!.reduce((a, b) => a + b, 0) / row.probs!.length : null;
   return (
     <div className="text-[11px] leading-relaxed space-y-2">
-      <div><span className="uppercase tracking-widest text-[9px] text-[var(--muted)]">prompt</span>
+      <div><span className="uppercase tracking-widest text-[10px] text-[var(--muted)]">prompt</span>
         <div className="text-[var(--text-2)] font-mono whitespace-pre-wrap">{row.prompt}</div></div>
       <div className="grid grid-cols-2 gap-3">
-        <div><span className="uppercase tracking-widest text-[9px] text-[var(--muted)]">target</span>
+        <div><span className="uppercase tracking-widest text-[10px] text-[var(--muted)]">target</span>
           <div className="text-[var(--text-2)] font-mono whitespace-pre-wrap">{row.target}</div></div>
         <div>
-          <span className="uppercase tracking-widest text-[9px] text-[var(--accent-ai)]">model @ step {row.step}</span>
-          {meanP != null && <span className="ml-2 text-[9px] text-[var(--muted)]">certitude {Math.round(meanP * 100)}% · tint = uncertainty</span>}
+          <span className="uppercase tracking-widest text-[10px] text-[var(--accent-ai)]">model @ step {row.step}</span>
+          {meanP != null && <span className="ml-2 text-[10px] text-[var(--muted)]">certitude {Math.round(meanP * 100)}% · tint = uncertainty</span>}
           {hasCert ? (
             <div className="text-[var(--text)] font-mono whitespace-pre-wrap">
               {row.tokens!.map((t, i) => (
                 <span key={i}
                   title={`p=${row.probs![i]}${row.entropy?.[i] != null ? ` · H=${row.entropy[i]} nats` : ""}`}
-                  style={{ backgroundColor: `rgba(255,107,157,${(0.55 * (1 - row.probs![i])).toFixed(3)})`, borderRadius: 2 }}>
+                  style={{ backgroundColor: `rgba(195,79,75,${(0.55 * (1 - row.probs![i])).toFixed(3)})`, borderRadius: 2 }}>
                   {t}
                 </span>
               ))}
@@ -820,7 +824,7 @@ export function GradientTerrain3D({ rows, maxCols = 90 }: { rows: LossRow[]; max
     const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
     c.width = w * dpr; c.height = h * dpr; const x = c.getContext("2d")!; x.scale(dpr, dpr); x.clearRect(0, 0, w, h);
     const st = rows.filter((r) => r.event === "step" && Array.isArray(r.layer_gnorm) && r.layer_gnorm!.length);
-    if (!st.length) { x.fillStyle = "#7fa896"; x.font = "10px monospace"; x.textAlign = "center"; x.fillText("awaiting per-layer gradients", w / 2, h / 2); return; }
+    if (!st.length) { x.fillStyle = INK.empty; x.font = `10px ${MONO}`; x.textAlign = "center"; x.fillText("awaiting per-layer gradients", w / 2, h / 2); return; }
     const cols = st.slice(-maxCols);
     const nLayers = cols[0].layer_gnorm!.length;
     let vmax = 0;
@@ -855,7 +859,7 @@ export function GradientTerrain3D({ rows, maxCols = 90 }: { rows: LossRow[]; max
       for (let i = base.length - 1; i >= 0; i--) x.lineTo(base[i].sx, base[i].sy);
       x.closePath();
       const depth01 = (order.indexOf(li) + 1) / nLayers; // nearer → brighter
-      x.fillStyle = `rgba(52,255,166,${(0.05 + depth01 * 0.10).toFixed(3)})`;
+      x.fillStyle = `rgba(168,146,25,${(0.08 + depth01 * 0.14).toFixed(3)})`;
       x.fill();
       // crest line, phosphor ramp by that layer's own peak (identity = position, magnitude = color)
       const peak = Math.max(...cols.map((s) => s.layer_gnorm![li])) / vmax;
@@ -868,7 +872,7 @@ export function GradientTerrain3D({ rows, maxCols = 90 }: { rows: LossRow[]; max
       crest.forEach((p, ci) => hitPts.push({ sx: p.sx, sy: p.sy, step: cols[ci].step!, layer: li, v: cols[ci].layer_gnorm![li] }));
     }
     hit.current = hitPts;
-    x.fillStyle = "#90c0ac"; x.font = "9px monospace"; x.textAlign = "left";
+    x.fillStyle = INK.axis; x.font = `9px ${MONO}`; x.textAlign = "left";
     x.fillText(`${nLayers} layers × last ${cols.length} steps · height ∝ √‖g‖ · max ${vmax.toFixed(3)}`, 6, 12);
   }, [rows, maxCols, pitch]);
 

@@ -11,7 +11,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npm run lint && npm run check:tool-allowlist && tsc --noEmit && npm run test:runtime",
-    "test:runtime": "node --experimental-strip-types --test src/lib/usage-ledger.test.ts src/lib/runtime-processes.test.ts src/lib/runtime-telemetry.test.ts src/lib/runtime-profiles.test.ts src/lib/retention.test.ts src/lib/request-identity.test.ts src/lib/browser-mutation-guard.test.ts src/lib/host-profile.test.ts src/lib/host-context.test.ts src/lib/state-migration.test.ts src/lib/workspace-grants.test.ts src/lib/capability-registry.test.ts src/lib/context-profile.test.ts src/lib/lal-client-policy.test.ts src/lib/lal-model-capabilities.test.ts src/lib/jobs.test.ts src/lib/model-acquisition.test.ts src/lib/model-downloads.test.ts src/lib/huggingface-catalog.test.ts src/lib/lineage-evaluations.test.ts src/lib/media-artifacts.test.ts src/lib/defensive-engagement.test.ts src/lib/toolloop-budget.test.ts src/lib/log-rotation.test.ts src/lib/hive/graph.test.ts src/lib/hive/graph-authoring.test.ts src/lib/hive/graph-revisions.test.ts src/lib/hive/task-runtime.test.ts src/lib/hive/research-quality.test.ts src/lib/hive/artifact-acceptance.test.ts src/lib/hive/orchestration-policy.test.ts src/lib/hive/handoff.test.ts src/lib/hive/post-run-report.test.ts src/lib/hive/held-out-suite.test.ts src/lib/hive/held-out-runner.test.ts src/lib/hive/mission-dashboard.test.ts src/lib/hive/store-resume.test.ts",
+    "test:runtime": "node --experimental-strip-types --test src/lib/usage-ledger.test.ts src/lib/runtime-processes.test.ts src/lib/runtime-telemetry.test.ts src/lib/runtime-profiles.test.ts src/lib/retention.test.ts src/lib/request-identity.test.ts src/lib/browser-mutation-guard.test.ts src/lib/host-profile.test.ts src/lib/host-context.test.ts src/lib/state-migration.test.ts src/lib/workspace-grants.test.ts src/lib/capability-registry.test.ts src/lib/context-profile.test.ts src/lib/lal-client-policy.test.ts src/lib/lal-model-capabilities.test.ts src/lib/jobs.test.ts src/lib/model-acquisition.test.ts src/lib/model-downloads.test.ts src/lib/huggingface-catalog.test.ts src/lib/lineage-evaluations.test.ts src/lib/media-artifacts.test.ts src/lib/defensive-engagement.test.ts src/lib/toolloop-budget.test.ts src/lib/log-rotation.test.ts src/lib/hive/graph.test.ts src/lib/hive/graph-authoring.test.ts src/lib/hive/graph-revisions.test.ts src/lib/hive/task-runtime.test.ts src/lib/hive/research-quality.test.ts src/lib/hive/artifact-acceptance.test.ts src/lib/hive/orchestration-policy.test.ts src/lib/hive/handoff.test.ts src/lib/hive/post-run-report.test.ts src/lib/hive/held-out-suite.test.ts src/lib/hive/held-out-runner.test.ts src/lib/hive/mission-dashboard.test.ts src/lib/hive/store-resume.test.ts src/lib/gguf-meta.test.ts src/lib/research/memory.test.ts",
     "test:lineage-evaluations": "node --experimental-strip-types --test src/lib/lineage-evaluations.test.ts",
     "test:protocol": "node --test src/lib/protocol/protocol.conformance.test.ts",
     "check:protocol-drift": "node ../scripts/check_protocol_drift.mjs",
@@ -38,7 +38,8 @@
     "remark-gfm": "^4.0.1",
     "sam-js": "^0.3.1",
     "tree-sitter-wasms": "^0.1.13",
-    "web-tree-sitter": "^0.20.8"
+    "web-tree-sitter": "^0.20.8",
+    "three": "^0.180.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -48,6 +49,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "@types/three": "^0.180.0"
   }
 }

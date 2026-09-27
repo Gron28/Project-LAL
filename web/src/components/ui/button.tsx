@@ -1,11 +1,14 @@
 import { cn } from "./utils";
 
-type Variant = "primary" | "ghost" | "danger";
+type Variant = "primary" | "secondary" | "ghost" | "danger";
 
-const VARIANT_STYLE: Record<Variant, { bg: string; color: string }> = {
-  primary: { bg: "var(--accent-ai)", color: "#05090c" },
-  ghost: { bg: "transparent", color: "var(--text-2)" },
-  danger: { bg: "transparent", color: "var(--accent-danger)" },
+// Visual rules live in globals.css (.btn-*) so hover/focus/disabled states are
+// real CSS states instead of inline styles that can't express :hover.
+const VARIANT_CLASS: Record<Variant, string> = {
+  primary: "btn-primary",
+  secondary: "btn-secondary",
+  ghost: "btn-ghost",
+  danger: "btn-danger",
 };
 
 // `active` overrides variant with the primary look — the toggle-button pattern
@@ -16,25 +19,18 @@ export function Button({
   size = "md",
   className,
   children,
-  style,
   ...rest
 }: {
   active?: boolean;
   variant?: Variant;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
   className?: string;
   children: React.ReactNode;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  const v = active ? VARIANT_STYLE.primary : VARIANT_STYLE[variant];
-  const padding = size === "sm" ? "px-3 min-h-9 text-xs" : "px-4 min-h-10 text-sm";
+  const padding = size === "sm" ? "px-3 min-h-8 text-xs" : size === "lg" ? "px-5 min-h-11 text-[15px]" : "px-4 min-h-10 text-[13px]";
   return (
     <button
-      className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-[var(--r-md)] border border-transparent transition-[color,background,border-color,transform] active:translate-y-px disabled:opacity-45",
-        padding,
-        className
-      )}
-      style={{ background: v.bg, color: v.color, fontWeight: active ? 700 : 500, ...style }}
+      className={cn("btn", VARIANT_CLASS[active ? "primary" : variant], padding, className)}
       {...rest}
     >
       {children}

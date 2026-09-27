@@ -541,6 +541,28 @@ Ollama status, and `/api/sysinfo` before changing a React spinner.
 The navigation globally exposes an active run and resident GPU model because
 those are host-wide facts, not page-local decorations.
 
+The desktop sidebar (`web/src/app/nav.tsx`) is the only desktop navigation:
+a Workspace group (Home, Chat, Code, Hive, Guardian) and a Lab group
+(Training, Models, Evaluation, History, CLI). `LabNav` renders only below the
+`md` breakpoint, where the phone tab bar has a single "Lab" entry. In-page view
+switchers use the shared `.seg` segmented-tab class.
+
+**Design tokens.** `design/tokens.json` is the single source for color, type,
+spacing, radius, motion and layout values. `npm run tokens` runs
+`scripts/build-design-tokens.mjs`, which generates:
+
+- `web/src/app/tokens.css`: CSS variables, legacy aliases (`--accent-ai`,
+  `--surface-1`, …) and a Tailwind `@theme` bridge;
+- `web/src/lib/design-tokens.ts`: raw values for canvas charts, manifest and
+  viewport metadata;
+- `apps/cli/packages/cli/src/ui/themes/lal-palette.ts`: the `LAL Dark` / `LAL
+  Light` terminal palettes and brand colors.
+
+The build fails if any text/background pair drops below WCAG AA (4.5:1), and
+`npm run tokens:check` (part of `npm test`) fails if a generated file is stale.
+Fonts (Satoshi, JetBrains Mono) are bundled in `web/src/app/fonts/`; no remote
+font request is made.
+
 ## 11. Authentication and authority
 
 Project-LAL currently assumes a private, single-owner environment.
@@ -779,7 +801,7 @@ the UI.
 | Desired change | Begin here |
 |---|---|
 | Add or rearrange a page | `web/src/app/<page>/page.tsx`, `web/src/app/nav.tsx` |
-| Change shared styling | `web/src/app/globals.css`, component primitives |
+| Change shared styling | `design/tokens.json` then `npm run tokens`; `web/src/app/globals.css`, `web/src/components/ui/` |
 | Change an API payload | matching `web/src/app/api/**/route.ts` plus callers/tests |
 | Add a web-agent tool | `agent-tools.ts` or `tools.ts`, tool palette, validation, tests |
 | Change approval/sandbox rules | `tools.ts`, run approval path, security tests |

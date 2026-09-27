@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Local-first personal AI system",
   "scripts": {
-    "test": "npm run check:prompt-tool-visibility && npm --prefix web run test && node --test web/src/lib/protocol/protocol.conformance.test.ts packages/protocol/src/agent-runtime.test.ts scripts/backup-owner-data.test.mjs scripts/codex-harness-ab.test.mjs && node scripts/check_protocol_drift.mjs && python3 -m unittest tests.test_lal_windows_release",
+    "test": "npm run check:prompt-tool-visibility && npm run tokens:check && npm --prefix web run test && node --test web/src/lib/protocol/protocol.conformance.test.ts packages/protocol/src/agent-runtime.test.ts scripts/backup-owner-data.test.mjs scripts/codex-harness-ab.test.mjs && node scripts/check_protocol_drift.mjs && python3 -m unittest tests.test_lal_windows_release",
     "build": "npm --prefix web run build",
     "cli:test": "npm --prefix apps/cli run test --workspace=packages/cli",
     "smoke": "./scripts/smoke-project-lal.sh",
@@ -20,6 +20,8 @@
     "health:weekly": "node scripts/health-check.mjs --weekly",
     "hive:data:check": "node scripts/hive-data-maintenance.mjs",
     "hive:data:apply": "node scripts/hive-data-maintenance.mjs --apply",
+    "tokens": "node scripts/build-design-tokens.mjs",
+    "tokens:check": "node scripts/build-design-tokens.mjs --check",
     "check:prompt-tool-visibility": "node scripts/check_prompt_tool_visibility.mjs"
   }
 }

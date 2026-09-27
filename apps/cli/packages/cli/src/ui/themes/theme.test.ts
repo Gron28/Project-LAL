@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { LAL_PALETTE_DARK } from './lal-palette.js';
 import * as themeModule from './theme.js';
 import { themeManager } from './theme-manager.js';
 
@@ -89,8 +90,8 @@ describe('themeManager.loadCustomThemes', () => {
     const result = themeManager.getTheme('Legacy Custom Theme')!;
 
     // Should use DEFAULT_THEME (LALDark) values for missing fields
-    expect(result.colors.DiffAdded).toBe('#18351E');
-    expect(result.colors.DiffRemoved).toBe('#35201F');
+    expect(result.colors.DiffAdded).toBe(LAL_PALETTE_DARK.DiffAdded);
+    expect(result.colors.DiffRemoved).toBe(LAL_PALETTE_DARK.DiffRemoved);
     expect(result.colors.AccentBlue).toBe(legacyTheme.AccentBlue);
     expect(result.name).toBe(legacyTheme.name);
   });

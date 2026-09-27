@@ -176,8 +176,8 @@ export default function EditorPane({ project, filePath, refreshTick, rawHref, on
     <div className="h-full flex flex-col">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-soft)] shrink-0">
         <span className="text-[11px] font-mono truncate">{filePath}</span>
-        {dirty && <span className="text-[var(--accent-warn,#d29922)] text-sm leading-none" title="unsaved changes">•</span>}
-        {(truncated || readOnly) && <span className="text-[10px] text-[var(--muted)]">{truncated ? "read-only (file >1MB)" : "live read-only view"}</span>}
+        {dirty && <span className="text-[var(--accent-warn)] text-sm leading-none" title="unsaved changes">•</span>}
+        {(truncated || readOnly) && <span className="text-[11px] text-[var(--muted)]">{truncated ? "read-only (file >1MB)" : "live read-only view"}</span>}
         <span className="ml-auto flex items-center gap-2 shrink-0">
           {!readOnly && <button onClick={() => save(false)} disabled={!dirty || saving} title="save (Ctrl+S)"
             className="flex items-center gap-1 text-[11px] border rounded px-2 py-1 disabled:opacity-30"
@@ -186,7 +186,7 @@ export default function EditorPane({ project, filePath, refreshTick, rawHref, on
           </button>}
           {rawHref && /\.html?$/i.test(filePath) && (
             <a href={rawHref} target="_blank" rel="noreferrer" title="run this page"
-              className="flex items-center gap-1 text-[11px] border rounded px-2 py-1" style={{ borderColor: "#3fb950", color: "#3fb950" }}>
+              className="flex items-center gap-1 text-[11px] border rounded px-2 py-1" style={{ borderColor: "var(--accent-success)", color: "var(--accent-success)" }}>
               <Play size={12} /> run
             </a>
           )}
@@ -198,11 +198,11 @@ export default function EditorPane({ project, filePath, refreshTick, rawHref, on
       </div>
 
       {notice && (
-        <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] border-b border-[var(--accent-warn,#d29922)]/50 text-[var(--accent-warn,#d29922)] shrink-0">
+        <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] border-b border-[var(--accent-warn)]/50 text-[var(--accent-warn)] shrink-0">
           {notice.kind === "conflict" ? "file changed on disk since you loaded it — not saved" : "file changed on disk (agent edit?) while you have unsaved changes"}
           <span className="ml-auto flex gap-2">
             <button onClick={reloadFromDisk} className="border border-[var(--border)] rounded px-2 py-0.5">reload from disk</button>
-            {notice.kind === "conflict" && <button onClick={() => save(true)} className="border border-[var(--accent-warn,#d29922)] rounded px-2 py-0.5">overwrite anyway</button>}
+            {notice.kind === "conflict" && <button onClick={() => save(true)} className="border border-[var(--accent-warn)] rounded px-2 py-0.5">overwrite anyway</button>}
           </span>
         </div>
       )}

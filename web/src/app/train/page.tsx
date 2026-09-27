@@ -5,6 +5,10 @@ import { Stat, LossChart, MetricHistoryChart, SourceLossChart, BlockHeatmap, Gra
 import { SignalTrace } from "@/components/ui/signal-trace";
 import { LabNav } from "@/components/lab-nav";
 import { CampaignsPanel } from "./campaigns-panel";
+import { TOKENS } from "@/lib/design-tokens";
+import { GuidedHeader } from "@/components/ui/guided-header";
+import { GUIDES } from "@/lib/page-guides";
+import { TrainingLayerView } from "@/components/llm-viz/training-layer-view";
 
 type Row = {
   event: string; step?: number; steps?: number; loss?: number; best?: number;
@@ -32,9 +36,9 @@ type Sys = { gpu: number | null; vramUsedGb: number | null; vramTotalGb: number 
 const card = "md:bg-[var(--surface-1)] md:border md:border-[var(--border)] md:rounded-[var(--r-lg)] flex flex-col min-h-0";
 const head = "px-1 md:px-4 py-3 border-b border-[var(--border-soft)] text-[11px] tracking-widest uppercase text-[var(--text-2)] flex items-center gap-2";
 const inp = "w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[var(--r-md)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--border-loud)]";
-const lbl = "block text-[10px] tracking-widest uppercase text-[var(--muted)] mb-1.5";
+const lbl = "block text-[11px] tracking-widest uppercase text-[var(--muted)] mb-1.5";
 const panel = "py-1.5 md:p-2.5 md:bg-[var(--surface-2)] md:border md:border-[var(--border)] md:rounded-[var(--r-md)]";
-const panelLbl = "text-[10px] uppercase tracking-widest text-[var(--muted)] mb-1";
+const panelLbl = "text-[11px] uppercase tracking-widest text-[var(--muted)] mb-1";
 
 type DataFile = { name: string; chars: number; kind: "raw" | "sft" };
 type Experiment = {
@@ -84,8 +88,8 @@ function DatasetManager({ onClose, onSaved }: { onClose: () => void; onSaved: ()
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-2xl bg-[var(--surface-1)] border border-[var(--border)] rounded-[var(--r-lg)] my-4">
         <div className="flex items-center gap-2 px-4 h-12 border-b border-[var(--border-soft)] sticky top-0 bg-[var(--surface-1)]">
           <span className="text-sm font-semibold">Manage datasets</span>
-          <span className="ml-auto text-[10px] text-[var(--accent-ai)]">{msg}</span>
-          <button onClick={onClose} className="text-[var(--muted)] hover:text-white text-lg leading-none px-1">×</button>
+          <span className="ml-auto text-[11px] text-[var(--accent-ai)]">{msg}</span>
+          <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text)] text-lg leading-none px-1">×</button>
         </div>
         <div className="p-4 space-y-4">
           {/* existing files */}
@@ -93,9 +97,9 @@ function DatasetManager({ onClose, onSaved }: { onClose: () => void; onSaved: ()
             {files.length === 0 && <div className="p-4 text-center text-xs text-[var(--muted)]">No datasets yet.</div>}
             {files.map((f) => (
               <div key={f.name} className="flex items-center gap-2 px-3 py-2">
-                <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-widest ${f.kind === "sft" ? "bg-[var(--accent-ai)]/20 text-[var(--accent-ai)]" : "bg-[var(--surface-3)] text-[var(--muted)]"}`}>{f.kind}</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-widest ${f.kind === "sft" ? "bg-[var(--accent-ai)]/20 text-[var(--accent-ai)]" : "bg-[var(--surface-3)] text-[var(--muted)]"}`}>{f.kind}</span>
                 <span className="flex-1 text-sm truncate">{f.name}</span>
-                <span className="text-[10px] text-[var(--muted)]">{f.chars >= 1000 ? (f.chars / 1000).toFixed(0) + "k" : f.chars} chars</span>
+                <span className="text-[11px] text-[var(--muted)]">{f.chars >= 1000 ? (f.chars / 1000).toFixed(0) + "k" : f.chars} chars</span>
                 <button onClick={() => del(f.name)} className="text-[var(--muted)] hover:text-[var(--accent-danger)] text-sm px-1.5" title="Delete">✕</button>
               </div>
             ))}
@@ -103,17 +107,17 @@ function DatasetManager({ onClose, onSaved }: { onClose: () => void; onSaved: ()
 
           {/* upload */}
           <div className="border-t border-[var(--border-soft)] pt-3">
-            <div className="text-[10px] uppercase tracking-widest text-[var(--muted)] mb-2">Upload file</div>
+            <div className="text-[11px] uppercase tracking-widest text-[var(--muted)] mb-2">Upload file</div>
             <label className="inline-block text-[11px] tracking-widest uppercase text-[var(--accent-ai)] cursor-pointer border border-[var(--border)] rounded px-3 py-1.5 hover:border-[var(--border-loud)]">
               ⬆ Upload .txt / .jsonl / .pdf
               <input type="file" accept=".txt,.jsonl,.pdf,.md" className="hidden" onChange={upload} />
             </label>
-            <p className="text-[10px] text-[var(--muted)] mt-1">PDF is auto-extracted to .txt. .jsonl files become SFT instruction datasets.</p>
+            <p className="text-[11px] text-[var(--muted)] mt-1">PDF is auto-extracted to .txt. .jsonl files become SFT instruction datasets.</p>
           </div>
 
           {/* create from paste */}
           <div className="border-t border-[var(--border-soft)] pt-3 space-y-2">
-            <div className="text-[10px] uppercase tracking-widest text-[var(--muted)]">Create from text</div>
+            <div className="text-[11px] uppercase tracking-widest text-[var(--muted)]">Create from text</div>
             <div className="flex gap-2">
               <input className={minp + " flex-1"} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="dataset-name (no extension)" />
               <select className={minp} value={newExt} onChange={(e) => setNewExt(e.target.value as ".txt" | ".jsonl")}>
@@ -176,7 +180,7 @@ export default function TrainPage() {
   const [viewName, setViewName] = useState<string | null>(null);
   const [extracting, setExtracting] = useState("");
   const [datasetOpen, setDatasetOpen] = useState(false);
-  const [configOpen, setConfigOpen] = useState(false);
+  const [leftTab, setLeftTab] = useState<"new" | "runs">("new");
   // Four sections used to be one long vertical stack — every graph, always
   // rendered, regardless of whether you came here to watch a live run or dig
   // into a past checkpoint's internals. Tabs make each its own focused screen.
@@ -222,7 +226,7 @@ export default function TrainPage() {
   useEffect(() => {
     fetch("/api/train?name=").then((r) => r.json()).then((j) => {
       setBases(j.bases || []); setRunning(j.running); setRuns(j.runs || []); setExperiments(j.experiments || []);
-      if (j.running) { cur.current = j.running; setViewName(j.running); setConfigOpen(false); }
+      if (j.running) { cur.current = j.running; setViewName(j.running); setLeftTab("runs"); }
     });
     fetch("/api/train/data").then((r) => r.json()).then((j) => {
       const files: DataFile[] = j.files || [];
@@ -297,7 +301,7 @@ export default function TrainPage() {
     const r = await fetch("/api/train", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((x) => x.json());
     if (r.error) { alert(r.error); return; }
     cur.current = r.name; setRows([]); setRunning(r.name); setViewName(r.name);
-    setConfigOpen(false);
+    setLeftTab("runs");
   }
 
   function applyQwen35SafePreset() {
@@ -403,54 +407,98 @@ export default function TrainPage() {
   // wasn't enough and the raw log / concept galaxy panels were rendering underneath it
   return (
     <main id="main-content" className="page-shell text-[var(--text)]">
-      <div className="page-frame max-w-[1760px]">
+      <div className="page-frame">
         <LabNav />
-        <h1 className="sr-only">Training</h1>
-        <div className="flex items-center gap-1 mb-4 overflow-x-auto rounded-[var(--r-lg)] border border-[var(--border)] bg-[var(--surface-1)] p-1.5">
+        <GuidedHeader id="train" eyebrow="Lab" title="Training" guide={GUIDES.train} />
+        <div role="tablist" aria-label="Training views" className="seg self-start">
           {([["live", "Live"], ["campaigns", "Campaigns"], ["compare", "Model deltas"], ["evolution", "Evolution"], ["galaxy", "Concept space"]] as const).map(([id, label]) => (
-            <button key={id} onClick={() => setViewTab(id)} className="h-8 px-3 rounded-[var(--r-md)] border text-[10px] whitespace-nowrap"
-              style={{ color: viewTab === id ? "var(--bg)" : "var(--text-2)", background: viewTab === id ? "var(--accent-ai)" : "var(--surface-1)", borderColor: viewTab === id ? "var(--accent-ai)" : "var(--border)", fontWeight: viewTab === id ? 700 : 400 }}>
-              {label}
-            </button>
+            <button key={id} role="tab" aria-selected={viewTab === id} onClick={() => setViewTab(id)}>{label}</button>
           ))}
-          <Link href="/benchmark" className="ml-auto h-8 px-3 inline-flex items-center rounded-[var(--r-md)] border border-[var(--border)] text-[10px] whitespace-nowrap text-[var(--text-2)] hover:border-[var(--border-loud)] hover:text-[var(--accent-ai)]">Open bench</Link>
         </div>
         <div className="flex flex-col gap-4">
           <div style={{ display: viewTab === "campaigns" ? undefined : "none" }}><CampaignsPanel /></div>
           {/* ---- monitor: one full-width panel; config lives as a dropdown off the header
               instead of a permanent second column, so it never pushes live data off screen ---- */}
-          <div className={card + " min-w-0"} style={{ display: viewTab === "live" ? undefined : "none" }}>
-            <div className={head + " relative"}>
-              <button onClick={() => setConfigOpen((v) => !v)}
-                className="flex items-center gap-1 normal-case tracking-normal text-[11px] px-2 py-1 -my-1 rounded-[var(--r-md)] border border-[var(--border)] text-[var(--text-2)] hover:border-[var(--border-loud)]">
-                ⚙ New model {configOpen ? "▴" : "▾"}
-              </button>
-              <span className="text-[var(--accent-ai)]">◆</span> {viewName ? viewName.toUpperCase() : "LIVE PROGRESS"}
-              {start && (
-                <span className="normal-case tracking-normal text-[10px] text-[var(--muted)] truncate max-w-[38%]" title={`${start.base ?? ""}${start.data ? " · " + start.data : ""}`}>
-                  {start.base}{start.data ? ` · ${start.data}` : ""}
-                </span>
-              )}
-              <span className="ml-auto flex items-center gap-2">
-                {isRunningView && (
-                  <button onClick={stopTraining}
-                    className="normal-case tracking-normal text-[10px] font-bold uppercase tracking-widest bg-[var(--accent-danger)] text-white rounded-[var(--r-md)] px-3 py-1 hover:opacity-90">
-                    ■ Stop
-                  </button>
-                )}
-                {isRunningView && !done && !errored && <SignalTrace size="sm" />}
-                <span className="normal-case tracking-normal" style={{ color: done && last.ok ? "var(--accent-success)" : errored || (done && !last.ok) ? "var(--accent-danger)" : "var(--accent-warn)" }}>{phase}</span>
-              </span>
-
-              {configOpen && (
-                <>
-                  <div className="fixed inset-0 z-20" onClick={() => setConfigOpen(false)} />
-                  <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-30 w-[680px] max-w-[92vw] max-h-[90vh] overflow-y-auto bg-[var(--surface-1)] border border-[var(--border-loud)] rounded-[var(--r-lg)] shadow-2xl p-4 flex flex-col gap-3 normal-case tracking-normal">
+          <div className="grid gap-[var(--gutter)] xl:grid-cols-[400px_minmax(0,1fr)] items-start" style={{ display: viewTab === "live" ? undefined : "none" }}>
+            <aside className={card + " flex flex-col min-h-0 xl:sticky xl:top-[var(--gutter)] xl:max-h-[calc(100dvh-2*var(--gutter))]"}>
+              <div className="p-3 border-b border-[var(--border-subtle)]">
+                <div role="tablist" aria-label="Training setup" className="seg w-full">
+                  <button role="tab" aria-selected={leftTab === "new"} onClick={() => setLeftTab("new")} className="flex-1 justify-center">New run</button>
+                  <button role="tab" aria-selected={leftTab === "runs"} onClick={() => setLeftTab("runs")} className="flex-1 justify-center">Past runs · {runs.length}</button>
+                </div>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-5">
+                {leftTab === "new" ? <>
+                <section className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2"><span className="grid place-items-center w-6 h-6 rounded-full border border-[var(--border-strong)] text-[12px] text-[var(--text-accent)]">1</span><h3 className="text-[14px] font-semibold">Choose the model</h3><span className="ml-auto text-[12px] text-[var(--text-muted)]">name + base</span></div>
+                  
                     <div className="grid grid-cols-2 gap-3">
                       <div><label className={lbl}>Model name</label><input className={inp} value={name} onChange={(e) => setName(e.target.value)} /></div>
                       <div><label className={lbl}>Base</label><select className={inp} value={base} onChange={(e) => setBase(e.target.value)}>{(bases.length ? bases : [base]).map((b) => <option key={b}>{b}</option>)}</select></div>
                     </div>
-                    <div className="grid grid-cols-3 gap-3">
+                    {/* training mode */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <label className={lbl + " mb-0"}>Mode</label>
+                      <div className="flex rounded-[var(--r-md)] overflow-hidden border border-[var(--border)] text-[11px]">
+                        <button onClick={() => setMode("sft")} className="px-3 py-1.5" style={{ background: mode === "sft" ? "var(--accent-ai)" : "transparent", color: mode === "sft" ? "var(--bg)" : "var(--text-2)" }}>Instruction SFT</button>
+                        <button onClick={() => setMode("hqq")} className="px-3 py-1.5" style={{ background: mode === "hqq" ? "var(--accent-ai)" : "transparent", color: mode === "hqq" ? "var(--bg)" : "var(--text-2)" }}>HQQ 4-bit (4–8B)</button>
+                        <button onClick={() => setMode("raw")} className="px-3 py-1.5" style={{ background: mode === "raw" ? "var(--accent-ai)" : "transparent", color: mode === "raw" ? "var(--bg)" : "var(--text-2)" }}>Raw text</button>
+                      </div>
+                      <span className="text-[11px] text-[var(--muted)]">{mode === "sft" ? "fp16 LoRA, loss-masked (≤2B)" : mode === "hqq" ? "4-bit LoRA · low-memory recipes" : "next-token on plain text"}</span>
+                    </div>
+                    <div className="grid md:grid-cols-[180px_1fr] gap-3 items-end">
+                      <div><label className={lbl}>HIVE specialist</label><select className={inp} value={specialistRole} onChange={(e) => { const role = e.target.value as typeof specialistRole; setSpecialistRole(role); if (role) { setMode("hqq"); setBase("Qwen/Qwen3-4B"); setValSplit(true); setAutoBench(false); } }}><option value="">General model</option><option value="coordinator_planner">Coordinator / planner</option><option value="coder_repairer">Coder / repairer</option><option value="verifier">Verifier</option></select></div>
+                      <p className="text-[11px] text-[var(--muted)] leading-relaxed">{specialistRole ? `Adapter-only candidate on the shared qwen3-4b-stock base. Requires ${dataFile}.manifest.json and remains inactive until blind promotion gates pass.` : adapterOnly ? "Saves a lightweight adapter without creating another full model copy." : "Builds and quantizes a standalone merged model."}</p>
+                    </div>
+                    
+                </section>
+<section className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2"><span className="grid place-items-center w-6 h-6 rounded-full border border-[var(--border-strong)] text-[12px] text-[var(--text-accent)]">2</span><h3 className="text-[14px] font-semibold">Add training data</h3><span className="ml-auto text-[12px] text-[var(--text-muted)]">what it learns from</span></div>
+                  {datasetOpen && <DatasetManager onClose={() => setDatasetOpen(false)} onSaved={() => fetch("/api/train/data").then((r) => r.json()).then((j) => { const files = j.files || []; setDataFiles(files); })} />}
+                    {mode !== "raw" ? (
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className={lbl + " mb-0"}>Instruction dataset (.jsonl)</label>
+                          <button onClick={() => setDatasetOpen(true)} className="text-[11px] tracking-widest uppercase text-[var(--accent-ai)] border border-[var(--border)] rounded px-2 py-0.5 hover:border-[var(--border-loud)]">⚙ Manage</button>
+                        </div>
+                        <select className={inp} value={dataFile} onChange={(e) => { setDataFile(e.target.value); setName(e.target.value.replace(/\.jsonl$/, "")); }}>
+                          {dataFiles.filter((f) => f.kind === "sft").length === 0 && <option value="">(no .jsonl datasets in data/)</option>}
+                          {dataFiles.filter((f) => f.kind === "sft").map((f) => <option key={f.name} value={f.name}>{f.name} ({(f.chars / 1000).toFixed(0)}k)</option>)}
+                        </select>
+                        <p className="text-[11px] text-[var(--muted)] mt-1 leading-snug">Trains on instruction → answer with the loss masked to the answer only (the method that worked). Keys: instruction / thought_process / output.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <label className={lbl + " mb-0"}>Training text</label>
+                          <div className="flex items-center gap-2">
+                            {dataFiles.filter((f) => f.kind === "raw").length > 0 && (
+                              <select
+                                value={name + ".txt"}
+                                onChange={(e) => loadCorpus(e.target.value)}
+                                className="text-[11px] bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-1 text-[var(--text-2)] outline-none"
+                                title="Load an existing corpus from data/"
+                              >
+                                {!dataFiles.some((f) => f.name === name + ".txt") && <option value={name + ".txt"}>{name}</option>}
+                                {dataFiles.filter((f) => f.kind === "raw").map((f) => <option key={f.name} value={f.name}>{f.name.replace(/\.txt$/, "")} ({(f.chars / 1000).toFixed(0)}k)</option>)}
+                              </select>
+                            )}
+                            <button onClick={() => setDatasetOpen(true)} className="text-[11px] tracking-widest uppercase text-[var(--accent-ai)] border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)]">⚙ Manage</button>
+                            <label className="text-[11px] tracking-widest uppercase text-[var(--accent-ai)] cursor-pointer border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)]">
+                              ⬆ Upload
+                              <input type="file" accept=".pdf,.txt,.md,.text" className="hidden" onChange={onFile} />
+                            </label>
+                          </div>
+                        </div>
+                        {extracting && <div className="text-[11px] text-[var(--muted)]">{extracting}</div>}
+                        <textarea className={inp + " min-h-[140px] resize-none leading-relaxed"} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste text, or upload a PDF/book to convert it…" />
+                      </>
+                    )}
+                    
+                </section>
+<section className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2"><span className="grid place-items-center w-6 h-6 rounded-full border border-[var(--border-strong)] text-[12px] text-[var(--text-accent)]">3</span><h3 className="text-[14px] font-semibold">Set how long it trains</h3><span className="ml-auto text-[12px] text-[var(--text-muted)]">defaults are safe</span></div>
+                  <div className="grid grid-cols-3 gap-3">
                       <div><label className={lbl}>Max steps</label><input className={inp} type="number" value={steps} onChange={(e) => setSteps(+e.target.value)} /></div>
                       <div><label className={lbl}>Learn rate</label><input className={inp} value={lr} onChange={(e) => setLr(+e.target.value)} /></div>
                       <div><label className={lbl} title="Stops early when smoothed loss reaches this — prevents overtraining">Target loss</label><input className={inp} type="number" step="0.01" value={targetLoss} onChange={(e) => setTargetLoss(+e.target.value)} /></div>
@@ -475,31 +523,17 @@ export default function TrainPage() {
                           <input type="checkbox" checked={snapshotEvery > 0} onChange={(e) => setSnapshotEvery(e.target.checked ? 300 : 0)} />
                           Snapshot every
                           {snapshotEvery > 0 && (
-                            <input type="number" className="w-16 bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[10px]" value={snapshotEvery} onChange={(e) => setSnapshotEvery(+e.target.value)} />
+                            <input type="number" className="w-16 bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-0.5 text-[11px]" value={snapshotEvery} onChange={(e) => setSnapshotEvery(+e.target.value)} />
                           )}
                           steps
                         </label>
                       )}
                     </div>
-                    {/* training mode */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <label className={lbl + " mb-0"}>Mode</label>
-                      <div className="flex rounded-[var(--r-md)] overflow-hidden border border-[var(--border)] text-[11px]">
-                        <button onClick={() => setMode("sft")} className="px-3 py-1.5" style={{ background: mode === "sft" ? "var(--accent-ai)" : "transparent", color: mode === "sft" ? "var(--bg)" : "var(--text-2)" }}>Instruction SFT</button>
-                        <button onClick={() => setMode("hqq")} className="px-3 py-1.5" style={{ background: mode === "hqq" ? "var(--accent-ai)" : "transparent", color: mode === "hqq" ? "var(--bg)" : "var(--text-2)" }}>HQQ 4-bit (4–8B)</button>
-                        <button onClick={() => setMode("raw")} className="px-3 py-1.5" style={{ background: mode === "raw" ? "var(--accent-ai)" : "transparent", color: mode === "raw" ? "var(--bg)" : "var(--text-2)" }}>Raw text</button>
-                      </div>
-                      <span className="text-[10px] text-[var(--muted)]">{mode === "sft" ? "fp16 LoRA, loss-masked (≤2B)" : mode === "hqq" ? "4-bit LoRA · low-memory recipes" : "next-token on plain text"}</span>
-                    </div>
-                    <div className="grid md:grid-cols-[180px_1fr] gap-3 items-end">
-                      <div><label className={lbl}>HIVE specialist</label><select className={inp} value={specialistRole} onChange={(e) => { const role = e.target.value as typeof specialistRole; setSpecialistRole(role); if (role) { setMode("hqq"); setBase("Qwen/Qwen3-4B"); setValSplit(true); setAutoBench(false); } }}><option value="">General model</option><option value="coordinator_planner">Coordinator / planner</option><option value="coder_repairer">Coder / repairer</option><option value="verifier">Verifier</option></select></div>
-                      <p className="text-[10px] text-[var(--muted)] leading-relaxed">{specialistRole ? `Adapter-only candidate on the shared qwen3-4b-stock base. Requires ${dataFile}.manifest.json and remains inactive until blind promotion gates pass.` : adapterOnly ? "Saves a lightweight adapter without creating another full model copy." : "Builds and quantizes a standalone merged model."}</p>
-                    </div>
                     {mode === "hqq" && (
-                      <div className="border border-[var(--border)] rounded-[var(--r-md)] p-3 space-y-3">
+                      <details className="rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--bg-panel-raised)] p-3 space-y-3"><summary className="cursor-pointer text-[13px] font-medium text-[var(--text-secondary)]">Advanced HQQ recipe</summary>
                         <div className="flex items-center gap-2">
-                          <div><div className="text-[10px] uppercase tracking-widest text-[var(--text-2)]">HQQ recipe</div><div className="text-[10px] text-[var(--muted)] mt-0.5">Reusable low-memory controls used by the managed trainer.</div></div>
-                          <button type="button" onClick={applyQwen35SafePreset} className="ml-auto px-2.5 py-1.5 text-[10px] border border-[var(--accent-ai)] text-[var(--accent-ai)] rounded-[var(--r-md)] hover:bg-[var(--accent-ai)] hover:text-[var(--bg)]">Qwen3.5 · 8GB safe</button>
+                          <div><div className="text-[11px] uppercase tracking-widest text-[var(--text-2)]">HQQ recipe</div><div className="text-[11px] text-[var(--muted)] mt-0.5">Reusable low-memory controls used by the managed trainer.</div></div>
+                          <button type="button" onClick={applyQwen35SafePreset} className="ml-auto px-2.5 py-1.5 text-[11px] border border-[var(--accent-ai)] text-[var(--accent-ai)] rounded-[var(--r-md)] hover:bg-[var(--accent-ai)] hover:text-[var(--bg)]">Qwen3.5 · 8GB safe</button>
                         </div>
                         <select className={inp + " text-xs"} defaultValue="" onChange={(e) => { const exp = experiments.find((x) => x.name === e.target.value); if (exp) reuseExperiment(exp); e.currentTarget.value = ""; }}>
                           <option value="">Reuse recipe from a previous HQQ run…</option>
@@ -523,62 +557,60 @@ export default function TrainPage() {
                           <label className="flex items-center gap-2" title="Continue the same named run from its last saved adapter checkpoint. The name and recipe must match an existing checkpoint."><input type="checkbox" checked={resume} onChange={(e) => setResume(e.target.checked)} />Resume named checkpoint</label>
                           <label className="flex items-center gap-2 md:col-span-2" title="Keeps real-time loss, gradient, layer, GPU and VRAM charts; skips the extra generation and embedding passes at validation checkpoints to preserve VRAM."><input type="checkbox" checked={noProbeEmbed} onChange={(e) => setNoProbeEmbed(e.target.checked)} />Lean live telemetry · skip probe and concept snapshots</label>
                         </div>
-                        {lastFullBlockOnly && <p className="text-[10px] text-[var(--accent-warn)]">Partial LoRA: suited to style/behavior adaptation on Qwen3.5 when full hybrid-backbone gradients are unstable. Loss, validation, gradients, layer activity, GPU and VRAM remain live.</p>}
-                      </div>
+                        {lastFullBlockOnly && <p className="text-[11px] text-[var(--accent-warn)]">Partial LoRA: suited to style/behavior adaptation on Qwen3.5 when full hybrid-backbone gradients are unstable. Loss, validation, gradients, layer activity, GPU and VRAM remain live.</p>}
+                      </details>
                     )}
 
-                    {datasetOpen && <DatasetManager onClose={() => setDatasetOpen(false)} onSaved={() => fetch("/api/train/data").then((r) => r.json()).then((j) => { const files = j.files || []; setDataFiles(files); })} />}
-                    {mode !== "raw" ? (
-                      <div>
-                        <div className="flex items-center justify-between mb-1.5">
-                          <label className={lbl + " mb-0"}>Instruction dataset (.jsonl)</label>
-                          <button onClick={() => setDatasetOpen(true)} className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] border border-[var(--border)] rounded px-2 py-0.5 hover:border-[var(--border-loud)]">⚙ Manage</button>
-                        </div>
-                        <select className={inp} value={dataFile} onChange={(e) => { setDataFile(e.target.value); setName(e.target.value.replace(/\.jsonl$/, "")); }}>
-                          {dataFiles.filter((f) => f.kind === "sft").length === 0 && <option value="">(no .jsonl datasets in data/)</option>}
-                          {dataFiles.filter((f) => f.kind === "sft").map((f) => <option key={f.name} value={f.name}>{f.name} ({(f.chars / 1000).toFixed(0)}k)</option>)}
-                        </select>
-                        <p className="text-[10px] text-[var(--muted)] mt-1 leading-snug">Trains on instruction → answer with the loss masked to the answer only (the method that worked). Keys: instruction / thought_process / output.</p>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <label className={lbl + " mb-0"}>Training text</label>
-                          <div className="flex items-center gap-2">
-                            {dataFiles.filter((f) => f.kind === "raw").length > 0 && (
-                              <select
-                                value={name + ".txt"}
-                                onChange={(e) => loadCorpus(e.target.value)}
-                                className="text-[10px] bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-1 text-[var(--text-2)] outline-none"
-                                title="Load an existing corpus from data/"
-                              >
-                                {!dataFiles.some((f) => f.name === name + ".txt") && <option value={name + ".txt"}>{name}</option>}
-                                {dataFiles.filter((f) => f.kind === "raw").map((f) => <option key={f.name} value={f.name}>{f.name.replace(/\.txt$/, "")} ({(f.chars / 1000).toFixed(0)}k)</option>)}
-                              </select>
-                            )}
-                            <button onClick={() => setDatasetOpen(true)} className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)]">⚙ Manage</button>
-                            <label className="text-[10px] tracking-widest uppercase text-[var(--accent-ai)] cursor-pointer border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)]">
-                              ⬆ Upload
-                              <input type="file" accept=".pdf,.txt,.md,.text" className="hidden" onChange={onFile} />
-                            </label>
-                          </div>
-                        </div>
-                        {extracting && <div className="text-[10px] text-[var(--muted)]">{extracting}</div>}
-                        <textarea className={inp + " min-h-[140px] resize-none leading-relaxed"} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste text, or upload a PDF/book to convert it…" />
-                      </>
-                    )}
-                    {running ? (
+                    
+                </section>
+{running ? (
                       <div className="flex gap-2">
                         <div className="flex-1 bg-[var(--border)] text-[var(--muted)] rounded-[var(--r-md)] py-2.5 text-sm font-bold tracking-widest uppercase text-center">training {running}…</div>
-                        <button onClick={stopTraining} className="bg-[var(--accent-danger)] text-white rounded-[var(--r-md)] px-4 py-2.5 text-sm font-bold tracking-widest uppercase hover:opacity-90">■ Stop</button>
+                        <button onClick={stopTraining} className="bg-[var(--accent-danger)] text-[var(--text)] rounded-[var(--r-md)] px-4 py-2.5 text-sm font-bold tracking-widest uppercase hover:opacity-90">■ Stop</button>
                       </div>
                     ) : (
-                      <button onClick={go} className="bg-[var(--accent-ai)] text-[var(--bg)] rounded-[var(--r-md)] py-2.5 text-sm font-bold tracking-widest uppercase">⏵ Train on GPU</button>
+                      <button onClick={go} className="btn btn-primary min-h-11 w-full text-[15px]">Start training on GPU</button>
                     )}
-                    {text && <div className="text-[10px] text-[var(--muted)]">{(text.length / 1000).toFixed(1)}k chars · ~{Math.round(text.length / 4 / 1000)}k tokens</div>}
-                  </div>
-                </>
+                    {text && <div className="text-[11px] text-[var(--muted)]">{(text.length / 1000).toFixed(1)}k chars · ~{Math.round(text.length / 4 / 1000)}k tokens</div>}
+
+                </> : <ul className="flex flex-col gap-1">
+                  {runs.length === 0 && <li className="py-6 text-center text-[13px] text-[var(--text-muted)]">No training runs yet. Start one from “New run”.</li>}
+                  {runs.map((r) => (
+                    <li key={r.name} className="flex items-center gap-1 rounded-[var(--radius-sm)]" style={{ background: viewName === r.name ? "var(--bg-selected)" : undefined }}>
+                      <button onClick={() => viewRun(r.name)} title={`${r.status}${r.finalLoss != null ? " · final loss " + r.finalLoss : ""}`}
+                        className="flex-1 min-w-0 flex items-center gap-2 px-2 py-2 text-left text-[13px]">
+                        <span className="w-2 h-2 shrink-0 rounded-full" style={{ background: r.status === "running" ? "var(--status-active)" : r.status === "failed" ? "var(--status-error)" : "var(--status-success)" }} />
+                        <span className="truncate" style={{ color: viewName === r.name ? "var(--text-accent)" : undefined }}>{r.name}</span>
+                        <span className="ml-auto shrink-0 text-[12px] text-[var(--text-muted)]">{r.status === "running" ? "running" : r.finalLoss != null ? `loss ${r.finalLoss}` : r.status}</span>
+                      </button>
+                      {r.status !== "running" && (
+                        <button onClick={(e) => deleteRun(r.name, e)} title="Remove record" aria-label={`Remove ${r.name}`}
+                          className="grid place-items-center w-7 h-7 shrink-0 rounded-[var(--radius-xs)] text-[var(--text-muted)] hover:text-[var(--status-error)] hover:bg-[var(--bg-interactive)]">×</button>
+                      )}
+                    </li>
+                  ))}
+                </ul>}
+              </div>
+            </aside>
+          <div className={card + " min-w-0"}>
+            <div className={head + " relative"}>
+              <span className="text-[var(--accent-ai)]">◆</span> {viewName ? viewName.toUpperCase() : "LIVE PROGRESS"}
+              {start && (
+                <span className="normal-case tracking-normal text-[11px] text-[var(--muted)] truncate max-w-[38%]" title={`${start.base ?? ""}${start.data ? " · " + start.data : ""}`}>
+                  {start.base}{start.data ? ` · ${start.data}` : ""}
+                </span>
               )}
+              <span className="ml-auto flex items-center gap-2">
+                {isRunningView && (
+                  <button onClick={stopTraining}
+                    className="normal-case tracking-normal text-[11px] font-bold uppercase tracking-widest bg-[var(--accent-danger)] text-[var(--text)] rounded-[var(--r-md)] px-3 py-1 hover:opacity-90">
+                    ■ Stop
+                  </button>
+                )}
+                {isRunningView && !done && !errored && <SignalTrace size="sm" />}
+                <span className="normal-case tracking-normal" style={{ color: done && last.ok ? "var(--accent-success)" : errored || (done && !last.ok) ? "var(--accent-danger)" : "var(--accent-warn)" }}>{phase}</span>
+              </span>
+
             </div>
 
             {/* min-w-0 matters here: this content (the auto-fit chart grid below) is
@@ -586,29 +618,11 @@ export default function TrainPage() {
                 min-width:auto (content-sized) — without this the track overflows the
                 viewport instead of shrinking, which is exactly what happened before this fix */}
             <div className="p-1.5 md:p-4 flex flex-col gap-3 min-h-0 min-w-0">
-              {runs.length > 0 && (
-                <div className="flex gap-1.5 overflow-x-auto pb-0.5" style={{ scrollbarWidth: "thin" }}>
-                  {runs.map((r) => (
-                    <span key={r.name} className="inline-flex items-center rounded-[var(--r-md)] border overflow-hidden shrink-0"
-                      style={{ borderColor: "var(--border)", background: viewName === r.name ? "var(--surface-3)" : "var(--surface-1)" }}>
-                      <button onClick={() => viewRun(r.name)} title={`${r.status}${r.finalLoss != null ? " · final loss " + r.finalLoss : ""}`}
-                        className="text-[10px] px-2 py-1 whitespace-nowrap"
-                        style={{ color: r.status === "running" ? "var(--accent-warn)" : r.status === "failed" ? "var(--accent-danger)" : viewName === r.name ? "var(--accent-ai)" : "var(--text-2)" }}>
-                        {r.status === "running" ? "● " : r.status === "failed" ? "✗ " : "✓ "}{r.name}
-                      </button>
-                      {r.status !== "running" && (
-                        <button onClick={(e) => deleteRun(r.name, e)} title="Remove record"
-                          className="text-[10px] px-1.5 py-1 text-[var(--muted)] hover:text-[var(--accent-danger)] border-l border-[var(--border)]">×</button>
-                      )}
-                    </span>
-                  ))}
-                </div>
-              )}
 
               {/* device + progress bar */}
               {start && (
                 <div className="flex items-center gap-2 text-[11px]">
-                  <span className="px-2 py-0.5 rounded-full font-bold tracking-widest uppercase text-[9px]" style={{ background: onGpu ? "var(--accent-success)" : "var(--accent-danger)", color: "var(--bg)" }}>
+                  <span className="px-2 py-0.5 rounded-full font-bold tracking-widest uppercase text-[10px]" style={{ background: onGpu ? "var(--accent-success)" : "var(--accent-danger)", color: "var(--bg)" }}>
                     {onGpu ? "GPU" : "CPU"}{start.dtype ? " · " + start.dtype : ""}
                   </span>
                   {lastStep && <span className="text-[var(--text-2)]">step {lastStep.step}/{totalSteps}</span>}
@@ -657,18 +671,18 @@ export default function TrainPage() {
                 <div className="min-h-64 grid place-items-center text-center border border-dashed border-[var(--border)] rounded-[var(--r-lg)] bg-[var(--surface-1)] px-6">
                   <div className="max-w-md">
                     <div className="text-lg font-semibold">No training signal yet</div>
-                    <p className="mt-2 text-sm text-[var(--muted)]">Open <span className="text-[var(--text)]">New model</span> to configure a run, or select a previous run above to inspect its evidence.</p>
-                    <button onClick={() => setConfigOpen(true)} className="mt-5 h-10 px-4 rounded-[var(--r-md)] bg-[var(--accent-ai)] text-[var(--bg)] text-sm font-semibold">Configure training</button>
+                    <p className="mt-2 text-sm text-[var(--muted)]">Loss, validation, speed and GPU charts appear here once a run starts. Set one up in <span className="text-[var(--text)]">New run</span>, or open <span className="text-[var(--text)]">Past runs</span> to inspect an earlier one.</p>
+                    {runs.length > 0 && <button onClick={() => setLeftTab("runs")} className="btn btn-secondary mt-5 px-4 min-h-10 text-sm">Browse past runs</button>}
                   </div>
                 </div>
               )}
               {!!rows.length && <div className="grid gap-3 mt-1" style={{ gridTemplateColumns: isWide ? "repeat(12, minmax(0, 1fr))" : "1fr" }}>
                 <div className="xl:col-span-12 flex items-end justify-between gap-3 pt-1">
-                  <div><div className="text-[9px] uppercase tracking-[0.18em] text-[var(--accent-ai)]">Learning signal</div><div className="text-sm font-semibold mt-1">Is the model learning cleanly?</div></div>
-                  <div className="text-[9px] text-[var(--muted)]">train / validation loss · stability · convergence</div>
+                  <div><div className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-ai)]">Learning signal</div><div className="text-sm font-semibold mt-1">Is the model learning cleanly?</div></div>
+                  <div className="text-[10px] text-[var(--muted)]">train / validation loss · stability · convergence</div>
                 </div>
                 <div className={panel + " xl:col-span-8"}>
-                  <div className="flex items-center justify-between mb-1"><div className={panelLbl + " mb-0"}>Loss trajectory</div><div className="text-[9px] text-[var(--muted)]">raw · EMA · held-out validation</div></div>
+                  <div className="flex items-center justify-between mb-1"><div className={panelLbl + " mb-0"}>Loss trajectory</div><div className="text-[10px] text-[var(--muted)]">raw · EMA · held-out validation</div></div>
                   <div className="h-56"><LossChart rows={rows} /></div>
                 </div>
                 <div className={panel + " xl:col-span-4"}>
@@ -679,20 +693,20 @@ export default function TrainPage() {
                     <Diagnostic label="Data retained" value={retainedRows != null ? `${retainedRows}%` : "—"} note={modelRow?.dropped_overlength != null ? `${modelRow.dropped_overlength} overlength rows` : "awaiting dataset scan"} tone={retainedRows != null && retainedRows < 95 ? "warn" : retainedRows != null ? "good" : "neutral"} />
                     <Diagnostic label="Plateau budget" value={start?.patience ? `${patienceUsed ?? 0}/${start.patience}` : "off"} note={start?.patience ? patienceUnit + " without improvement" : "no patience stop"} tone={start?.patience && (patienceUsed ?? 0) / start.patience > 0.7 ? "warn" : "neutral"} />
                   </div>
-                  <div className="mt-3 text-[10px] leading-relaxed text-[var(--muted)]">{generalizationGap != null && generalizationGap > 0.25 ? "Validation is separating from training loss. The adapter may be starting to overfit this mix." : lastStep?.grad_norm != null && lastStep.grad_norm > 5 ? "Gradient norm is elevated. Watch for spikes or a rising loss curve before trusting the checkpoint." : stepRows.length ? "No major instability is visible in the latest telemetry." : "Diagnostics populate from the run event stream."}</div>
+                  <div className="mt-3 text-[11px] leading-relaxed text-[var(--muted)]">{generalizationGap != null && generalizationGap > 0.25 ? "Validation is separating from training loss. The adapter may be starting to overfit this mix." : lastStep?.grad_norm != null && lastStep.grad_norm > 5 ? "Gradient norm is elevated. Watch for spikes or a rising loss curve before trusting the checkpoint." : stepRows.length ? "No major instability is visible in the latest telemetry." : "Diagnostics populate from the run event stream."}</div>
                 </div>
                 <div className={panel + " xl:col-span-6"}>
                   <div className={panelLbl}>Gradient norm</div>
-                  <div className="h-40"><MetricHistoryChart rows={rows} field="grad_norm" color="#ffb454" threshold={5} /></div>
+                  <div className="h-40"><MetricHistoryChart rows={rows} field="grad_norm" color={TOKENS.chart[2]} threshold={5} /></div>
                 </div>
                 <div className={panel + " xl:col-span-6"}>
                   <div className={panelLbl}>Throughput (steps/s)</div>
-                  <div className="h-40"><MetricHistoryChart rows={rows} field="steps_s" color="#7c9cff" fmt={(v) => v.toFixed(2)} /></div>
+                  <div className="h-40"><MetricHistoryChart rows={rows} field="steps_s" color={TOKENS.chart[1]} fmt={(v) => v.toFixed(2)} /></div>
                 </div>
 
                 <div className="xl:col-span-12 flex items-end justify-between gap-3 pt-3 border-t border-[var(--border-soft)]">
-                  <div><div className="text-[9px] uppercase tracking-[0.18em] text-[var(--accent-ai)]">Data health</div><div className="text-sm font-semibold mt-1">What is shaping the gradient?</div></div>
-                  <div className="text-[9px] text-[var(--muted)]">source balance · sequence length · layer activity</div>
+                  <div><div className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-ai)]">Data health</div><div className="text-sm font-semibold mt-1">What is shaping the gradient?</div></div>
+                  <div className="text-[10px] text-[var(--muted)]">source balance · sequence length · layer activity</div>
                 </div>
                 <div className={panel + " xl:col-span-8"}>
                   <div className={panelLbl}>Loss by data source</div>
@@ -701,29 +715,36 @@ export default function TrainPage() {
                 <div className={panel + " xl:col-span-4"}>
                   <div className={panelLbl}>Sequence length distribution</div>
                   <div className="h-40"><LengthHistogramChart hist={modelRow?.length_hist} /></div>
-                  <div className="text-[9px] text-[var(--muted)] mt-1 flex gap-3">
-                    <span><span className="inline-block w-2 h-2 rounded-sm mr-1 align-middle" style={{ background: "#34ffa6" }} />kept</span>
-                    <span><span className="inline-block w-2 h-2 rounded-sm mr-1 align-middle" style={{ background: "#e2726b" }} />dropped</span>
+                  <div className="text-[10px] text-[var(--muted)] mt-1 flex gap-3">
+                    <span><span className="inline-block w-2 h-2 rounded-sm mr-1 align-middle" style={{ background: "var(--chart-1)" }} />kept</span>
+                    <span><span className="inline-block w-2 h-2 rounded-sm mr-1 align-middle" style={{ background: "var(--status-error)" }} />dropped</span>
                   </div>
                 </div>
                 <div className={panel + " xl:col-span-6"}>
                   <div className="flex items-center justify-between mb-1">
                     <div className={panelLbl + " mb-0"}>Per-block gradient heatmap</div>
-                    <div className="text-[9px] text-[var(--muted)]">block × step, brighter = larger gradient</div>
+                    <div className="text-[10px] text-[var(--muted)]">block × step, brighter = larger gradient</div>
                   </div>
                   <div className="h-40"><BlockHeatmap rows={rows} /></div>
                 </div>
                 <div className={panel + " xl:col-span-6"}>
                   <div className="flex items-center justify-between mb-1">
                     <div className={panelLbl + " mb-0"}>Gradient terrain</div>
-                    <div className="text-[9px] text-[var(--muted)]">same gradients in 3D — drag to steer, hover for exact ‖g‖</div>
+                    <div className="text-[10px] text-[var(--muted)]">same gradients in 3D — drag to steer, hover for exact ‖g‖</div>
                   </div>
                   <div className="h-40"><GradientTerrain3D rows={rows} /></div>
                 </div>
+                <div className={panel + " xl:col-span-12"}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className={panelLbl + " mb-0"}>Model in 3D · where it is learning</div>
+                    <div className="text-[11px] text-[var(--muted)]">per-layer gradient norm on the real layer stack</div>
+                  </div>
+                  <TrainingLayerView rows={rows} runName={viewName || null} />
+                </div>
 
                 <div className="xl:col-span-12 flex items-end justify-between gap-3 pt-3 border-t border-[var(--border-soft)]">
-                  <div><div className="text-[9px] uppercase tracking-[0.18em] text-[var(--accent-ai)]">Output evidence</div><div className="text-sm font-semibold mt-1">Is behavior moving toward the target?</div></div>
-                  <div className="text-[9px] text-[var(--muted)]">latest held-out generation, shown in full</div>
+                  <div><div className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-ai)]">Output evidence</div><div className="text-sm font-semibold mt-1">Is behavior moving toward the target?</div></div>
+                  <div className="text-[10px] text-[var(--muted)]">latest held-out generation, shown in full</div>
                 </div>
                 <div className={panel + " xl:col-span-12"}>
                   <div className={panelLbl}>Live sample vs. target</div>
@@ -732,7 +753,7 @@ export default function TrainPage() {
               </div>}
 
               {modelRow && (
-                <div className="text-[10px] text-[var(--muted)] flex flex-wrap gap-x-3">
+                <div className="text-[11px] text-[var(--muted)] flex flex-wrap gap-x-3">
                   <span>LoRA params: <b className="text-[var(--text-2)]">{((modelRow.trainable_params ?? 0) / 1e6).toFixed(1)}M</b>{modelRow.total_params ? ` / ${(modelRow.total_params / 1e6).toFixed(0)}M total` : ""}</span>
                   {modelRow.trained_layer != null && <span>full-attention layer {modelRow.trained_layer} only</span>}
                   {modelRow.adapter_dtypes?.length ? <span>adapter {modelRow.adapter_dtypes.join("/")}</span> : null}
@@ -753,6 +774,7 @@ export default function TrainPage() {
               </div>}
             </div>
           </div>
+          </div>
 
           {/* ---- compare model deltas: not raw weights (no natural "shape" to a weight
               matrix) but the actual B@A*(alpha/r) delta each run learned per (layer,
@@ -765,18 +787,18 @@ export default function TrainPage() {
                 {checkpoints.length === 0 && <span className="text-[11px] text-[var(--muted)]">no checkpoints found</span>}
                 {checkpoints.map((n) => (
                   <button key={n} onClick={() => toggleCompare(n)}
-                    className="text-[10px] px-2 py-1 rounded-[var(--r-md)] border"
+                    className="text-[11px] px-2 py-1 rounded-[var(--r-md)] border"
                     style={{ borderColor: compareSel.includes(n) ? "var(--accent-ai)" : "var(--border)", color: compareSel.includes(n) ? "var(--accent-ai)" : "var(--text-2)", background: compareSel.includes(n) ? "color-mix(in srgb, var(--accent-ai) 12%, transparent)" : "var(--surface-2)" }}>
                     {compareSel.includes(n) ? "✓ " : ""}{n}
                   </button>
                 ))}
                 <button onClick={runCompare} disabled={compareBusy || compareSel.length < 2}
-                  className="text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-[var(--r-md)] bg-[var(--accent-ai)] text-[var(--bg)] disabled:opacity-40">
+                  className="text-[11px] font-bold uppercase tracking-widest px-3 py-1 rounded-[var(--r-md)] bg-[var(--accent-ai)] text-[var(--bg)] disabled:opacity-40">
                   {compareBusy ? "comparing…" : "Compare"}
                 </button>
               </div>
               {compareErr && <div className="text-[11px] text-[var(--accent-danger)]">{compareErr}</div>}
-              <p className="text-[10px] text-[var(--muted)]">Per (layer, module) magnitude of the LoRA delta each run actually learned — same color scale across all selected models, so brighter really does mean &quot;changed more,&quot; not just &quot;different run.&quot;</p>
+              <p className="text-[11px] text-[var(--muted)]">Per (layer, module) magnitude of the LoRA delta each run actually learned — same color scale across all selected models, so brighter really does mean &quot;changed more,&quot; not just &quot;different run.&quot;</p>
               {compareResults && compareResults.length > 0 && (() => {
                 const vmax = Math.max(1e-6, ...compareResults.flatMap((r) => r.matrix.flat()));
                 return (
@@ -809,13 +831,13 @@ export default function TrainPage() {
                   {["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"].map((m) => <option key={m} value={m}>{m}</option>)}
                 </select>
                 <button onClick={runEvolution} disabled={evoBusy || !evoName}
-                  className="text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-[var(--r-md)] bg-[var(--accent-ai)] text-[var(--bg)] disabled:opacity-40">
+                  className="text-[11px] font-bold uppercase tracking-widest px-3 py-1 rounded-[var(--r-md)] bg-[var(--accent-ai)] text-[var(--bg)] disabled:opacity-40">
                   {evoBusy ? "loading…" : "Load"}
                 </button>
-                <span className="text-[10px] text-[var(--muted)]">drag to orbit</span>
+                <span className="text-[11px] text-[var(--muted)]">drag to orbit</span>
               </div>
               {evoErr && <div className="text-[11px] text-[var(--accent-danger)]">{evoErr}</div>}
-              <p className="text-[10px] text-[var(--muted)]">Only works for runs trained with &quot;Snapshot every&quot; enabled in New model — most existing runs (incl. victory8-8b) don&apos;t have the intermediate snapshots this needs.</p>
+              <p className="text-[11px] text-[var(--muted)]">Only works for runs trained with &quot;Snapshot every&quot; enabled in New model — most existing runs (incl. victory8-8b) don&apos;t have the intermediate snapshots this needs.</p>
               {evoData && (
                 <div className={panel}>
                   <div className={panelLbl}>{evoData.name} — {evoModule === "all" ? "all modules summed" : evoModule}</div>
@@ -832,7 +854,7 @@ export default function TrainPage() {
           <div className={card + " min-w-0"} style={{ display: viewTab === "galaxy" ? undefined : "none" }}>
             <div className={head}><span className="text-[var(--accent-ai)]">◆</span> CONCEPT GALAXY</div>
             <div className="p-1.5 md:p-4 flex flex-col gap-3 min-w-0">
-              <p className="text-[10px] text-[var(--muted)]">16 fixed, held-out prompts across 7 topics, embedded (mean-pooled last-hidden-state) every val check and projected into the SAME fixed 3D basis each time — so trails show real movement, not a per-frame refit. Populates automatically for any run in progress; no extra config needed.</p>
+              <p className="text-[11px] text-[var(--muted)]">16 fixed, held-out prompts across 7 topics, embedded (mean-pooled last-hidden-state) every val check and projected into the SAME fixed 3D basis each time — so trails show real movement, not a per-frame refit. Populates automatically for any run in progress; no extra config needed.</p>
               {galaxySnapshots.length === 0 ? (
                 <div className="text-[11px] text-[var(--muted)]">— no embedding snapshots yet for this run —</div>
               ) : (
@@ -843,11 +865,11 @@ export default function TrainPage() {
                       onChange={(e) => setGalaxyIdx(+e.target.value)}
                       className="flex-1" />
                     <button onClick={() => setGalaxyIdx(null)}
-                      className="text-[10px] px-2 py-1 rounded border border-[var(--border)]"
+                      className="text-[11px] px-2 py-1 rounded border border-[var(--border)]"
                       style={{ color: galaxyIdx == null ? "var(--accent-ai)" : "var(--text-2)" }}>
                       follow latest
                     </button>
-                    <span className="text-[10px] text-[var(--muted)] w-20 text-right">step {galaxySnapshots[Math.min(galaxyIdx ?? galaxySnapshots.length - 1, galaxySnapshots.length - 1)]?.step}</span>
+                    <span className="text-[11px] text-[var(--muted)] w-20 text-right">step {galaxySnapshots[Math.min(galaxyIdx ?? galaxySnapshots.length - 1, galaxySnapshots.length - 1)]?.step}</span>
                   </div>
                   <div className={panel}>
                     <div className="h-80">
@@ -871,9 +893,9 @@ function Diagnostic({ label, value, note, tone }: { label: string; value: string
   const color = tone === "good" ? "var(--accent-success)" : tone === "warn" ? "var(--accent-warn)" : "var(--text)";
   return (
     <div className="bg-[var(--surface-1)] p-3 min-w-0">
-      <div className="text-[8px] uppercase tracking-[0.14em] text-[var(--muted)] truncate">{label}</div>
+      <div className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)] truncate">{label}</div>
       <div className="text-lg font-semibold mt-1" style={{ color }}>{value}</div>
-      <div className="text-[8px] text-[var(--muted)] truncate">{note}</div>
+      <div className="text-[10px] text-[var(--muted)] truncate">{note}</div>
     </div>
   );
 }

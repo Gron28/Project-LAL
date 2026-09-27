@@ -202,28 +202,28 @@ function CopyBtn({ text, size = 12 }: { text: string; size?: number }) {
 // One icon + hue per tool family, so a glance at the transcript reads as
 // read / write / execute / web / delegate instead of a wall of identical hammers.
 const TOOL_STYLE: Record<string, { Icon: typeof Hammer; color: string }> = {
-  read_file: { Icon: FileText, color: "#79c0ff" },
-  read_file_outline: { Icon: FileText, color: "#79c0ff" },
-  list_files: { Icon: FolderOpen, color: "#79c0ff" },
-  grep: { Icon: Search, color: "#79c0ff" },
-  write_file: { Icon: FilePlus2, color: "#3fb950" },
-  edit_file: { Icon: Pencil, color: "#3fb950" },
-  run_shell: { Icon: TerminalSquare, color: "#d29922" },
-  run_python: { Icon: Code2, color: "#d29922" },
-  git: { Icon: GitBranch, color: "#f47067" },
-  web_search: { Icon: Globe, color: "#39c5cf" },
-  web_fetch: { Icon: Download, color: "#39c5cf" },
-  describe_image: { Icon: ImageIcon, color: "#d2a8ff" },
-  spawn_agent: { Icon: Bot, color: "#d2a8ff" },
-  memory_read: { Icon: Brain, color: "#d2a8ff" },
-  memory_write: { Icon: Brain, color: "#d2a8ff" },
+  read_file: { Icon: FileText, color: "var(--chart-2)" },
+  read_file_outline: { Icon: FileText, color: "var(--chart-2)" },
+  list_files: { Icon: FolderOpen, color: "var(--chart-2)" },
+  grep: { Icon: Search, color: "var(--chart-2)" },
+  write_file: { Icon: FilePlus2, color: "var(--chart-6)" },
+  edit_file: { Icon: Pencil, color: "var(--chart-6)" },
+  run_shell: { Icon: TerminalSquare, color: "var(--chart-3)" },
+  run_python: { Icon: Code2, color: "var(--chart-3)" },
+  git: { Icon: GitBranch, color: "var(--chart-5)" },
+  web_search: { Icon: Globe, color: "var(--chart-4)" },
+  web_fetch: { Icon: Download, color: "var(--chart-4)" },
+  describe_image: { Icon: ImageIcon, color: "var(--chart-7)" },
+  spawn_agent: { Icon: Bot, color: "var(--chart-7)" },
+  memory_read: { Icon: Brain, color: "var(--chart-7)" },
+  memory_write: { Icon: Brain, color: "var(--chart-7)" },
 };
 
 function ToolBlock({ call, project }: { call: ToolCall; project: string }) {
   const [open, setOpen] = useState(false);
   const { Icon, color: toolColor } = TOOL_STYLE[call.name] ?? { Icon: Hammer, color: "var(--accent-ai)" };
   // State (pending approval / failed) overrides the tool's own hue.
-  const color = call.pendingApproval ? "var(--accent-warn, #d29922)" : call.ok === false ? "var(--accent-danger)" : toolColor;
+  const color = call.pendingApproval ? "var(--accent-warn)" : call.ok === false ? "var(--accent-danger)" : toolColor;
   const pathArg = typeof call.args.path === "string" ? call.args.path : null;
   const previewable = pathArg && ["write_file", "edit_file", "read_file"].includes(call.name);
   const isHtml = !!pathArg && /\.html?$/i.test(pathArg);
@@ -238,7 +238,7 @@ function ToolBlock({ call, project }: { call: ToolCall; project: string }) {
           <span className="text-[var(--muted)] font-normal tabular-nums">writing… {((call.progressChars ?? 0) / 1024).toFixed(1)} KB</span>
         </span>
         {call.preview && (
-          <pre className="mt-1 text-[10px] text-[var(--muted)] bg-[var(--surface-2,#11151c)] rounded p-2 overflow-hidden max-h-20 whitespace-pre-wrap break-all">
+          <pre className="mt-1 text-[11px] text-[var(--muted)] bg-[var(--surface-2)] rounded p-2 overflow-hidden max-h-20 whitespace-pre-wrap break-all">
             …{call.preview}
           </pre>
         )}
@@ -258,13 +258,13 @@ function ToolBlock({ call, project }: { call: ToolCall; project: string }) {
           // .html gets a RUN affordance — the file route serves it sandboxed and
           // executable, so this is literally "play the game it just wrote".
           <a href={fileHref(project, pathArg)} target="_blank" rel="noreferrer" title={(isHtml ? "run " : "open ") + pathArg}
-            className="flex items-center gap-1 text-[10px] shrink-0" style={{ color: isHtml ? "#3fb950" : "var(--accent-ai)" }}>
+            className="flex items-center gap-1 text-[11px] shrink-0" style={{ color: isHtml ? "var(--accent-success)" : "var(--accent-ai)" }}>
             {isHtml ? <><Play size={11} />run</> : <><ExternalLink size={11} />open</>}
           </a>
         )}
       </span>
       {open && (
-        <pre className="mt-1 text-[11px] bg-[var(--surface-2,#11151c)] rounded p-2 overflow-auto max-h-64 whitespace-pre-wrap">
+        <pre className="mt-1 text-[11px] bg-[var(--surface-2)] rounded p-2 overflow-auto max-h-64 whitespace-pre-wrap">
           {JSON.stringify(call.args, null, 1)}
           {call.output !== undefined ? "\n──────────\n" + call.output : call.pendingApproval ? "\n(waiting for approval)" : "\n(running…)"}
         </pre>
@@ -732,6 +732,8 @@ export default function CodePage() {
         // Deep-link from Library ("open in /code" on a chat): ?conv=<id> opens that
         // specific session. Without one, the session starts blank.
         const targetId = qs.get("conv");
+        const draft = qs.get("q");
+        if (!targetId && draft) { setInput(draft); window.history.replaceState(null, "", "/code"); }
         if (!targetId) return;
         const runs: RunLookup[] = await fetch("/api/agent/runs?limit=20").then((r) => r.json());
         const live = runs.find((x) => x.status === "running" && x.conversationId === targetId);
@@ -957,9 +959,9 @@ export default function CodePage() {
     <main id="main-content" style={{ "--tree-w": treeW + "px", "--ed-w": edW ? edW + "px" : "min(52vw,760px)" } as React.CSSProperties}
       className={(!clientOwnedRun && treeOpen ? "xl:pl-[var(--tree-w)] " : "") + (openFile ? "lg:pr-[var(--ed-w)]" : "")}>
     <h1 className="sr-only">Code agent</h1>
-    <div className="max-w-6xl mx-auto px-3 pb-40 flex flex-col min-h-dvh">
+    <div className="w-full px-[var(--gutter)] pb-40 flex flex-col min-h-dvh">
       {/* ── Sticky command bar + telemetry ───────────────────────────────── */}
-      <div className="sticky top-0 z-30 -mx-3 px-3 bg-[var(--bg)]/92 backdrop-blur-md border-b border-[var(--border-soft)]">
+      <div className="sticky top-0 z-30 -mx-[var(--gutter)] px-[var(--gutter)] bg-[var(--bg)]/92 backdrop-blur-md border-b border-[var(--border-soft)]">
         <header className="flex items-center gap-2 h-14">
           {/* Mobile: menu opens the full control sheet */}
           <button onClick={() => setMenuOpen(true)} className={iconBtn + " lg:hidden"} title="Controls" aria-label="Open code controls"><Menu size={16} /></button>
@@ -1003,7 +1005,7 @@ export default function CodePage() {
                         className={"w-full flex items-center gap-2 text-xs px-3 py-2 rounded-lg hover:bg-[var(--surface-2)] text-left " + (c.id === convoId ? "bg-[var(--surface-2)]" : "")}>
                         <span className="flex-1 truncate">{c.title}</span>
                         {c.project && c.project !== workspace && (
-                          <span className="text-[10px] text-[var(--muted)] font-mono max-w-[80px] truncate shrink-0" title={c.project}>{c.project.split("/").pop()}</span>
+                          <span className="text-[11px] text-[var(--muted)] font-mono max-w-[80px] truncate shrink-0" title={c.project}>{c.project.split("/").pop()}</span>
                         )}
                         <button onClick={(e) => deleteSession(c.id, e)} className="text-[var(--muted)] hover:text-[var(--accent-danger)] shrink-0"><Trash2 size={12} /></button>
                       </button>
@@ -1047,7 +1049,7 @@ export default function CodePage() {
 
       <div className="flex-1 space-y-3 pt-4">
         {instructionFiles.length > 0 && (
-          <div className="flex items-center gap-2 text-[10px] text-[var(--accent-ai)]">
+          <div className="flex items-center gap-2 text-[11px] text-[var(--accent-ai)]">
             <Sparkles size={11} />
             <span title="loaded into the agent's system prompt">project instructions: {instructionFiles.join(" + ")}</span>
           </div>
@@ -1082,7 +1084,7 @@ export default function CodePage() {
           return (
             <div key={i} {...longPress(i)} className="group text-sm leading-relaxed">
               <div className="flex items-center gap-2">
-                {b.agent && <span className="text-[10px] uppercase tracking-widest text-[var(--muted)]">{b.agent}</span>}
+                {b.agent && <span className="text-[11px] uppercase tracking-widest text-[var(--muted)]">{b.agent}</span>}
                 <span className={"ml-auto transition-opacity " + (revealedIdx === i ? "opacity-100" : "opacity-0 pointer-events-none [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-hover:pointer-events-auto")}>{b.text && <CopyBtn text={b.text} size={13} />}</span>
               </div>
               {b.think && <details className="text-xs text-[var(--muted)] mb-1"><summary className="cursor-pointer">thinking…</summary><div className="whitespace-pre-wrap border-l border-[var(--border-soft)] pl-3 mt-1">{b.think}</div></details>}
@@ -1132,15 +1134,15 @@ export default function CodePage() {
           </pre>
           <div className="flex justify-end gap-2">
             <button onClick={() => decide(approval.id, false)} className="text-xs border border-[var(--border)] rounded-lg px-3 py-1.5">Deny</button>
-            <button onClick={() => decide(approval.id, true)} className="text-xs font-semibold bg-[var(--accent-ai)] text-[#05090c] rounded-lg px-3 py-1.5">Approve</button>
+            <button onClick={() => decide(approval.id, true)} className="text-xs font-semibold bg-[var(--accent-ai)] text-[var(--on-accent)] rounded-lg px-3 py-1.5">Approve</button>
           </div>
         </div>
       )}
 
-      <div className={"fixed bottom-14 md:bottom-0 left-0 right-0 bg-[var(--bg)]/95 backdrop-blur-md border-t border-[var(--border)] px-3 pt-2.5 pb-[calc(env(safe-area-inset-bottom)+0.625rem)]"
+      <div className={"fixed bottom-14 md:bottom-0 left-0 right-0 bg-[var(--bg)]/95 backdrop-blur-md border-t border-[var(--border)] px-[var(--gutter)] pt-2.5 pb-[calc(env(safe-area-inset-bottom)+var(--gutter))]"
         + (navCollapsed ? "" : " md:left-[72px] lg:left-[224px]")
         + (openFile ? " lg:right-[var(--ed-w)]" : "") + (treeOpen ? (navCollapsed ? " xl:left-[var(--tree-w)]" : " xl:left-[calc(var(--tree-w)+9rem)]") : "")}>
-        <div className="max-w-6xl mx-auto">
+        <div className="w-full">
           {/* Continue affordance: the last reply hit the token ceiling mid-thought. */}
           {truncated && !busy && (
             <button onClick={continueRun} disabled={clientOwnedRun}
@@ -1171,10 +1173,10 @@ export default function CodePage() {
               style={{ height: "auto" }}
               onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; }} />
             {busy
-              ? <button onClick={stop} className="h-9 px-3.5 rounded-xl bg-[var(--accent-danger)] text-[#05090c] flex items-center gap-1.5 text-sm font-semibold shrink-0"><CircleStop size={15} /> Stop</button>
-              : <button onClick={send} aria-label="Send message" title="Send message" disabled={!input.trim() && !attached.length} className="h-9 px-3.5 rounded-xl bg-[var(--accent-ai)] text-[#05090c] flex items-center gap-1.5 text-sm font-semibold disabled:opacity-40 shrink-0"><Send size={15} /></button>}
+              ? <button onClick={stop} className="h-9 px-3.5 rounded-xl bg-[var(--accent-danger)] text-[var(--on-accent)] flex items-center gap-1.5 text-sm font-semibold shrink-0"><CircleStop size={15} /> Stop</button>
+              : <button onClick={send} aria-label="Send message" title="Send message" disabled={!input.trim() && !attached.length} className="btn btn-primary h-9 px-3.5 rounded-xl text-sm shrink-0"><Send size={15} /></button>}
           </div>
-          <div className="flex items-center justify-between mt-1.5 px-1 text-[10px] text-[var(--muted)]">
+          <div className="flex items-center justify-between mt-1.5 px-1 text-[11px] text-[var(--muted)]">
             <span className="truncate">{servingModel ? <span className="text-[var(--text-3)]">{servingModel}</span> : model} · {modeLabel}{autoContinue ? " · auto-continue" : ""}</span>
             <span className="tabular-nums shrink-0"><StatsGlance usage={usage} /></span>
           </div>
@@ -1225,7 +1227,7 @@ export default function CodePage() {
           <div className="flex items-center gap-1 px-2 pt-2 pb-1 border-b border-[var(--border-soft)] shrink-0">
             {(["files", "git", "run"] as const).map((t) => (
               <button key={t} onClick={() => setSideTab(t)}
-                className={"text-[11px] rounded px-2 py-1 " + (sideTab === t ? "text-[var(--accent-ai)] bg-[var(--surface-2,#11151c)]" : "text-[var(--muted)]")}>
+                className={"text-[11px] rounded px-2 py-1 " + (sideTab === t ? "text-[var(--accent-ai)] bg-[var(--surface-2)]" : "text-[var(--muted)]")}>
                 {t}
               </button>
             ))}

@@ -2,10 +2,11 @@
 
 import { Activity } from "lucide-react";
 import { useEffect, useRef } from "react";
+import { TOKENS } from "@/lib/design-tokens";
 
 export type TokenAlternatives = { token: string; p: number; alts: [string, number][] };
 
-const colorFor = (p: number) => p >= .85 ? "#52d273" : p >= .6 ? "#f1b64d" : "#ff7670";
+const colorFor = (p: number) => p >= .85 ? TOKENS.status.success : p >= .6 ? TOKENS.status.warning : TOKENS.status.error;
 
 // Displays only chosen-token probabilities returned by the serving backend.
 export default function CertaintyWave({ wave, alts = [], active, height = 48 }: { wave: number[]; alts?: TokenAlternatives[]; active?: boolean; height?: number }) {
@@ -20,7 +21,7 @@ export default function CertaintyWave({ wave, alts = [], active, height = 48 }: 
     if (!shown.length) return;
     const step = width / Math.max(72, shown.length);
     // Soft vertical grid makes the trace easier to scan without becoming a chart.
-    ctx.strokeStyle = "rgba(148, 163, 184, .12)"; ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(237, 236, 231, .08)"; ctx.lineWidth = 1;
     [0.25, .5, .75].forEach((ratio) => { ctx.beginPath(); ctx.moveTo(0, Math.round(height * ratio) + .5); ctx.lineTo(width, Math.round(height * ratio) + .5); ctx.stroke(); });
     const points: { x: number; y: number; p: number }[] = [];
     shown.forEach((p, i) => {
@@ -43,11 +44,11 @@ export default function CertaintyWave({ wave, alts = [], active, height = 48 }: 
   const uncertain = wave.filter((p) => p < .5).length;
   const recent = alts.slice(-3).reverse();
   return <section className="mt-3 max-w-xl">
-    <div className="mb-1.5 flex items-center gap-2 text-[9px] tabular-nums">
+    <div className="mb-1.5 flex items-center gap-2 text-[10px] tabular-nums">
       <Activity size={12} className="text-[var(--muted)]" />
       {avg != null ? <><span className="font-medium" style={{ color: colorFor(avg) }}>{Math.round(avg * 100)}%</span><span className="text-[var(--muted)]">{wave.length} tokens · {uncertain} low</span>{active && <i className="size-1 rounded-full bg-[var(--accent-ai)] animate-pulse" />}</> : <span className="text-[var(--muted)]">{active ? "reading certainty…" : "certainty unavailable"}</span>}
     </div>
-    {wave.length > 0 ? <canvas ref={ref} style={{ width: "100%", height }} className="block border-y border-[var(--border-soft)] bg-[var(--surface-1)]" aria-label="Live token certainty trace" /> : <div className="border-y border-dashed border-[var(--border-soft)] py-2 text-[9px] text-[var(--muted)]">{active ? "Waiting for token probabilities…" : "No token probabilities returned."}</div>}
-    {recent.length > 0 && <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[9px] text-[var(--muted)]">{recent.map((item, i) => { const runnerUp = item.alts[0]; const margin = runnerUp ? item.p - runnerUp[1] : null; return <span key={i}><b className="font-medium text-[var(--text-2)]">{JSON.stringify(item.token).slice(1, -1) || "space"}</b> <span style={{ color: colorFor(item.p) }}>{Math.round(item.p * 100)}%</span>{runnerUp && <> <span className="opacity-50">/</span> {JSON.stringify(runnerUp[0]).slice(1, -1)} <span className="opacity-50">Δ</span> {Math.round(margin! * 100)}%</>}</span>; })}</div>}
+    {wave.length > 0 ? <canvas ref={ref} style={{ width: "100%", height }} className="block border-y border-[var(--border-soft)] bg-[var(--surface-1)]" aria-label="Live token certainty trace" /> : <div className="border-y border-dashed border-[var(--border-soft)] py-2 text-[10px] text-[var(--muted)]">{active ? "Waiting for token probabilities…" : "No token probabilities returned."}</div>}
+    {recent.length > 0 && <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[10px] text-[var(--muted)]">{recent.map((item, i) => { const runnerUp = item.alts[0]; const margin = runnerUp ? item.p - runnerUp[1] : null; return <span key={i}><b className="font-medium text-[var(--text-2)]">{JSON.stringify(item.token).slice(1, -1) || "space"}</b> <span style={{ color: colorFor(item.p) }}>{Math.round(item.p * 100)}%</span>{runnerUp && <> <span className="opacity-50">/</span> {JSON.stringify(runnerUp[0]).slice(1, -1)} <span className="opacity-50">Δ</span> {Math.round(margin! * 100)}%</>}</span>; })}</div>}
   </section>;
 }

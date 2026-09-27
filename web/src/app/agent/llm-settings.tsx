@@ -22,7 +22,7 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
         <label className="text-[13px] text-[var(--text-2)]">{label}</label>
         {children}
       </div>
-      {hint && <p className="text-[10px] text-[var(--muted)] mt-1 leading-snug">{hint}</p>}
+      {hint && <p className="text-[11px] text-[var(--muted)] mt-1 leading-snug">{hint}</p>}
     </div>
   );
 }
@@ -38,7 +38,7 @@ function Slider({ label, hint, min, max, step, value, onChange }: { label: strin
 function Num({ label, hint, value, onChange }: { label: string; hint?: string; value: number; onChange: (v: number) => void }) {
   return (
     <Row label={label} hint={hint}>
-      <input type="number" value={value} onChange={(e) => onChange(parseInt(e.target.value, 10))} className="w-24 text-right bg-[var(--bg,#0c0c0c)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-xs text-white outline-none" />
+      <input type="number" value={value} onChange={(e) => onChange(parseInt(e.target.value, 10))} className="w-24 text-right bg-[var(--bg)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-xs text-[var(--text)] outline-none" />
     </Row>
   );
 }
@@ -97,11 +97,11 @@ export default function LlmSettings({
       <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-md bg-[var(--surface-1)] border border-[var(--border)] rounded-t-[var(--r-lg)] sm:rounded-[var(--r-lg)] max-h-[88vh] overflow-y-auto pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center justify-between px-4 h-12 border-b border-[var(--border-soft)] sticky top-0 bg-[var(--surface-1)] z-10">
           <span className="text-sm font-semibold">LLM settings</span>
-          <button onClick={onClose} aria-label="Close" className="text-[var(--muted)] hover:text-white p-1"><X size={18} /></button>
+          <button onClick={onClose} aria-label="Close" className="text-[var(--muted)] hover:text-[var(--text)] p-1"><X size={18} /></button>
         </div>
         <div className="p-4 space-y-4">
           <Row label="Model" hint="Heavier models reason better but need more VRAM. Lower GPU layers if a big model crashes.">
-            <select value={model} onChange={(e) => onModelChange(e.target.value)} className="max-w-[55%] text-xs bg-[var(--bg,#0c0c0c)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-white outline-none">
+            <select value={model} onChange={(e) => onModelChange(e.target.value)} className="max-w-[55%] text-xs bg-[var(--bg)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-[var(--text)] outline-none">
               {model && !models.includes(model) && <option value={model}>{model}</option>}
               {models.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
@@ -117,7 +117,7 @@ export default function LlmSettings({
             <select
               value={voice}
               onChange={(e) => { setVoiceState(e.target.value); setVoice(e.target.value); }}
-              className="text-xs bg-[var(--bg,#0c0c0c)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-white outline-none"
+              className="text-xs bg-[var(--bg)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-[var(--text)] outline-none"
             >
               <option value="sam">SAM (retro)</option>
               <option value="sam-clear">SAM clear</option>
@@ -127,25 +127,25 @@ export default function LlmSettings({
 
           <div>
             <label className="text-[13px] text-[var(--text-2)]">System prompt</label>
-            <p className="text-[10px] text-[var(--muted)] mt-0.5 mb-1.5 leading-snug">Instructions applied to every reply. Leave empty for default model behavior.</p>
+            <p className="text-[11px] text-[var(--muted)] mt-0.5 mb-1.5 leading-snug">Instructions applied to every reply. Leave empty for default model behavior.</p>
             <textarea
               value={system}
               onChange={(e) => setSystem(e.target.value)}
               onBlur={(e) => saveSystem(e.target.value)}
               rows={4}
-              className="w-full resize-y bg-[var(--bg,#0c0c0c)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1.5 text-xs text-white outline-none focus:border-[var(--border-loud)] leading-relaxed font-mono"
+              className="w-full resize-y bg-[var(--bg)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1.5 text-xs text-[var(--text)] outline-none focus:border-[var(--border-loud)] leading-relaxed font-mono"
               placeholder="e.g. You are a concise assistant. Prefer plain text over markdown."
             />
           </div>
 
-          <div className="border-t border-[var(--border-soft)] pt-3 text-[10px] uppercase tracking-widest text-[var(--muted)]">Performance / memory</div>
+          <div className="border-t border-[var(--border-soft)] pt-3 text-[11px] uppercase tracking-widest text-[var(--muted)]">Performance / memory</div>
           {opts ? (
             <>
               <Slider label="Context size" hint="Per-model context requested by Web and CLI. Larger contexts reload the model with the long-context profile." min={2048} max={262144} step={1024} value={opts.contextTokens} onChange={(v) => save({ contextTokens: v })} />
               <Num label="Max output" hint="Per-model override. Use the Models page to return this model to the shared global default (40,960 recommended)." value={opts.maxOutputTokens} onChange={(v) => save({ maxOutputTokens: v })} />
               <Num label="GPU layers" hint="-1 = auto. Lower this to offload layers to CPU when a model cannot fit." value={opts.gpuLayers ?? -1} onChange={(v) => save({ gpuLayers: v < 0 ? null : v })} />
 
-              <div className="border-t border-[var(--border-soft)] pt-3 text-[10px] uppercase tracking-widest text-[var(--muted)]">Sampling</div>
+              <div className="border-t border-[var(--border-soft)] pt-3 text-[11px] uppercase tracking-widest text-[var(--muted)]">Sampling</div>
               <Slider label="Temperature" hint="Higher = more creative/random." min={0} max={2} step={0.05} value={opts.temperature} onChange={(v) => save({ temperature: v })} />
               <Slider label="Top P" min={0} max={1} step={0.05} value={opts.topP} onChange={(v) => save({ topP: v })} />
               <Num label="Top K" value={opts.topK} onChange={(v) => save({ topK: v })} />
@@ -154,7 +154,7 @@ export default function LlmSettings({
           ) : (
             <p className="text-xs text-[var(--muted)]">Loading…</p>
           )}
-          <p className="text-[10px] text-[var(--muted)]">{savedAt ? "Saved ✓ (applies to your next message)" : "Changes save automatically."}</p>
+          <p className="text-[11px] text-[var(--muted)]">{savedAt ? "Saved ✓ (applies to your next message)" : "Changes save automatically."}</p>
         </div>
       </div>
     </div>

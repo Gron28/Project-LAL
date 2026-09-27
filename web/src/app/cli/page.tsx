@@ -66,7 +66,7 @@ export default function CliPage() {
   }
 
   return <main id="main-content" className="page-shell text-[var(--text)]">
-    <div className="page-frame max-w-6xl flex flex-col gap-4">
+    <div className="page-frame">
       <LabNav />
       <div>
         <h1 className="text-xl font-semibold flex items-center gap-2"><TerminalSquare size={20} className="text-[var(--accent-ai)]" /> CLI settings</h1>
@@ -74,7 +74,7 @@ export default function CliPage() {
       </div>
 
       <Panel padding="none"><div className={heading}><TerminalSquare size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> RUN CONTROL</div>
-        <div className="p-4 grid gap-4 text-[10px] text-[var(--muted)] md:grid-cols-2 xl:grid-cols-4">
+        <div className="p-4 grid gap-4 text-[11px] text-[var(--muted)] md:grid-cols-2 xl:grid-cols-4">
           <label>Maximum session turns<input className={`${input} mt-1`} type="number" min={-1} value={numberValue(settings, "maxSessionTurns", -1)} onChange={(event) => update("maxSessionTurns", Number(event.target.value))} /><span className="mt-1 block">-1 means unlimited.</span></label>
           <label>Maximum tool calls per turn<input className={`${input} mt-1`} type="number" min={-1} value={numberValue(settings, "maxToolCallsPerTurn", -1)} onChange={(event) => update("maxToolCallsPerTurn", Number(event.target.value))} /><span className="mt-1 block">-1 disables the cap.</span></label>
           <label>Shell timeout (ms)<input className={`${input} mt-1`} type="number" min={0} value={numberValue(settings, "shellDefaultTimeoutMs", 600000)} onChange={(event) => update("shellDefaultTimeoutMs", Number(event.target.value))} /></label>

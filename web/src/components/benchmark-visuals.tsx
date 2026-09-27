@@ -113,8 +113,8 @@ export function MetricBars({ title, unit, runs, value, lowerIsBetter = false }: 
   return (
     <div className="rounded-[var(--r-md)] border border-[var(--border-soft)] bg-[var(--surface-2)] p-3 min-w-0">
       <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">{title}</div>
-        <div className="text-[9px] text-[var(--muted)]">{lowerIsBetter ? "lower is better" : "higher is better"}</div>
+        <div className="text-[11px] uppercase tracking-[0.16em] text-[var(--muted)]">{title}</div>
+        <div className="text-[10px] text-[var(--muted)]">{lowerIsBetter ? "lower is better" : "higher is better"}</div>
       </div>
       <div className="space-y-2.5">
         {runs.map((run, i) => {
@@ -122,7 +122,7 @@ export function MetricBars({ title, unit, runs, value, lowerIsBetter = false }: 
           const width = typeof v === "number" ? Math.max(2, (v / max) * 100) : 0;
           return (
             <div key={run.model}>
-              <div className="flex items-center justify-between gap-2 text-[10px] mb-1">
+              <div className="flex items-center justify-between gap-2 text-[11px] mb-1">
                 <span className="truncate text-[var(--text-2)]">{shortName(run.model)}</span>
                 <span className="font-mono" style={{ color: v === best ? "var(--accent-success)" : "var(--text)" }}>{v == null ? "—" : `${v.toLocaleString()}${unit}`}</span>
               </div>
@@ -209,20 +209,20 @@ export function QuestionDifficultyMatrix({ runs }: { runs: Res[] }) {
   return (
     <div className="overflow-auto max-h-[620px] rounded-[var(--r-md)] border border-[var(--border-soft)]">
       <div className="inline-grid min-w-full" style={{ gridTemplateColumns: `minmax(260px, 1fr) 70px repeat(${withResults.length}, 28px)` }}>
-        <div className="sticky top-0 left-0 z-30 bg-[var(--surface-1)] px-3 py-2 text-[8px] uppercase tracking-[0.14em] text-[var(--muted)] border-b border-r border-[var(--border-soft)]">Problem · hardest first</div>
-        <div className="sticky top-0 z-20 bg-[var(--surface-1)] px-2 py-2 text-[8px] uppercase tracking-[0.14em] text-center text-[var(--muted)] border-b border-r border-[var(--border-soft)]">Pass rate</div>
+        <div className="sticky top-0 left-0 z-30 bg-[var(--surface-1)] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)] border-b border-r border-[var(--border-soft)]">Problem · hardest first</div>
+        <div className="sticky top-0 z-20 bg-[var(--surface-1)] px-2 py-2 text-[10px] uppercase tracking-[0.14em] text-center text-[var(--muted)] border-b border-r border-[var(--border-soft)]">Pass rate</div>
         {withResults.map((run) => (
           <div key={run.model} className="sticky top-0 z-20 h-28 bg-[var(--surface-1)] border-b border-r border-[var(--border-soft)] relative" title={run.model}>
-            <span className="absolute bottom-2 left-1/2 text-[8px] text-[var(--muted)] whitespace-nowrap" style={{ transform: "translateX(-50%) rotate(-64deg)", transformOrigin: "center" }}>{shortName(run.model)}</span>
+            <span className="absolute bottom-2 left-1/2 text-[10px] text-[var(--muted)] whitespace-nowrap" style={{ transform: "translateX(-50%) rotate(-64deg)", transformOrigin: "center" }}>{shortName(run.model)}</span>
           </div>
         ))}
         {rows.map((row, rowIndex) => (
           <div key={row.q} className="contents">
-            <div className="sticky left-0 z-10 bg-[var(--surface-1)] px-3 py-2 border-b border-r border-[var(--border-soft)] text-[9px] text-[var(--text-2)] truncate" title={row.q}><span className="text-[var(--muted)] mr-2">{String(rowIndex + 1).padStart(2, "0")}</span>{row.q}</div>
-            <div className="px-2 py-2 border-b border-r border-[var(--border-soft)] text-center text-[9px] font-mono" style={{ color: row.rate >= 0.75 ? "var(--accent-success)" : row.rate >= 0.4 ? "var(--accent-warn)" : "var(--accent-danger)" }}>{Math.round(row.rate * 100)}%<div className="text-[7px] text-[var(--muted)]">{row.passed}/{row.attempts}</div></div>
+            <div className="sticky left-0 z-10 bg-[var(--surface-1)] px-3 py-2 border-b border-r border-[var(--border-soft)] text-[10px] text-[var(--text-2)] truncate" title={row.q}><span className="text-[var(--muted)] mr-2">{String(rowIndex + 1).padStart(2, "0")}</span>{row.q}</div>
+            <div className="px-2 py-2 border-b border-r border-[var(--border-soft)] text-center text-[10px] font-mono" style={{ color: row.rate >= 0.75 ? "var(--accent-success)" : row.rate >= 0.4 ? "var(--accent-warn)" : "var(--accent-danger)" }}>{Math.round(row.rate * 100)}%<div className="text-[10px] text-[var(--muted)]">{row.passed}/{row.attempts}</div></div>
             {withResults.map((run) => {
               const outcome = row.outcomes.get(run.model);
-              return <div key={run.model} className="border-b border-r border-[var(--border-soft)] grid place-items-center" style={{ background: outcome == null ? "var(--surface-2)" : outcome ? "color-mix(in srgb, var(--accent-success) 52%, var(--surface-1))" : "color-mix(in srgb, var(--accent-danger) 42%, var(--surface-1))" }} title={`${shortName(run.model)} · ${outcome == null ? "not run" : outcome ? "correct" : "incorrect"}`}><span className="text-[8px]" style={{ color: outcome == null ? "var(--muted)" : outcome ? "var(--accent-success)" : "var(--accent-danger)" }}>{outcome == null ? "·" : outcome ? "✓" : "×"}</span></div>;
+              return <div key={run.model} className="border-b border-r border-[var(--border-soft)] grid place-items-center" style={{ background: outcome == null ? "var(--surface-2)" : outcome ? "color-mix(in srgb, var(--accent-success) 52%, var(--surface-1))" : "color-mix(in srgb, var(--accent-danger) 42%, var(--surface-1))" }} title={`${shortName(run.model)} · ${outcome == null ? "not run" : outcome ? "correct" : "incorrect"}`}><span className="text-[10px]" style={{ color: outcome == null ? "var(--muted)" : outcome ? "var(--accent-success)" : "var(--accent-danger)" }}>{outcome == null ? "·" : outcome ? "✓" : "×"}</span></div>;
             })}
           </div>
         ))}

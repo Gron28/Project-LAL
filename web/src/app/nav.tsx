@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AlertTriangle, BarChart3, Boxes, ChevronLeft, ChevronRight, Cpu, Database, Download, LayoutDashboard, MessageSquare, TerminalSquare, GraduationCap, Network, Radio, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, BarChart3, Boxes, ChevronLeft, ChevronRight, Database, Download, LayoutDashboard, MessageSquare, TerminalSquare, GraduationCap, Network, Radio, ShieldCheck, X } from "lucide-react";
 import { ICON_SIZE } from "@/components/ui/icon";
 import { SignalTrace } from "@/components/ui/signal-trace";
 
@@ -10,12 +10,8 @@ import { SignalTrace } from "@/components/ui/signal-trace";
 // the mobile bottom bar instead of each copy-pasting its own ternary. Quiet by
 // design: a subtle background tint + colored text/icon, no full-color fill, no
 // glow — active should read as "selected," not "lit up."
-function navItemStyle(isActive: boolean) {
-  return {
-    background: isActive ? "color-mix(in srgb, var(--accent-ai) 14%, transparent)" : "transparent",
-    color: isActive ? "var(--accent-ai)" : "var(--text-2)",
-    fontWeight: isActive ? 600 : 400,
-  };
+function navItemClass(isActive: boolean) {
+  return "nav-item" + (isActive ? " nav-item-active" : "");
 }
 
 // Small truth-teller for the GPU: which model is resident and for how long it's
@@ -37,20 +33,27 @@ function GpuBadge() {
     return () => { alive = false; clearInterval(t); };
   }, []);
   if (!info?.model) return null;
-  const idle = info.idleSec != null && info.idleSec >= 60 ? ` · idle ${Math.floor(info.idleSec / 60)}m` : "";
+  const idle = info.idleSec != null && info.idleSec >= 60 ? `idle ${Math.floor(info.idleSec / 60)}m` : "serving";
   return (
-    <div className="mx-2 px-0 lg:px-3 py-1.5 flex items-center justify-center lg:justify-start gap-2 text-[10px] text-[var(--muted)]"
-      title={`GPU model resident: ${info.model}${idle}`}>
-      <Cpu size={ICON_SIZE.md} className="text-[var(--accent-ai)] shrink-0" />
-      <span className="hidden lg:inline truncate max-w-[70px]">{info.model}{idle}</span>
-      <SignalTrace size="sm" className="hidden lg:inline-flex" />
-      <button title="unload model from GPU now"
-        className="hidden lg:inline text-[var(--muted)] hover:text-[var(--accent-danger)]"
-        onClick={async () => {
-          try { const r = await fetch("/api/sysinfo", { method: "DELETE" }); if (r.ok) setInfo(null); } catch {}
-        }}>
-        <X size={ICON_SIZE.sm} />
-      </button>
+    <div className="mx-1 mb-2 flex items-center justify-center lg:justify-between gap-2 rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--bg-panel)] px-2 lg:px-3 py-2"
+      title={`GPU model resident: ${info.model} · ${idle}`}>
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="relative grid place-items-center w-2 h-2 shrink-0"><span className="w-2 h-2 rounded-full bg-[var(--status-success)]" /></span>
+        <span className="hidden lg:flex min-w-0 flex-col leading-tight">
+          <span className="truncate text-[12px] text-[var(--text-primary)]">{info.model}</span>
+          <span className="text-[11px] text-[var(--text-muted)]">Local · {idle}</span>
+        </span>
+      </span>
+      <span className="hidden lg:flex items-center gap-2">
+        <SignalTrace size="sm" />
+        <button title="Unload model from GPU now" aria-label="Unload model from GPU"
+          className="grid place-items-center w-6 h-6 rounded-[var(--radius-xs)] text-[var(--text-muted)] hover:text-[var(--status-error)] hover:bg-[var(--bg-interactive)]"
+          onClick={async () => {
+            try { const r = await fetch("/api/sysinfo", { method: "DELETE" }); if (r.ok) setInfo(null); } catch {}
+          }}>
+          <X size={ICON_SIZE.sm} />
+        </button>
+      </span>
     </div>
   );
 }
@@ -97,7 +100,7 @@ function ActiveRunNotice() {
     : run.kind === "deliberate" ? "Research" : run.kind[0].toUpperCase() + run.kind.slice(1);
   const device = terminalLinked && run.ownerDeviceId ? ` on ${run.ownerDeviceId}` : "";
   return (
-    <div className="fixed z-[60] top-2 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1rem)] rounded-full border border-[var(--border-loud)] bg-[var(--surface-1)] shadow-lg flex items-center text-[10px] text-[var(--text-2)]">
+    <div className="fixed z-[60] top-2 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1rem)] rounded-full border border-[var(--border-default)] bg-[var(--bg-panel-raised)] shadow-[var(--shadow-panel)] flex items-center text-[11px] text-[var(--text-2)]">
       <Link href={href} className="min-w-0 px-3 py-1.5 flex items-center gap-2 hover:text-[var(--accent-ai)] transition-colors" title={`Open active ${label.toLowerCase()} run ${run.id}${device}`}>
         <Radio size={12} className="text-[var(--accent-ai)] animate-pulse shrink-0" />
         <span className="font-medium text-[var(--text)] whitespace-nowrap">{label} active</span>
@@ -147,14 +150,14 @@ function ModelInventoryNotice() {
     return () => { alive = false; clearInterval(timer); };
   }, []);
   if (!notice) return null;
-  return <Link href="/models" className="fixed z-[59] top-11 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1rem)] px-3 py-1.5 rounded-full border border-[var(--border-loud)] bg-[var(--surface-1)] shadow-lg flex items-center gap-2 text-[10px] text-[var(--text-2)] hover:text-[var(--accent-ai)]" title={notice.detail}>
+  return <Link href="/models" className="fixed z-[59] top-11 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1rem)] px-3 py-1.5 rounded-full border border-[var(--border-default)] bg-[var(--bg-panel-raised)] shadow-[var(--shadow-panel)] flex items-center gap-2 text-[11px] text-[var(--text-2)] hover:text-[var(--accent-ai)]" title={notice.detail}>
     {notice.state === "failed" ? <AlertTriangle size={12} className="text-[var(--accent-danger)] shrink-0" /> : <Download size={12} className="text-[var(--accent-ai)] shrink-0" />}
     <span className="truncate">{notice.state === "failed" ? "Model inventory failed" : "No models installed"}</span><span className="text-[var(--accent-ai)] shrink-0">open Models</span>
   </Link>;
 }
 
 const primaryItems = [
-  { href: "/", label: "Dashboard", Icon: LayoutDashboard },
+  { href: "/", label: "Home", Icon: LayoutDashboard },
   { href: "/chat", label: "Chat", Icon: MessageSquare },
   { href: "/code", label: "Code", Icon: TerminalSquare },
   { href: "/hive", label: "Hive", Icon: Network },
@@ -162,7 +165,7 @@ const primaryItems = [
   { href: "/train", label: "Lab", Icon: GraduationCap },
 ];
 
-const labPaths = ["/train", "/models", "/benchmark", "/library", "/lens", "/cli"];
+const labPaths = ["/train", "/models", "/benchmark", "/library", "/lens", "/cli", "/install"];
 const labItems = [
   { href: "/train", label: "Training", Icon: GraduationCap },
   { href: "/models", label: "Models", Icon: Boxes },
@@ -172,37 +175,10 @@ const labItems = [
 ];
 
 
-/**
- * The CLI's mark, at nav scale.
- *
- * apps/cli/.../AsciiArt.ts draws it in 11 lines of block glyphs: an apex, two legs
- * descending, a wide crossbar through them, and small inverted legs below. That is
- * too tall for a 12px rail, so this is the same geometry as strokes rather than a
- * shrunken screenshot of the ASCII — it stays legible at 16px and shares the
- * accent colour, which is what makes the two surfaces read as one product.
- */
-function BrandMark({ size = 16 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="square"
-      aria-hidden="true"
-    >
-      {/* apex + legs */}
-      <path d="M12 3 L4 17" />
-      <path d="M12 3 L20 17" />
-      {/* the crossbar, wider than the legs — the logo's defining stroke */}
-      <path d="M2 13 L22 13" />
-      {/* the small inverted legs beneath */}
-      <path d="M8 21 L11 17" />
-      <path d="M16 21 L13 17" />
-    </svg>
-  );
+// User-supplied LAL mark, cropped to keep it legible in the navigation.
+function BrandMark({ size = 32 }: { size?: number }) {
+  // The user-supplied mark is an SVG asset, shared with all app icons.
+  return <img src="/app-icons/lal-mark.svg?v=6" width={size} height={size} alt="" aria-hidden="true" className="object-contain w-full h-full" />;
 }
 
 export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
@@ -217,57 +193,52 @@ export default function Nav({ collapsed, onToggle }: { collapsed: boolean; onTog
           screen width; collapsed state takes NO layout space at all, with a small
           floating button left to bring it back. */}
       {!collapsed && (
-        <nav aria-label="Primary" className="hidden md:flex md:flex-col fixed left-0 top-0 h-dvh w-[72px] lg:w-[224px] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] backdrop-blur-xl border-r border-[var(--border)] z-50 px-2 lg:px-3 py-4 gap-1">
-          <div className="px-1 lg:px-2 mb-5 text-center lg:text-left">
-            <span className="flex items-center justify-center lg:justify-start gap-3 text-[var(--text)] text-sm font-semibold tracking-[-.01em]">
-              <span className="w-9 h-9 grid place-items-center rounded-[var(--r-md)] bg-[var(--accent-ai)] text-[#071006]"><BrandMark size={19} /></span>
-              {/* "LAL" everywhere, matching the CLI and the `lal` command, instead of
-                  a longer name the terminal never uses. */}
-              <span className="hidden lg:inline"><b className="block">Local AI Lab</b><small className="block mt-0.5 text-[10px] font-normal uppercase tracking-[.14em] text-[var(--text-3)]">Workstation</small></span>
-            </span>
+        <nav aria-label="Primary" className="hidden md:flex md:flex-col fixed left-0 top-0 h-dvh w-[var(--sidebar-rail)] lg:w-[var(--sidebar-width)] bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)] z-50 px-2 lg:px-3 py-4 overflow-y-auto">
+          <Link href="/" className="grid place-items-center mb-6 pt-1" aria-label="LAL home" title="LAL home">
+            {/* The mark alone: it is the brand, and the wordmark only repeated it. */}
+            <span className="block w-12 h-12 lg:w-[132px] lg:h-[110px]"><BrandMark /></span>
+          </Link>
+          <div className="nav-section">Workspace</div>
+          <div className="flex flex-col gap-0.5">
+            {primaryItems.filter((item) => item.href !== "/train").map(({ href, label, Icon }) => (
+              <Link key={href} href={href} title={label} aria-current={active(href) ? "page" : undefined} className={navItemClass(active(href))}>
+                <Icon size={18} strokeWidth={1.75} /><span className="hidden lg:inline">{label}</span>
+              </Link>
+            ))}
           </div>
-          <div className="hidden lg:block px-2 mb-1 text-[10px] font-semibold uppercase tracking-[.15em] text-[var(--text-3)]">Workspace</div>
-          {primaryItems.map(({ href, label, Icon }) => (
-            <Link key={href} href={href}
-              aria-current={active(href) ? "page" : undefined}
-              className="min-h-11 flex items-center justify-center lg:justify-start gap-3 px-0 lg:px-3 rounded-[var(--r-md)] text-[13px] transition-colors"
-              style={navItemStyle(active(href))}>
-              <Icon size={18} /><span className="hidden lg:inline">{label}</span>
-            </Link>
-          ))}
-          <div className="hidden lg:block mt-5 px-2 mb-1 text-[10px] font-semibold uppercase tracking-[.15em] text-[var(--text-3)]">Lab</div>
-          <div className="hidden lg:flex flex-col gap-0.5">
+          <div className="nav-section mt-5">Lab</div>
+          <div className="flex flex-col gap-0.5">
             {labItems.map(({ href, label, Icon }) => {
               const selected = p.startsWith(href) || (href === "/benchmark" && p.startsWith("/lens"));
-              return <Link key={href} href={href} aria-current={selected ? "page" : undefined}
-                className="min-h-9 flex items-center gap-3 rounded-[var(--r-md)] px-3 text-xs transition-colors"
-                style={{ color: selected ? "var(--accent-ai)" : "var(--text-3)", background: selected ? "color-mix(in srgb, var(--accent-ai) 8%, transparent)" : "transparent" }}>
-                <Icon size={14} />{label}
+              return <Link key={href} href={href} title={label} aria-current={selected ? "page" : undefined} className={navItemClass(selected)}>
+                <Icon size={18} strokeWidth={1.75} /><span className="hidden lg:inline">{label}</span>
               </Link>;
             })}
           </div>
-          <div className="mt-auto">
+          <div className="mt-auto pt-4 flex flex-col gap-0.5">
             <GpuBadge />
-            <button onClick={onToggle} title="hide sidebar"
-              className="flex items-center justify-center lg:justify-start gap-2 mx-2 px-0 lg:px-3 py-2 rounded-[var(--r-md)] text-[var(--muted)] hover:text-[var(--text-2)] transition-colors w-[calc(100%-1rem)]">
-              <ChevronLeft size={ICON_SIZE.md} /><span className="hidden lg:inline text-xs">hide</span>
+            <Link href="/install" title="Install LAL on desktop or phone" aria-current={p.startsWith("/install") ? "page" : undefined} className={navItemClass(p.startsWith("/install"))}>
+              <Download size={18} strokeWidth={1.75} /><span className="hidden lg:inline">Install app</span>
+            </Link>
+            <button onClick={onToggle} title="Hide sidebar" className="nav-item w-full">
+              <ChevronLeft size={18} strokeWidth={1.75} /><span className="hidden lg:inline">Hide sidebar</span>
             </button>
           </div>
         </nav>
       )}
       {collapsed && (
         <button onClick={onToggle} title="show sidebar"
-          className="hidden md:flex fixed left-2 bottom-3 z-50 items-center justify-center w-8 h-8 rounded-full bg-[var(--surface-1)] border border-[var(--border)] text-[var(--text-2)] hover:text-[var(--accent-ai)] shadow-lg transition-colors">
+          className="hidden md:flex fixed left-2 bottom-3 z-50 items-center justify-center w-9 h-9 rounded-full bg-[var(--bg-panel-raised)] border border-[var(--border-default)] text-[var(--text-secondary)] hover:text-[var(--text-accent)] shadow-[var(--shadow-panel)] transition-colors">
           <ChevronRight size={ICON_SIZE.md} />
         </button>
       )}
 
       {/* Mobile: bottom tab bar (unaffected by the desktop rail's collapse state) */}
-      <nav aria-label="Primary" className="grid grid-cols-6 md:hidden fixed bottom-0 left-0 right-0 min-h-16 bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] backdrop-blur-xl border-t border-[var(--border)] z-50 pb-[env(safe-area-inset-bottom)]">
+      <nav aria-label="Primary" className="grid grid-cols-6 md:hidden fixed bottom-0 left-0 right-0 min-h-16 bg-[color-mix(in_srgb,var(--bg-sidebar)_94%,transparent)] backdrop-blur-xl border-t border-[var(--border-subtle)] z-50 pb-[env(safe-area-inset-bottom)]">
         {primaryItems.map(({ href, label, Icon }) => (
-          <Link key={href} href={href} aria-current={active(href) ? "page" : undefined} className="min-h-16 flex flex-col items-center justify-center gap-1 text-[10px] font-medium tracking-wide"
-            style={{ color: active(href) ? "var(--accent-ai)" : "var(--text-2)" }}>
-            <Icon size={19} /><span>{label}</span>
+          <Link key={href} href={href} aria-current={active(href) ? "page" : undefined} className="min-h-16 flex flex-col items-center justify-center gap-1 text-[11px] font-medium"
+            style={{ color: active(href) ? "var(--text-accent)" : "var(--text-secondary)" }}>
+            <Icon size={20} strokeWidth={1.75} /><span>{label}</span>
           </Link>
         ))}
       </nav>

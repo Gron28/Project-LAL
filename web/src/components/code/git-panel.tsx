@@ -10,12 +10,12 @@ type Status = { repo: boolean; branch?: string; ahead?: number; behind?: number;
 const codeColor = (x: string, y: string) => {
   if (x === "?" || x === "A") return "var(--accent-ai)";
   if (x === "D" || y === "D") return "var(--accent-danger)";
-  return "var(--accent-warn, #d29922)";
+  return "var(--accent-warn)";
 };
 
 function DiffView({ diff, truncated }: { diff: string; truncated?: boolean }) {
   return (
-    <pre className="text-[10px] font-mono bg-[var(--surface-2,#11151c)] rounded p-2 overflow-auto max-h-72 whitespace-pre">
+    <pre className="text-[11px] font-mono bg-[var(--surface-2)] rounded p-2 overflow-auto max-h-72 whitespace-pre">
       {diff.split("\n").map((l, i) => (
         <div key={i} style={{
           color: l.startsWith("+") ? "var(--accent-success)" : l.startsWith("-") ? "var(--accent-danger)" : l.startsWith("@@") ? "var(--text-2)" : "var(--muted)",
@@ -108,21 +108,21 @@ export default function GitPanel({ project, refreshTick, onCommitted }: {
               <span className="truncate">{f.path}</span>
             </button>
           </div>
-          {diffFor === f.path && (diff ? <DiffView diff={diff.diff} truncated={diff.truncated} /> : <div className="text-[10px] text-[var(--muted)] pl-6">loading diff…</div>)}
+          {diffFor === f.path && (diff ? <DiffView diff={diff.diff} truncated={diff.truncated} /> : <div className="text-[11px] text-[var(--muted)] pl-6">loading diff…</div>)}
         </div>
       ))}
 
       {files.length > 0 && (
         <div className="space-y-1.5 pt-1 border-t border-[var(--border-soft)]">
           <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={2} placeholder="commit message…"
-            className="w-full bg-[var(--surface-2,#11151c)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono resize-none" />
+            className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono resize-none" />
           <button onClick={commit} disabled={!message.trim() || checked.size === 0 || busy}
-            className="w-full flex items-center justify-center gap-1.5 text-[11px] font-semibold bg-[var(--accent-ai)] text-[#05090c] rounded px-2 py-1.5 disabled:opacity-40">
+            className="w-full flex items-center justify-center gap-1.5 text-[11px] font-semibold bg-[var(--accent-ai)] text-[var(--on-accent)] rounded px-2 py-1.5 disabled:opacity-40">
             <GitCommitHorizontal size={13} /> {busy ? "committing…" : `commit ${checked.size} file${checked.size === 1 ? "" : "s"}`}
           </button>
         </div>
       )}
-      {output && <pre className="text-[10px] text-[var(--muted)] whitespace-pre-wrap bg-[var(--surface-2,#11151c)] rounded p-2 max-h-32 overflow-auto">{output}</pre>}
+      {output && <pre className="text-[11px] text-[var(--muted)] whitespace-pre-wrap bg-[var(--surface-2)] rounded p-2 max-h-32 overflow-auto">{output}</pre>}
     </div>
   );
 }

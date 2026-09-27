@@ -5,6 +5,10 @@ import { AlertTriangle, CheckCircle2, Cpu, Download, FolderSearch, RefreshCw, Se
 import { Panel } from "@/components/ui/panel";
 import { ICON_SIZE } from "@/components/ui/icon";
 import { LabNav } from "@/components/lab-nav";
+import { GuidedHeader } from "@/components/ui/guided-header";
+import { GUIDES } from "@/lib/page-guides";
+import { ArchitecturePanel } from "@/components/llm-viz/architecture-panel";
+import { ComparePanel } from "@/components/llm-viz/compare-panel";
 
 type ContextProfile = {
   requestedTokens: number;
@@ -86,6 +90,14 @@ export default function ModelsPage() {
   const [accepted, setAccepted] = useState(false);
   const [modelFilter, setModelFilter] = useState("");
   const [visibleModelCount, setVisibleModelCount] = useState(10);
+  const [archOpen, setArchOpen] = useState<Record<string, boolean>>({});
+  // ?arch=<model> deep-links straight to that model's architecture view.
+  useEffect(() => {
+    const name = new URLSearchParams(window.location.search).get("arch");
+    if (!name) return;
+    const t = setTimeout(() => { setArchOpen({ [name]: true }); setModelFilter(name); }, 0);
+    return () => clearTimeout(t);
+  }, []);
   const observedSucceededJobs = useRef(new Set<string>());
 
   const load = useCallback(async (rescan = false) => {
@@ -227,17 +239,22 @@ export default function ModelsPage() {
   const filteredModels = inventory.models.filter((model) => model.name.toLowerCase().includes(modelFilter.trim().toLowerCase()));
 
   return <main id="main-content" className="page-shell text-[var(--text)]">
-    <div className="page-frame max-w-6xl flex flex-col gap-4">
+    <div className="page-frame">
       <LabNav />
-      <div className="flex justify-end"><button className={button} onClick={() => void load(true)} disabled={inventory.state === "loading"}><RefreshCw size={ICON_SIZE.sm} className={inventory.state === "loading" ? "animate-spin" : ""} /> Rescan</button></div>
-      <h1 className="sr-only">Models</h1>
+      <GuidedHeader id="models" eyebrow="Lab" title="Models" guide={GUIDES.models} actions={<button className={button} onClick={() => void load(true)} disabled={inventory.state === "loading"}><RefreshCw size={ICON_SIZE.sm} className={inventory.state === "loading" ? "animate-spin" : ""} /> Rescan</button>} />
 
+      {inventory.models.some((m) => m.source === "local") && <Panel padding="none">
+        <details open className="group">
+          <summary className="min-h-12 cursor-pointer list-none flex items-center gap-2 px-4 text-[14px] font-semibold"><span className="text-[var(--accent-ai)] transition-transform group-open:rotate-90">›</span> Compare architectures <span className="ml-auto text-[12px] font-normal text-[var(--muted)]">real weight shapes from each model file, one shared scale</span></summary>
+          <div className="border-t border-[var(--border-soft)]"><ComparePanel models={inventory.models.filter((m) => m.source === "local").map((m) => m.name)} initial={[inventory.current, ...inventory.models.filter((m) => m.source === "local").map((m) => m.name)].filter((name, i, all) => name && all.indexOf(name) === i && inventory.models.filter((m) => m.source === "local").map((m) => m.name).includes(name)).slice(0, 3)} /></div>
+        </details>
+      </Panel>}
       {inventory.state === "failed" && <Panel><div className="flex gap-3"><AlertTriangle className="text-[var(--accent-danger)] shrink-0" size={20} /><div><div className="text-sm font-medium">Model inventory failed</div>{inventory.diagnostics.map((item) => <p key={item} className="mt-1 text-xs text-[var(--muted)] break-all">{item}</p>)}<button className={`${button} mt-3`} onClick={() => void load(true)}>Try again</button></div></div></Panel>}
       {inventory.state === "empty" && <Panel><div className="text-center py-6"><FolderSearch className="mx-auto text-[var(--accent-ai)]" size={32} /><h2 className="mt-3 text-base font-medium">No usable models found yet</h2><p className="mt-2 text-xs text-[var(--muted)]">Search below to download a verified GGUF, or place a <code>*-q4.gguf</code> / <code>*-f16.gguf</code> file in one of the scanned folders.</p></div></Panel>}
 
       {globalOptions && <Panel padding="none">
         <div className={heading}><Cpu size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> GLOBAL GENERATION DEFAULTS</div>
-        <div className="p-4 grid gap-3 text-[10px] text-[var(--muted)] md:grid-cols-2 xl:grid-cols-5">
+        <div className="p-4 grid gap-3 text-[11px] text-[var(--muted)] md:grid-cols-2 xl:grid-cols-5">
           <label>Max output
             <input className={`${input} mt-1`} type="number" min={512} max={262144} step={1024} value={globalOptions.num_predict} onChange={(event) => setGlobalOptions((value) => value ? { ...value, num_predict: Number(event.target.value) } : value)} />
             <span className="mt-1 block">40,960 by default. A model’s real limit and remaining context still clamp it safely.</span>
@@ -260,36 +277,40 @@ export default function ModelsPage() {
           return <div key={`${model.source}:${model.name}`} className="px-4 py-4 border-b border-[var(--border-soft)] last:border-0 grid gap-3">
             <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm" style={{ color: isDefault ? "var(--accent-ai)" : undefined }}>{model.name}</span>{isDefault && <span className="text-[9px] border border-[var(--accent-ai)] text-[var(--accent-ai)] rounded-full px-1.5 py-0.5">DEFAULT</span>}{isActive && <span className="text-[9px] border border-[var(--accent-success)] text-[var(--accent-success)] rounded-full px-1.5 py-0.5">RESIDENT</span>}</div>
-                <div className="mt-1 text-[10px] text-[var(--muted)]">{model.source} · {model.gb} GB · requested {tokens(profile?.requestedTokens)}, active {tokens(profile?.activeTokens)}, verified {tokens(profile?.verifiedTokens)}, native max {tokens(profile?.modelMaxTokens)}</div>
-                {profile?.reason && <div className="mt-1 text-[10px] text-[var(--muted)]">{profile.reason}</div>}
+                <div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm" style={{ color: isDefault ? "var(--accent-ai)" : undefined }}>{model.name}</span>{isDefault && <span className="text-[10px] border border-[var(--accent-ai)] text-[var(--accent-ai)] rounded-full px-1.5 py-0.5">DEFAULT</span>}{isActive && <span className="text-[10px] border border-[var(--accent-success)] text-[var(--accent-success)] rounded-full px-1.5 py-0.5">RESIDENT</span>}</div>
+                <div className="mt-1 text-[11px] text-[var(--muted)]">{model.source} · {model.gb} GB · requested {tokens(profile?.requestedTokens)}, active {tokens(profile?.activeTokens)}, verified {tokens(profile?.verifiedTokens)}, native max {tokens(profile?.modelMaxTokens)}</div>
+                {profile?.reason && <div className="mt-1 text-[11px] text-[var(--muted)]">{profile.reason}</div>}
               </div>
               <div className="flex flex-wrap gap-1.5">{!isDefault && <button className={button} disabled={!!busy} onClick={() => void mutateModel("default", model)}>Set default</button>}<button className={button} disabled={!!busy} onClick={() => void mutateModel("use", model)}>Load now</button><button className={button} disabled={!!busy} title="Probe 32K, 64K, and 128K context allocations with real inference" onClick={() => void mutateModel("probe", model)}>{busy === `probe:${model.name}` ? "Optimizing…" : "Optimize context"}</button>{model.source === "local" && <a className={button} href={`/api/download?model=${encodeURIComponent(model.name)}`}><Download size={12} /> Export</a>}<button className={button} aria-label={`Delete ${model.name}`} title={`Delete ${model.name}`} disabled={!!busy} onClick={() => void mutateModel("delete", model)}><Trash2 size={12} /></button></div>
             </div>
             {settings && <details className="group rounded-[var(--r-md)] border border-[var(--border-soft)] bg-[var(--surface-2)]">
-              <summary className="min-h-10 cursor-pointer list-none flex items-center gap-2 px-3 text-xs text-[var(--text-2)] hover:text-[var(--text)]"><span className="text-[var(--accent-ai)] transition-transform group-open:rotate-90">›</span> Runtime settings <span className="ml-auto text-[10px] text-[var(--muted)]">{tokens(settings.contextTokens)} context · temp {settings.temperature}</span></summary>
+              <summary className="min-h-10 cursor-pointer list-none flex items-center gap-2 px-3 text-xs text-[var(--text-2)] hover:text-[var(--text)]"><span className="text-[var(--accent-ai)] transition-transform group-open:rotate-90">›</span> Runtime settings <span className="ml-auto text-[11px] text-[var(--muted)]">{tokens(settings.contextTokens)} context · temp {settings.temperature}</span></summary>
               <div className="grid gap-3 border-t border-[var(--border-soft)] p-3 md:grid-cols-2 xl:grid-cols-4">
-              <div className="text-[10px] text-[var(--muted)] md:col-span-2 xl:col-span-4">Serving profile
-                <div className="mt-1 grid gap-1 sm:grid-cols-3">{runtimeProfiles.map((runtimeProfile) => <button type="button" key={runtimeProfile.id} className={`${button} h-auto min-h-0 items-start justify-start p-2 text-left ${settings.contextTokens === runtimeProfile.settings.contextTokens && settings.maxOutputTokens === runtimeProfile.settings.maxOutputTokens ? "border-[var(--accent-ai)] text-[var(--accent-ai)]" : ""}`} disabled={!!busy} onClick={() => void saveModelSettings(model, runtimeProfile.settings)}><span><span className="block font-medium">{runtimeProfile.name}</span><span className="mt-0.5 block text-[10px] text-[var(--muted)]">{runtimeProfile.description} {runtimeProfile.tradeoff}</span></span></button>)}</div>
+              <div className="text-[11px] text-[var(--muted)] md:col-span-2 xl:col-span-4">Serving profile
+                <div className="mt-1 grid gap-1 sm:grid-cols-3">{runtimeProfiles.map((runtimeProfile) => <button type="button" key={runtimeProfile.id} className={`${button} h-auto min-h-0 items-start justify-start p-2 text-left ${settings.contextTokens === runtimeProfile.settings.contextTokens && settings.maxOutputTokens === runtimeProfile.settings.maxOutputTokens ? "border-[var(--accent-ai)] text-[var(--accent-ai)]" : ""}`} disabled={!!busy} onClick={() => void saveModelSettings(model, runtimeProfile.settings)}><span><span className="block font-medium">{runtimeProfile.name}</span><span className="mt-0.5 block text-[11px] text-[var(--muted)]">{runtimeProfile.description} {runtimeProfile.tradeoff}</span></span></button>)}</div>
               </div>
-              <label className="text-[10px] text-[var(--muted)]">Maximum context
+              <label className="text-[11px] text-[var(--muted)]">Maximum context
                 <input className={`${input} mt-1`} type="number" min={2048} max={profile?.modelMaxTokens ?? 1048576} step={1024} value={settings.contextTokens} onChange={(event) => editModelSettings(model.name, { contextTokens: Number(event.target.value) })} />
                 <span className="mt-1 block">Tokens requested on the next load. Tested shortcuts:</span>
                 <span className="mt-1 flex flex-wrap gap-1">{[32768, 65536, 102400, 131072, 262144].filter((value) => !profile?.modelMaxTokens || value <= profile.modelMaxTokens).map((value) => <button type="button" key={value} className={button} onClick={() => editModelSettings(model.name, { contextTokens: value })}>{tokens(value)}</button>)}</span>
               </label>
-              <label className="text-[10px] text-[var(--muted)]">Temperature
+              <label className="text-[11px] text-[var(--muted)]">Temperature
                 <input className={`${input} mt-1`} type="number" min={0} max={2} step={0.05} value={settings.temperature} onChange={(event) => editModelSettings(model.name, { temperature: Number(event.target.value) })} />
                 <span className="mt-1 block">0 is deterministic; higher values add variation.</span>
               </label>
-              <div className="text-[10px] text-[var(--muted)]">Thinking
+              <div className="text-[11px] text-[var(--muted)]">Thinking
                 <button type="button" className={`${button} mt-1 w-full ${settings.thinking ? "border-[var(--accent-ai)] text-[var(--accent-ai)]" : ""}`} onClick={() => editModelSettings(model.name, { thinking: !settings.thinking })}>{settings.thinking ? "On" : "Off"}</button>
                 <span className="mt-1 block">Default for Chat, Agent, and CLI requests.</span>
               </div>
               <div className="flex flex-col justify-between gap-2">
-                <div className="grid grid-cols-2 gap-2 text-[10px] text-[var(--muted)]"><label>Top P<input className={`${input} mt-1`} type="number" min={0} max={1} step={0.05} value={settings.topP} onChange={(event) => editModelSettings(model.name, { topP: Number(event.target.value) })} /></label><label>Max output<input className={`${input} mt-1`} type="number" min={512} max={262144} step={1024} value={settings.maxOutputTokens} onChange={(event) => editModelSettings(model.name, { maxOutputTokens: Number(event.target.value) })} /></label></div>
+                <div className="grid grid-cols-2 gap-2 text-[11px] text-[var(--muted)]"><label>Top P<input className={`${input} mt-1`} type="number" min={0} max={1} step={0.05} value={settings.topP} onChange={(event) => editModelSettings(model.name, { topP: Number(event.target.value) })} /></label><label>Max output<input className={`${input} mt-1`} type="number" min={512} max={262144} step={1024} value={settings.maxOutputTokens} onChange={(event) => editModelSettings(model.name, { maxOutputTokens: Number(event.target.value) })} /></label></div>
                 <div className="flex gap-1.5"><button className={button} disabled={!!busy} onClick={() => void resetModelSettings(model)}>Use global</button><button className={button} disabled={!!busy} onClick={() => void saveModelSettings(model)}>{busy === `settings:${model.name}` ? "Saving…" : "Save override"}</button></div>
               </div>
               </div>
+            </details>}
+            {model.source === "local" && <details open={!!archOpen[model.name]} className="group rounded-[var(--r-md)] border border-[var(--border-soft)] bg-[var(--surface-2)]" onToggle={(event) => { const open = (event.currentTarget as HTMLDetailsElement).open; setArchOpen((cur) => ({ ...cur, [model.name]: open })); }}>
+              <summary className="min-h-10 cursor-pointer list-none flex items-center gap-2 px-3 text-xs text-[var(--text-2)] hover:text-[var(--text)]"><span className="text-[var(--accent-ai)] transition-transform group-open:rotate-90">›</span> Architecture · 3D <span className="ml-auto text-[11px] text-[var(--muted)]">layers, heads and parameters from the model file</span></summary>
+              {archOpen[model.name] && <div className="border-t border-[var(--border-soft)]"><ArchitecturePanel model={model.name} /></div>}
             </details>}
           </div>;
         })}
@@ -302,10 +323,10 @@ export default function ModelsPage() {
         <div className="p-4 grid gap-3 text-xs">
           <p className="text-[var(--muted)]">Search reads Hugging Face metadata only. A transfer starts only after you select a pinned commit and exact SHA-256-addressed file, then accept its license.</p>
           <div className="flex gap-2"><input aria-label="Search model repositories" className={input} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void search(); }} placeholder="Try: Qwen 3 GGUF, Gemma GGUF, coding GGUF…" /><button className={button} disabled={query.trim().length < 2 || !!busy} onClick={() => void search()}><Search size={12} /> Search</button></div>
-          {results.length > 0 && <div className="grid gap-1 sm:grid-cols-2">{results.map((candidate) => <button key={`${candidate.id}:${candidate.revision}`} className="text-left p-2 rounded border border-[var(--border)] hover:border-[var(--border-loud)]" onClick={() => void inspect(candidate)}><div>{candidate.id}</div><div className="mt-1 text-[10px] text-[var(--muted)]">commit {candidate.revision.slice(0, 12)} · {candidate.licenseName || "license inspect required"}</div></button>)}</div>}
+          {results.length > 0 && <div className="grid gap-1 sm:grid-cols-2">{results.map((candidate) => <button key={`${candidate.id}:${candidate.revision}`} className="text-left p-2 rounded border border-[var(--border)] hover:border-[var(--border-loud)]" onClick={() => void inspect(candidate)}><div>{candidate.id}</div><div className="mt-1 text-[11px] text-[var(--muted)]">commit {candidate.revision.slice(0, 12)} · {candidate.licenseName || "license inspect required"}</div></button>)}</div>}
           {selected && files.length > 0 && <div className="grid gap-2 border-t border-[var(--border-soft)] pt-3">
             <div className="grid gap-2 sm:grid-cols-2"><label>Local name<input className={`${input} mt-1`} value={localName} onChange={(event) => setLocalName(event.target.value)} /></label><label>Exact GGUF<select className={`${input} mt-1`} value={filePath} onChange={(event) => setFilePath(event.target.value)}>{files.map((file) => <option key={file.path} value={file.path}>{file.path} · {bytes(file.sizeBytes)}</option>)}</select></label></div>
-            <div className="text-[10px] text-[var(--muted)] break-all">Pinned {selected.id}@{selected.revision}. SHA-256 {files.find((file) => file.path === filePath)?.sha256}</div>
+            <div className="text-[11px] text-[var(--muted)] break-all">Pinned {selected.id}@{selected.revision}. SHA-256 {files.find((file) => file.path === filePath)?.sha256}</div>
             <label className="flex items-center gap-2"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} /> I reviewed and accept: {license}</label>
             <button className={`${button} justify-self-start`} disabled={!accepted || !localName.trim() || !!busy} onClick={() => void download()}><Download size={12} /> Download and verify</button>
           </div>}
@@ -313,9 +334,9 @@ export default function ModelsPage() {
         </div>
       </Panel>
 
-      {jobs.length > 0 && <Panel padding="none"><div className={heading}><Download size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> DOWNLOAD JOBS</div>{jobs.slice(0, 20).map((job) => <div key={job.id} className="px-4 py-3 border-b border-[var(--border-soft)] last:border-0"><div className="flex items-center gap-2 text-xs">{job.state === "succeeded" ? <CheckCircle2 size={14} className="text-[var(--accent-success)]" /> : <Download size={14} className="text-[var(--accent-ai)]" />}<span className="truncate">{job.checkpoint?.modelName || job.id}</span><span className="ml-auto text-[10px] text-[var(--muted)]">{job.state} · {job.progress.phase}</span>{["queued", "running"].includes(job.state) && <button className={button} onClick={() => void cancel(job)}><Square size={10} /> Stop</button>}</div>{job.progress.total && <div className="mt-2 h-1 bg-[var(--surface-3)] rounded overflow-hidden"><div className="h-full bg-[var(--accent-ai)]" style={{ width: `${Math.min(100, job.progress.completed / job.progress.total * 100)}%` }} /></div>}{job.error && <div className="mt-1 text-[10px] text-[var(--accent-danger)]">{job.error.message}</div>}</div>)}</Panel>}
+      {jobs.length > 0 && <Panel padding="none"><div className={heading}><Download size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> DOWNLOAD JOBS</div>{jobs.slice(0, 20).map((job) => <div key={job.id} className="px-4 py-3 border-b border-[var(--border-soft)] last:border-0"><div className="flex items-center gap-2 text-xs">{job.state === "succeeded" ? <CheckCircle2 size={14} className="text-[var(--accent-success)]" /> : <Download size={14} className="text-[var(--accent-ai)]" />}<span className="truncate">{job.checkpoint?.modelName || job.id}</span><span className="ml-auto text-[11px] text-[var(--muted)]">{job.state} · {job.progress.phase}</span>{["queued", "running"].includes(job.state) && <button className={button} onClick={() => void cancel(job)}><Square size={10} /> Stop</button>}</div>{job.progress.total && <div className="mt-2 h-1 bg-[var(--surface-3)] rounded overflow-hidden"><div className="h-full bg-[var(--accent-ai)]" style={{ width: `${Math.min(100, job.progress.completed / job.progress.total * 100)}%` }} /></div>}{job.error && <div className="mt-1 text-[11px] text-[var(--accent-danger)]">{job.error.message}</div>}</div>)}</Panel>}
 
-      <Panel padding="none"><div className={heading}><FolderSearch size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> DISCOVERY DIAGNOSTICS</div><div className="p-4 grid gap-2 text-[10px] text-[var(--muted)]">{inventory.roots.map((root) => <div key={root.path} className="flex gap-2"><span className={root.readable ? "text-[var(--accent-success)]" : "text-[var(--accent-danger)]"}>{root.exists ? root.readable ? "readable" : "blocked" : "not created"}</span><code className="break-all">{root.path}</code></div>)}{inventory.server && <div>Server {inventory.server.origin} · build {inventory.server.buildId} · scanned {inventory.scannedAt ? new Date(inventory.scannedAt).toLocaleString() : "not yet"}</div>}{inventory.backend && <div>llama.cpp {inventory.backend.llamaServer} · Ollama store {inventory.backend.ollamaStore} · resident {inventory.backend.serving || "none"}</div>}</div></Panel>
+      <Panel padding="none"><div className={heading}><FolderSearch size={ICON_SIZE.sm} className="text-[var(--accent-ai)]" /> DISCOVERY DIAGNOSTICS</div><div className="p-4 grid gap-2 text-[11px] text-[var(--muted)]">{inventory.roots.map((root) => <div key={root.path} className="flex gap-2"><span className={root.readable ? "text-[var(--accent-success)]" : "text-[var(--accent-danger)]"}>{root.exists ? root.readable ? "readable" : "blocked" : "not created"}</span><code className="break-all">{root.path}</code></div>)}{inventory.server && <div>Server {inventory.server.origin} · build {inventory.server.buildId} · scanned {inventory.scannedAt ? new Date(inventory.scannedAt).toLocaleString() : "not yet"}</div>}{inventory.backend && <div>llama.cpp {inventory.backend.llamaServer} · Ollama store {inventory.backend.ollamaStore} · resident {inventory.backend.serving || "none"}</div>}</div></Panel>
     </div>
   </main>;
 }

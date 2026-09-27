@@ -15,7 +15,7 @@ type Options = {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="space-y-3">
-      <div className="text-[10px] uppercase tracking-widest text-[var(--muted)] border-b border-[var(--border-soft)] pb-1.5">{title}</div>
+      <div className="text-[11px] uppercase tracking-widest text-[var(--muted)] border-b border-[var(--border-soft)] pb-1.5">{title}</div>
       {children}
     </div>
   );
@@ -27,7 +27,7 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
         <label className="text-[13px] text-[var(--text-2)]">{label}</label>
         {children}
       </div>
-      {hint && <p className="text-[10px] text-[var(--muted)] mt-1 leading-snug">{hint}</p>}
+      {hint && <p className="text-[11px] text-[var(--muted)] mt-1 leading-snug">{hint}</p>}
     </div>
   );
 }
@@ -41,7 +41,7 @@ function Slider({ label, hint, min, max, step, value, onChange }: { label: strin
 function Num({ label, hint, value, onChange }: { label: string; hint?: string; value: number; onChange: (v: number) => void }) {
   return (
     <Row label={label} hint={hint}>
-      <input type="number" value={value} onChange={(e) => onChange(parseInt(e.target.value, 10))} className="w-24 text-right bg-[var(--bg)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-xs text-white outline-none focus:border-[var(--border-loud)]" />
+      <input type="number" value={value} onChange={(e) => onChange(parseInt(e.target.value, 10))} className="w-24 text-right bg-[var(--bg)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-xs text-[var(--text)] outline-none focus:border-[var(--border-loud)]" />
     </Row>
   );
 }
@@ -101,12 +101,12 @@ export default function AgentSettings(p: AgentSettingsProps) {
         className="w-full sm:w-[420px] h-full bg-[var(--surface-1)] border-l border-[var(--border)] flex flex-col shadow-2xl">
         <div className="flex items-center justify-between px-4 h-14 border-b border-[var(--border-soft)] shrink-0">
           <span className="flex items-center gap-2 text-sm font-semibold"><Sliders size={16} className="text-[var(--accent-ai)]" /> Agent settings</span>
-          <button onClick={p.onClose} className="text-[var(--muted)] hover:text-white p-1"><X size={18} /></button>
+          <button onClick={p.onClose} className="text-[var(--muted)] hover:text-[var(--text)] p-1"><X size={18} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
           <Section title="Model & behavior">
             <Row label="Model" hint="Heavier models reason better but need more VRAM.">
-              <select value={p.model} onChange={(e) => p.onModelChange(e.target.value)} className="max-w-[55%] text-xs bg-[var(--bg)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-white outline-none">
+              <select value={p.model} onChange={(e) => p.onModelChange(e.target.value)} className="max-w-[55%] text-xs bg-[var(--bg)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1 text-[var(--text)] outline-none">
                 {p.model && !p.models.includes(p.model) && <option value={p.model}>{p.model}</option>}
                 {p.models.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
@@ -145,11 +145,11 @@ export default function AgentSettings(p: AgentSettingsProps) {
 
           <Section title="System prompt">
             <textarea value={system} onChange={(e) => setSystem(e.target.value)} onBlur={(e) => put({ system: e.target.value })} rows={4}
-              className="w-full resize-y bg-[var(--bg)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1.5 text-xs text-white outline-none focus:border-[var(--border-loud)] leading-relaxed"
+              className="w-full resize-y bg-[var(--bg)] border border-[var(--border)] rounded-[var(--r-sm)] px-2 py-1.5 text-xs text-[var(--text)] outline-none focus:border-[var(--border-loud)] leading-relaxed"
               placeholder="Extra standing instructions for every turn (optional)." />
           </Section>
 
-          <p className="text-[10px] text-[var(--muted)]">{savedAt ? "Saved ✓ — applies to your next message." : "Changes save automatically."}</p>
+          <p className="text-[11px] text-[var(--muted)]">{savedAt ? "Saved ✓ — applies to your next message." : "Changes save automatically."}</p>
         </div>
       </div>
     </div>

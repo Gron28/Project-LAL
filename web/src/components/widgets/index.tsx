@@ -14,7 +14,7 @@ function Bar({ label, pct: p, detail }: { label: string; pct: number | null; det
   const v = p ?? 0;
   return (
     <div>
-      <div className="flex justify-between text-[10px] mb-1">
+      <div className="flex justify-between text-[11px] mb-1">
         <span className="tracking-widest uppercase text-[var(--text-2)]">{label}</span>
         <span style={{ color: colour(v) }}>{p == null ? "—" : v + "%"} <span className="text-[var(--muted)]">{detail}</span></span>
       </div>
@@ -36,7 +36,7 @@ function Spark({ data, color }: { data: number[]; color: string }) {
   );
 }
 
-const empty = <div className="text-[10px] text-[var(--muted)] text-center py-4">connecting…</div>;
+const empty = <div className="text-[11px] text-[var(--muted)] text-center py-4">connecting…</div>;
 
 export function GpuVramWidget({ ctx }: { ctx: WidgetCtx }) {
   const s = ctx.snap?.sys; if (!s) return empty;
@@ -96,14 +96,14 @@ function rate(value: number | null) {
 export function RuntimeTelemetryWidget({ ctx }: { ctx: WidgetCtx }) {
   const telemetry = ctx.snap?.runtime.telemetry;
   if (!telemetry) return empty;
-  if (telemetry.state === "not-running") return <div className="h-full flex items-center justify-center text-[10px] text-[var(--muted)]">llama.cpp is idle</div>;
-  if (telemetry.state !== "ready") return <div className="h-full flex flex-col items-center justify-center gap-1 text-[10px] text-[var(--accent-warn)]"><span>runtime telemetry unavailable</span><span className="text-[var(--muted)] truncate max-w-full">{telemetry.error || "waiting for metrics"}</span></div>;
+  if (telemetry.state === "not-running") return <div className="h-full flex items-center justify-center text-[11px] text-[var(--muted)]">llama.cpp is idle</div>;
+  if (telemetry.state !== "ready") return <div className="h-full flex flex-col items-center justify-center gap-1 text-[11px] text-[var(--accent-warn)]"><span>runtime telemetry unavailable</span><span className="text-[var(--muted)] truncate max-w-full">{telemetry.error || "waiting for metrics"}</span></div>;
   const active = telemetry.slots.find((slot) => slot.processing);
   const slotDetail = active
     ? `${active.cachedTokens ?? 0} cached · ${active.decodedTokens ?? 0} out`
     : telemetry.slotsAvailable ? `${telemetry.slots.length} slot${telemetry.slots.length === 1 ? "" : "s"} observed` : "slot endpoint unavailable";
   return (
-    <div className="flex flex-col gap-1.5 h-full justify-center text-[10px]">
+    <div className="flex flex-col gap-1.5 h-full justify-center text-[11px]">
       <div className="grid grid-cols-2 gap-x-3 gap-y-1">
         <div className="flex justify-between gap-1"><span className="text-[var(--muted)]">prefill</span><span className="text-[var(--text)]">{rate(telemetry.promptTokensPerSecond)}</span></div>
         <div className="flex justify-between gap-1"><span className="text-[var(--muted)]">decode</span><span className="text-[var(--accent-ai)]">{rate(telemetry.predictedTokensPerSecond)}</span></div>
@@ -127,13 +127,13 @@ export function GuardianStatusWidget({ ctx }: { ctx: WidgetCtx }) {
     : "process" in latest ? `${latest.kind === "process_started" ? "new" : "exit"} · ${latest.process.executable} · pid ${latest.process.pid}`
       : `${latest.kind === "network_opened" ? "open" : "closed"} · ${latest.connection.process || "unattributed"} → ${latest.connection.remoteAddress}:${latest.connection.remotePort ?? "*"}`;
   return (
-    <div className="flex flex-col gap-1.5 h-full justify-center text-[10px]">
+    <div className="flex flex-col gap-1.5 h-full justify-center text-[11px]">
       <div className="flex justify-between"><span className="text-[var(--muted)]">processes</span><span className="text-[var(--accent-success)]">{guardian.processCount} observed</span></div>
       <div className="flex justify-between"><span className="text-[var(--muted)]">executable proof</span><span className={guardian.executableHashCount ? "text-[var(--accent-ai)]" : "text-[var(--muted)]"}>{guardian.executableHashCount}/{guardian.processCount} hashed</span></div>
       <div className="flex justify-between"><span className="text-[var(--muted)]">process guards</span><span className="text-[var(--text-2)]">{guardian.capabilityProcessCount} caps · {guardian.noNewPrivilegesProcessCount} NNP</span></div>
       <div className="flex justify-between"><span className="text-[var(--muted)]">network</span><span className={guardian.networkObserver === "available" ? "text-[var(--accent-success)]" : "text-[var(--accent-warn)]"}>{guardian.networkObserver === "available" ? `${guardian.connectionCount} sockets` : "unavailable"}</span></div>
       <div className="flex justify-between"><span className="text-[var(--muted)]">session events</span><span>+{starts} / −{exits} · {networkOpens} net</span></div>
-      <div className="flex gap-1 text-[9px] text-[var(--muted)]"><span className="text-[var(--accent-ai)]">● processes</span><span className={guardian.coverage.network ? "text-[var(--accent-ai)]" : ""}>{guardian.coverage.network ? "●" : "○"} network</span><span>○ files</span><span>○ malware</span></div>
+      <div className="flex gap-1 text-[10px] text-[var(--muted)]"><span className="text-[var(--accent-ai)]">● processes</span><span className={guardian.coverage.network ? "text-[var(--accent-ai)]" : ""}>{guardian.coverage.network ? "●" : "○"} network</span><span>○ files</span><span>○ malware</span></div>
       <div className="border-t border-[var(--border-soft)] pt-1 text-[var(--muted)] truncate" title={latestText}>
         {latestText}
       </div>
@@ -151,8 +151,8 @@ function guardianEventText(event: NonNullable<Snapshot["guardian"]["events"][num
 export function GuardianTimelineWidget({ ctx }: { ctx: WidgetCtx }) {
   const guardian = ctx.snap?.guardian;
   if (!guardian) return empty;
-  if (!guardian.events.length) return <div className="h-full flex items-center justify-center text-[10px] text-[var(--muted)]">no Guardian events in this WebUI session</div>;
-  return <div className="h-full overflow-auto text-[10px]">
+  if (!guardian.events.length) return <div className="h-full flex items-center justify-center text-[11px] text-[var(--muted)]">no Guardian events in this WebUI session</div>;
+  return <div className="h-full overflow-auto text-[11px]">
     {guardian.events.slice(0, 30).map((event, index) => <div key={`${event.ts}-${index}`} className="flex gap-2 border-b border-[var(--border-soft)] py-1"><span className="shrink-0 text-[var(--muted)]">{new Date(event.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span><span className="truncate" title={guardianEventText(event)}>{guardianEventText(event)}</span></div>)}
   </div>;
 }
@@ -161,7 +161,7 @@ export function GuardianAdaptersWidget({ ctx }: { ctx: WidgetCtx }) {
   const adapters = ctx.snap?.guardianAdapters;
   if (!adapters) return empty;
   const ready = adapters.filter((adapter) => adapter.state === "available").length;
-  return <div className="flex h-full flex-col gap-1 text-[10px]">
+  return <div className="flex h-full flex-col gap-1 text-[11px]">
     <div className="flex justify-between border-b border-[var(--border-soft)] pb-1"><span className="text-[var(--muted)]">existing local defenses</span><span className={ready ? "text-[var(--accent-success)]" : "text-[var(--muted)]"}>{ready}/{adapters.length} ready</span></div>
     <div className="min-h-0 flex-1 overflow-auto">
       {adapters.map((adapter) => <div key={adapter.id} className="flex items-center justify-between gap-2 py-0.5"><span className="truncate" title={adapter.capabilities.join(", ")}>{adapter.name}</span><span className={adapter.state === "available" ? "text-[var(--accent-success)]" : "text-[var(--muted)]"}>{adapter.state === "available" ? "detected" : "not installed"}</span></div>)}
@@ -172,9 +172,9 @@ export function GuardianAdaptersWidget({ ctx }: { ctx: WidgetCtx }) {
 export function GuardianFindingsWidget({ ctx }: { ctx: WidgetCtx }) {
   const evidence = ctx.snap?.guardianEvidence;
   if (!evidence) return empty;
-  if (!evidence.findings.length) return <div className="h-full flex flex-col items-center justify-center gap-1 text-[10px] text-[var(--muted)]"><span>no governed findings yet</span><span className="opacity-70">adapters are read-only until a scan is authorized</span></div>;
+  if (!evidence.findings.length) return <div className="h-full flex flex-col items-center justify-center gap-1 text-[11px] text-[var(--muted)]"><span>no governed findings yet</span><span className="opacity-70">adapters are read-only until a scan is authorized</span></div>;
   const tone = (severity: string) => severity === "critical" || severity === "high" ? "var(--accent-danger)" : severity === "medium" ? "var(--accent-warn)" : "var(--accent-ai)";
-  return <div className="h-full overflow-auto text-[10px]">
+  return <div className="h-full overflow-auto text-[11px]">
     {!evidence.integrity && <div className="mb-1 rounded border border-[var(--accent-danger)] px-1 py-0.5 text-[var(--accent-danger)]">finding ledger integrity failed</div>}
     {evidence.findings.map((finding) => <div key={finding.id} className="border-b border-[var(--border-soft)] py-1"><div className="flex gap-2"><span className="uppercase" style={{ color: tone(finding.severity) }}>{finding.severity}</span><span className="truncate" title={finding.title}>{finding.title}</span></div><div className="truncate text-[var(--muted)]" title={finding.target}>{finding.source} · {finding.target}</div></div>)}
   </div>;
@@ -182,13 +182,13 @@ export function GuardianFindingsWidget({ ctx }: { ctx: WidgetCtx }) {
 
 export function TrainLiveWidget({ ctx }: { ctx: WidgetCtx }) {
   const snap = ctx.snap; if (!snap) return empty;
-  if (!snap.train.running) return <div className="h-full flex items-center justify-center text-[10px] text-[var(--muted)]">no training run active</div>;
+  if (!snap.train.running) return <div className="h-full flex items-center justify-center text-[11px] text-[var(--muted)]">no training run active</div>;
   const last = [...snap.train.tail].reverse().find((r) => r.event === "step");
   return (
     <div className="flex flex-col gap-2 h-full">
-      <div className="text-[10px] text-[var(--accent-warn)] truncate">▸ {snap.train.running}</div>
+      <div className="text-[11px] text-[var(--accent-warn)] truncate">▸ {snap.train.running}</div>
       <div className="flex-1 min-h-0"><LossChart rows={snap.train.tail} /></div>
-      <div className="grid grid-cols-3 gap-1.5 text-[9px] text-[var(--muted)]">
+      <div className="grid grid-cols-3 gap-1.5 text-[10px] text-[var(--muted)]">
         <div>loss <span className="text-[var(--text)]">{last?.loss?.toFixed(3) ?? "—"}</span></div>
         <div>step <span className="text-[var(--text)]">{last?.step ?? "—"}</span></div>
         <div>gn <span className="text-[var(--text)]">{last?.grad_norm?.toFixed(2) ?? "—"}</span></div>
@@ -204,7 +204,7 @@ function fmtEta(s?: number | null) {
 
 export function TrainKpisWidget({ ctx }: { ctx: WidgetCtx }) {
   const snap = ctx.snap; if (!snap) return empty;
-  if (!snap.train.running) return <div className="h-full flex items-center justify-center text-[10px] text-[var(--muted)]">no training run active</div>;
+  if (!snap.train.running) return <div className="h-full flex items-center justify-center text-[11px] text-[var(--muted)]">no training run active</div>;
   const last = [...snap.train.tail].reverse().find((r) => r.event === "step");
   return (
     <div className="grid grid-cols-2 gap-1.5 h-full content-center">
@@ -220,7 +220,7 @@ export function TrainHistoryWidget({ ctx }: { ctx: WidgetCtx }) {
   const snap = ctx.snap; if (!snap) return empty;
   const statusColor = (s: string) => s === "running" ? "var(--accent-warn)" : s === "done" ? "var(--accent-success)" : s === "failed" ? "var(--accent-danger)" : "var(--muted)";
   return (
-    <div className="flex flex-col gap-1 text-[10px]">
+    <div className="flex flex-col gap-1 text-[11px]">
       {snap.runs.slice(0, 20).map((r) => (
         <div key={r.name} className="flex justify-between gap-2">
           <span className="truncate" title={r.name}>{r.name}</span>
@@ -237,11 +237,11 @@ export function BenchComparisonTableWidget({ ctx, settings }: { ctx: WidgetCtx; 
   const snap = ctx.snap; if (!snap) return empty;
   const suite = ctx.filters.suite || (settings?.suite as string) || snap.battery.suites[0] || "coding";
   const rows = snap.benchSummaries.filter((r) => r.suite === suite);
-  if (!rows.length) return <div className="h-full flex items-center justify-center text-[10px] text-[var(--muted)]">no {suite} results yet</div>;
+  if (!rows.length) return <div className="h-full flex items-center justify-center text-[11px] text-[var(--muted)]">no {suite} results yet</div>;
   const cats = [...new Set(rows.flatMap((r) => Object.keys(r.cats || {})))];
   return (
     <div className="overflow-auto h-full">
-      <table className="w-full text-[9px] border-collapse">
+      <table className="w-full text-[10px] border-collapse">
         <thead>
           <tr className="text-[var(--muted)] uppercase tracking-wide">
             <th className="text-left font-normal pb-1">model</th>
@@ -271,7 +271,7 @@ export function BenchRadarWidget({ ctx, settings }: { ctx: WidgetCtx; settings?:
   const suite = ctx.filters.suite || (settings?.suite as string) || snap.battery.suites[0] || "coding";
   const rows = snap.benchSummaries.filter((r) => r.suite === suite);
   const cats = [...new Set(rows.flatMap((r) => Object.keys(r.cats || {})))];
-  if (!rows.length || cats.length < 3) return <div className="h-full flex items-center justify-center text-[10px] text-[var(--muted)]">no {suite} results yet</div>;
+  if (!rows.length || cats.length < 3) return <div className="h-full flex items-center justify-center text-[11px] text-[var(--muted)]">no {suite} results yet</div>;
   return <RadarChart runs={rows} cats={cats} colorOf={(i) => PALETTE[i % PALETTE.length]} />;
 }
 
@@ -279,14 +279,14 @@ export function SpeedBarsWidget({ ctx, settings }: { ctx: WidgetCtx; settings?: 
   const snap = ctx.snap; if (!snap) return empty;
   const suite = ctx.filters.suite || (settings?.suite as string) || snap.battery.suites[0] || "coding";
   const rows = snap.benchSummaries.filter((r) => r.suite === suite);
-  if (!rows.length) return <div className="h-full flex items-center justify-center text-[10px] text-[var(--muted)]">no {suite} results yet</div>;
+  if (!rows.length) return <div className="h-full flex items-center justify-center text-[11px] text-[var(--muted)]">no {suite} results yet</div>;
   return <MetricPanel title={`${suite} · tok/s`} runs={rows} value={(r) => r.tokSec} fmt={(v) => v.toFixed(1)} colorOf={(i) => PALETTE[i % PALETTE.length]} />;
 }
 
 export function ModelRegistryWidget({ ctx }: { ctx: WidgetCtx }) {
   const snap = ctx.snap; if (!snap) return empty;
   return (
-    <div className="flex flex-col gap-1 text-[10px]">
+    <div className="flex flex-col gap-1 text-[11px]">
       {snap.models.map((m) => (
         <div key={m.name} className="flex justify-between gap-2">
           <span className="truncate" title={m.name}>{shortName(m.name)}</span>
@@ -299,7 +299,7 @@ export function ModelRegistryWidget({ ctx }: { ctx: WidgetCtx }) {
 }
 
 export function QuickActionsWidget() {
-  const btn = "text-[10px] tracking-widest uppercase text-center border border-[var(--border)] rounded-[var(--r-md)] py-2 hover:border-[var(--border-loud)] hover:text-[var(--accent-ai)] transition-colors";
+  const btn = "text-[11px] tracking-widest uppercase text-center border border-[var(--border)] rounded-[var(--r-md)] py-2 hover:border-[var(--border-loud)] hover:text-[var(--accent-ai)] transition-colors";
   return (
     <div className="grid grid-cols-2 gap-2 h-full content-center">
       <Link href="/chat" className={btn}>Chat</Link>
@@ -367,11 +367,11 @@ export function QuickChatWidget({ ctx }: { ctx: WidgetCtx }) {
   return (
     <div className="flex flex-col h-full gap-1.5">
       <select aria-label="Quick chat model" value={model} onChange={(e) => changeModel(e.target.value)}
-        className="shrink-0 w-full bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-1 text-[9px] text-[var(--text)] outline-none">
+        className="shrink-0 w-full bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text)] outline-none">
         {model && !ctx.snap?.models.some((m) => m.name === model) && <option value={model}>{model}</option>}
         {(ctx.snap?.models || []).map((m) => <option key={m.name} value={m.name}>{shortName(m.name)}</option>)}
       </select>
-      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5 text-[10px]">
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5 text-[11px]">
         {!messages.length && <div className="text-[var(--muted)] text-center py-4">ask something…</div>}
         {messages.map((m, i) => (
           <div key={i} className={m.role === "user" ? "self-end max-w-[85%] bg-[var(--accent-ai)]/15 rounded px-2 py-1" : "self-start max-w-[85%] bg-[var(--surface-2)] rounded px-2 py-1"}>
@@ -384,9 +384,9 @@ export function QuickChatWidget({ ctx }: { ctx: WidgetCtx }) {
         <input aria-label="Quick chat message" value={text} onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           placeholder="quick ask…" disabled={busy}
-          className="flex-1 min-w-0 bg-[var(--surface-2)] border border-[var(--border)] rounded px-2 py-1 text-[10px] text-[var(--text)] outline-none focus:border-[var(--border-loud)]" />
+          className="flex-1 min-w-0 bg-[var(--surface-2)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)] outline-none focus:border-[var(--border-loud)]" />
         <button onClick={send} disabled={busy || !text.trim()}
-          className="text-[9px] tracking-widest uppercase border border-[var(--border)] rounded px-2 disabled:opacity-40 hover:border-[var(--border-loud)]">→</button>
+          className="text-[10px] tracking-widest uppercase border border-[var(--border)] rounded px-2 disabled:opacity-40 hover:border-[var(--border-loud)]">→</button>
       </div>
     </div>
   );
@@ -436,15 +436,15 @@ export function QuickTrainWidget({ ctx }: { ctx: WidgetCtx }) {
     setBusy(false);
   };
 
-  const sel = "flex-1 min-w-0 bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-1 text-[9px] text-[var(--text)] outline-none";
+  const sel = "flex-1 min-w-0 bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text)] outline-none";
 
   if (running) {
     return (
-      <div className="flex flex-col gap-1.5 h-full justify-center text-[10px]">
+      <div className="flex flex-col gap-1.5 h-full justify-center text-[11px]">
         <div className="text-[var(--accent-warn)] truncate">▸ {running}</div>
         <div className="text-[var(--muted)]">step {last?.step ?? "—"} · loss {last?.loss?.toFixed(3) ?? "—"}</div>
         <button onClick={stop} disabled={busy}
-          className="text-[9px] tracking-widest uppercase border border-[var(--accent-danger)] text-[var(--accent-danger)] rounded px-2 py-1 disabled:opacity-40">■ stop</button>
+          className="text-[10px] tracking-widest uppercase border border-[var(--accent-danger)] text-[var(--accent-danger)] rounded px-2 py-1 disabled:opacity-40">■ stop</button>
       </div>
     );
   }
@@ -457,8 +457,8 @@ export function QuickTrainWidget({ ctx }: { ctx: WidgetCtx }) {
         {dataFiles.map((f) => <option key={f.name} value={f.name}>{f.name}</option>)}
       </select>
       <button onClick={start} disabled={busy || !base || !dataFile}
-        className="text-[9px] tracking-widest uppercase border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)] disabled:opacity-40">▸ quick start (150 steps)</button>
-      {msg && <div className="text-[9px] text-[var(--accent-danger)] truncate">{msg}</div>}
+        className="text-[10px] tracking-widest uppercase border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)] disabled:opacity-40">▸ quick start (150 steps)</button>
+      {msg && <div className="text-[10px] text-[var(--accent-danger)] truncate">{msg}</div>}
     </div>
   );
 }
@@ -488,7 +488,7 @@ export function QuickBenchWidget({ ctx }: { ctx: WidgetCtx }) {
     setBusy(false);
   };
 
-  const sel = "flex-1 min-w-0 bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-1 text-[9px] text-[var(--text)] outline-none";
+  const sel = "flex-1 min-w-0 bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-1 text-[10px] text-[var(--text)] outline-none";
   return (
     <div className="flex flex-col gap-1.5 h-full justify-center">
       <select aria-label="Quick evaluation suite" value={suite} onChange={(e) => setSuiteOverride(e.target.value)} className={sel}>
@@ -498,11 +498,11 @@ export function QuickBenchWidget({ ctx }: { ctx: WidgetCtx }) {
         {snap.models.map((m) => <option key={m.name} value={m.name}>{shortName(m.name)}</option>)}
       </select>
       <button onClick={run} disabled={busy || !suite || !model}
-        className="text-[9px] tracking-widest uppercase border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)] disabled:opacity-40">
+        className="text-[10px] tracking-widest uppercase border border-[var(--border)] rounded px-2 py-1 hover:border-[var(--border-loud)] disabled:opacity-40">
         {busy ? "running… (can take a while)" : "▸ run bench"}
       </button>
-      {result && <div className="text-[9px] text-[var(--accent-ai)]">✓ {result.score}/{result.total}</div>}
-      {err && <div className="text-[9px] text-[var(--accent-danger)] truncate">✗ {err}</div>}
+      {result && <div className="text-[10px] text-[var(--accent-ai)]">✓ {result.score}/{result.total}</div>}
+      {err && <div className="text-[10px] text-[var(--accent-danger)] truncate">✗ {err}</div>}
     </div>
   );
 }
@@ -539,7 +539,7 @@ function UsageBars({ buckets }: { buckets: UsageBucket[] }) {
   return (
     <div className="flex flex-col gap-[2px]">
       {buckets.map((b) => (
-        <div key={b.key} className="flex items-center gap-1.5 text-[10px]">
+        <div key={b.key} className="flex items-center gap-1.5 text-[11px]">
           <span className="w-10 shrink-0 truncate text-[var(--muted)]" title={b.key}>{b.key}</span>
           <div className="h-1.5 flex-1 rounded-[var(--r-sm)] bg-[var(--surface-2)]">
             <div
@@ -578,11 +578,11 @@ export function UsageAnalyticsWidget({ settings }: { ctx: WidgetCtx; settings?: 
     return () => { cancelled = true; };
   }, [days]);
 
-  if (error) return <div className="text-[10px] text-[var(--accent-danger)]">usage unavailable: {error}</div>;
+  if (error) return <div className="text-[11px] text-[var(--accent-danger)]">usage unavailable: {error}</div>;
   if (!data) return empty;
   if (!data.totals.requests) {
     return (
-      <div className="py-2 text-center text-[10px] text-[var(--muted)]">
+      <div className="py-2 text-center text-[11px] text-[var(--muted)]">
         no usage recorded yet
         <div className="mt-1 opacity-70">the ledger only collects from when it shipped</div>
       </div>
@@ -594,11 +594,11 @@ export function UsageAnalyticsWidget({ settings }: { ctx: WidgetCtx; settings?: 
 
   return (
     <div className="flex h-full flex-col gap-2">
-      <div className="flex items-baseline justify-between gap-2 text-[10px]">
+      <div className="flex items-baseline justify-between gap-2 text-[11px]">
         <span className="text-[var(--muted)]">{data.totals.requests} req · {days}d</span>
         <span className="font-semibold" style={{ color: "var(--accent-ai)" }}>{compactTokens(data.totals.total)} tok</span>
       </div>
-      <div className="flex gap-2 text-[10px] text-[var(--muted)]">
+      <div className="flex gap-2 text-[11px] text-[var(--muted)]">
         <span>peak {data.busiestHour ? `${data.busiestHour.key}:00` : "—"}</span>
         <span>·</span>
         <span>{data.busiestWeekday?.key ?? "—"}</span>
@@ -652,7 +652,7 @@ export function widgetMinSize(type: string) {
 
 export function renderWidgetBody(w: GridWidget, ctx: WidgetCtx) {
   const def = WIDGETS[w.type];
-  if (!def) return <div className="text-[10px] text-[var(--accent-danger)]">unknown widget: {w.type}</div>;
+  if (!def) return <div className="text-[11px] text-[var(--accent-danger)]">unknown widget: {w.type}</div>;
   const Component = def.component;
   return <Component ctx={ctx} settings={w.settings} />;
 }

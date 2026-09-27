@@ -97,25 +97,25 @@ export default function RunPanel({ project }: { project: string }) {
       {!running && (
         <div className="space-y-1.5 px-1">
           <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="npm run dev"
-            className="w-full bg-[var(--surface-2,#11151c)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono" />
+            className="w-full bg-[var(--surface-2)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono" />
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-[var(--muted)]">port</span>
+            <span className="text-[11px] text-[var(--muted)]">port</span>
             <input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))}
-              className="w-20 bg-[var(--surface-2,#11151c)] border border-[var(--border)] rounded px-2 py-1 text-[11px] font-mono" />
+              className="w-20 bg-[var(--surface-2)] border border-[var(--border)] rounded px-2 py-1 text-[11px] font-mono" />
             <button onClick={start} disabled={!command.trim() || busy}
-              className="ml-auto flex items-center gap-1.5 text-[11px] font-semibold bg-[var(--accent-ai)] text-[#05090c] rounded px-3 py-1.5 disabled:opacity-40">
+              className="ml-auto flex items-center gap-1.5 text-[11px] font-semibold bg-[var(--accent-ai)] text-[var(--on-accent)] rounded px-3 py-1.5 disabled:opacity-40">
               <Play size={12} /> start
             </button>
           </div>
           {error && <div className="text-[11px] text-[var(--accent-danger)]">{error}</div>}
-          <div className="text-[10px] text-[var(--muted)]">runs in this project&apos;s folder; open it from your phone at this machine&apos;s hostname and port</div>
+          <div className="text-[11px] text-[var(--muted)]">runs in this project&apos;s folder; open it from your phone at this machine&apos;s hostname and port</div>
         </div>
       )}
 
       {running && (
         <div className="space-y-1.5 px-1">
           {someoneElse && (
-            <div className="text-[11px] text-[var(--accent-warn,#d29922)]">
+            <div className="text-[11px] text-[var(--accent-warn)]">
               running for {status.project} — only one preview at a time
             </div>
           )}
@@ -123,7 +123,7 @@ export default function RunPanel({ project }: { project: string }) {
             <span className="w-2 h-2 rounded-full bg-[var(--accent-ai)] shrink-0" />
             <span className="truncate">{status.command}</span>
           </div>
-          <div className="text-[10px] text-[var(--muted)] flex items-center gap-2">
+          <div className="text-[11px] text-[var(--muted)] flex items-center gap-2">
             <span>pid {status.pid}</span>
             <span>·</span>
             <span>{status.startedAt ? fmtUptime(now - status.startedAt) : ""}</span>
@@ -133,7 +133,7 @@ export default function RunPanel({ project }: { project: string }) {
           </div>
 
           {status.tailscale?.ok === false && (
-            <div className="text-[10px] text-[var(--accent-warn,#d29922)]">
+            <div className="text-[11px] text-[var(--accent-warn)]">
               tailnet exposure failed — reachable locally only ({status.tailscale.output.slice(0, 140)})
             </div>
           )}
@@ -158,7 +158,7 @@ export default function RunPanel({ project }: { project: string }) {
             </div>
           )}
 
-          <pre ref={logRef} className="text-[10px] font-mono bg-[var(--surface-2,#11151c)] rounded p-2 overflow-auto max-h-56 whitespace-pre-wrap">
+          <pre ref={logRef} className="text-[11px] font-mono bg-[var(--surface-2)] rounded p-2 overflow-auto max-h-56 whitespace-pre-wrap">
             {status.log || "(no output yet)"}
           </pre>
         </div>
